@@ -68,10 +68,12 @@ jobs:
           BENCHMARK_REPEATS: ${{ inputs.repeats }}
           BENCHMARK_MEMORY_REPEATS: ${{ inputs['memory-repeats'] }}
           BENCHMARK_SEED: ${{ inputs.seed }}
+          TARGET_PYTHON: ${{ matrix.python-version }}
         run: |
-          $targetPython = python -c "import sys; print(sys.executable)"
+          $targetPython = uv python find "$env:TARGET_PYTHON"
           uv run --script scripts/benchmark.py `
             --python $targetPython `
+            --expect-python "$env:TARGET_PYTHON" `
             --counts "$env:BENCHMARK_COUNTS" `
             --repeats "$env:BENCHMARK_REPEATS" `
             --memory-repeats "$env:BENCHMARK_MEMORY_REPEATS" `

@@ -27,6 +27,16 @@ from typing import Any
 
 import matplotlib
 import psutil
+from _benchmark_cli import (
+    PythonMetadata,
+    inspect_python,
+    parse_counts,
+    parse_output_directory,
+    parse_positive_int,
+    parse_python_version,
+    resolve_python,
+    validate_expected_python,
+)
 
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
@@ -38,33 +48,41 @@ _SCENARIOS = ("native", "attributed", "mutation")
 _COLORS = {False: "#6b7280", True: "#2563eb"}
 
 
-def _parse_counts(value: str) -> list[int]:
-    try:
-        counts = [int(item) for item in value.split(",")]
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("counts must be comma-separated integers") from exc
-    if not counts or any(count <= 0 for count in counts):
-        raise argparse.ArgumentTypeError("counts must contain only positive integers")
-    return sorted(set(counts))
-
-
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--counts", type=_parse_counts, default=_parse_counts("25,100,400"))
-    parser.add_argument("--repeats", type=int, default=5, help="fresh processes per timing point")
-    parser.add_argument("--memory-repeats", type=int, default=3, help="fresh processes per memory point")
+    parser.add_argument("--counts", type=parse_counts, default=parse_counts("25,100,400"))
+    parser.add_argument("--repeats", type=parse_positive_int, default=5, help="fresh processes per timing point")
+    parser.add_argument("--memory-repeats", type=parse_positive_int, default=3, help="fresh processes per memory point")
     parser.add_argument("--seed", type=int, default=0, help="reproducible trial-order shuffle seed")
-    parser.add_argument("--python", type=Path, default=Path(sys.executable), help="CPython executable to benchmark")
+    parser.add_argument(
+        "--python",
+        type=resolve_python,
+        default=Path(sys.executable).resolve(),
+        help="CPython executable path or command name to benchmark",
+    )
+    parser.add_argument(
+        "--expect-python",
+        type=parse_python_version,
+        default=None,
+        metavar="MAJOR.MINOR",
+        help="fail unless the target interpreter has this major.minor version",
+    )
     parser.add_argument(
         "--output-dir",
-        type=Path,
+        type=parse_output_directory,
         default=None,
         help="result directory (default: .cache/metapathology-benchmarks/<timestamp>)",
     )
     parser.add_argument("--quick", action="store_true", help="use two small points and one sample for a smoke run")
     args = parser.parse_args()
-    if args.repeats <= 0 or args.memory_repeats <= 0:
-        parser.error("repeat counts must be positive")
+    try:
+        args.target = inspect_python(args.python)
+    except ValueError as exc:
+        parser.error(str(exc))
+    try:
+        validate_expected_python(args.target, args.expect_python)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.quick:
         args.counts = [10, 50]
         args.repeats = 1
@@ -347,7 +365,7 @@ def _plot_mutations(rows: list[dict[str, Any]], counts: list[int], output: Path)
     plt.close(figure)
 
 
-def _write_summary(rows: list[dict[str, Any]], counts: list[int], target: dict[str, str], output: Path) -> None:
+def _write_summary(rows: list[dict[str, Any]], counts: list[int], target: PythonMetadata, output: Path) -> None:
     lines = [
         "# metapathology benchmark",
         "",
@@ -406,14 +424,6 @@ def _write_summary(rows: list[dict[str, Any]], counts: list[int], target: dict[s
     output.write_text("\n".join(lines), encoding="utf-8")
 
 
-def _python_metadata(python: Path) -> dict[str, str]:
-    code = "import json, platform, sys; print(json.dumps({'version': sys.version, 'platform': platform.platform()}))"
-    completed = subprocess.run([str(python), "-c", code], check=True, capture_output=True, text=True)
-    value = json.loads(completed.stdout)
-    assert isinstance(value, dict)
-    return {str(key): str(item) for key, item in value.items()}
-
-
 def _git_revision() -> str | None:
     if shutil.which("git") is None:
         return None
@@ -434,7 +444,7 @@ def main() -> int:
         fixture = Path(temporary)
         _make_fixture(fixture, package, max(args.counts))
         rows = _sample(
-            args.python.resolve(),
+            args.python,
             fixture,
             package,
             args.counts,
@@ -442,7 +452,7 @@ def main() -> int:
             args.memory_repeats,
             args.seed,
         )
-    target = _python_metadata(args.python.resolve())
+    target = args.target
     document = {
         "schema_version": 1,
         "created_at": datetime.now(timezone.utc).isoformat(),

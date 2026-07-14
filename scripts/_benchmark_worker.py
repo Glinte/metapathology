@@ -39,13 +39,39 @@ class _NoOpFinder:
         return None
 
 
+def _positive_int(value: str) -> int:
+    """Parse a positive worker count."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def _existing_directory(value: str) -> Path:
+    """Parse an existing fixture directory."""
+    path = Path(value)
+    if not path.is_dir():
+        raise argparse.ArgumentTypeError(f"fixture directory does not exist: {value}")
+    return path
+
+
+def _package_name(value: str) -> str:
+    """Parse a dotted Python package name."""
+    if not value or any(not part.isidentifier() for part in value.split(".")):
+        raise argparse.ArgumentTypeError(f"invalid package name: {value}")
+    return value
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--scenario", choices=("native", "attributed", "mutation"), required=True)
     parser.add_argument("--metric", choices=("time", "memory"), required=True)
-    parser.add_argument("--count", type=int, required=True)
-    parser.add_argument("--package", required=True)
-    parser.add_argument("--fixture", type=Path, required=True)
+    parser.add_argument("--count", type=_positive_int, required=True)
+    parser.add_argument("--package", type=_package_name, required=True)
+    parser.add_argument("--fixture", type=_existing_directory, required=True)
     parser.add_argument("--monitored", action="store_true")
     return parser.parse_args()
 
