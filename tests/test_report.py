@@ -96,6 +96,7 @@ print(metapathology.render_report())
 def test_standard_unwrapped_finders_are_explained(run_python: RunPython) -> None:
     proc = run_python(DEFAULT_FINDERS)
     assert proc.returncode == 0, proc.stderr
+    assert "report guide: https://glinte.github.io/metapathology/report/" in proc.stdout
     assert "standard CPython finders left unwrapped (expected)" in proc.stdout
     assert "BuiltinImporter handles built-in modules" in proc.stdout
     assert "FrozenImporter handles frozen modules" in proc.stdout

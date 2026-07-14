@@ -56,3 +56,10 @@ def test_no_arguments_prints_usage_and_fails(tmp_path: Path) -> None:
     proc = run_cli(cwd=tmp_path)
     assert proc.returncode == 2
     assert "usage:" in proc.stderr
+    assert "https://glinte.github.io/metapathology/usage/" in proc.stderr
+
+
+def test_help_links_to_usage_documentation(tmp_path: Path) -> None:
+    proc = run_cli("--help", cwd=tmp_path)
+    assert proc.returncode == 0
+    assert "https://glinte.github.io/metapathology/usage/" in proc.stdout

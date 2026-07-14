@@ -18,6 +18,8 @@ usage: python -m metapathology <script.py> [args...]
 
 Runs the target under the metapathology import-machinery monitor and writes a
 diagnostic report to stderr when the target finishes.
+
+Documentation: https://glinte.github.io/metapathology/usage/
 """
 
 

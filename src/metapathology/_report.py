@@ -63,6 +63,7 @@ def _render_lines(monitor: "Monitor") -> list[str]:
     errors = [e for e in events if isinstance(e, InternalError)]
 
     lines = ["== metapathology report =="]
+    lines.append("report guide: https://glinte.github.io/metapathology/report/")
     lines.append(f"monitor enabled: {monitor.enabled}")
     lines.append(f"initial sys.meta_path: {_names_line(monitor.initial_meta_path)}")
     lines.append(f"current sys.meta_path: {_names_line(_current_meta_path_names())}")

@@ -8,7 +8,7 @@
   <a href="https://pypi.org/project/metapathology/"><img src="https://img.shields.io/pypi/v/metapathology.svg" alt="PyPI version"></a>
   <a href="https://pypi.org/project/metapathology/"><img src="https://img.shields.io/pypi/pyversions/metapathology.svg" alt="Supported Python versions"></a>
   <a href="https://github.com/Glinte/metapathology/actions/workflows/test.yml"><img src="https://github.com/Glinte/metapathology/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
-  <a href="https://github.com/Glinte/metapathology/actions/workflows/docs.yml"><img src="https://github.com/Glinte/metapathology/actions/workflows/docs.yml/badge.svg" alt="Documentation"></a>
+  <a href="https://glinte.github.io/metapathology/"><img src="https://github.com/Glinte/metapathology/actions/workflows/docs.yml/badge.svg" alt="Documentation"></a>
   <a href="https://sonarcloud.io/summary/new_code?id=Glinte_metapathology"><img src="https://sonarcloud.io/api/project_badges/measure?project=Glinte_metapathology&amp;metric=alert_status" alt="Quality gate status"></a>
 </p>
 
@@ -47,8 +47,9 @@ A report is printed at exit. Prefer `python -m metapathology` over a bare
 `metapathology` command: it guarantees the hooks land in the same interpreter
 and venv as the code under investigation.
 
-Library API, for when a wrapper isn't possible (notebooks, embedded
-interpreters, "I can only touch `conftest.py`"):
+[Library API](https://glinte.github.io/metapathology/api/), for when a wrapper
+isn't possible (notebooks, embedded interpreters, "I can only touch
+`conftest.py`"):
 
 ```python
 import metapathology
@@ -91,7 +92,9 @@ For integration with another diagnostic or test harness:
   monitor.
 
 Calling `report()` or `render_report()` before `install()` raises
-`RuntimeError`. There are no runtime dependencies.
+`RuntimeError`. There are no runtime dependencies. See the complete
+[usage guide](https://glinte.github.io/metapathology/usage/) for CLI behavior,
+lifecycle details, and integration examples.
 
 ## Reading the report
 
@@ -111,7 +114,9 @@ labels:
 
 These are diagnostic leads, not necessarily defects. Custom finders may bypass
 the standard path machinery intentionally, and the report replays the current
-`PathFinder` state rather than the exact state at import time.
+`PathFinder` state rather than the exact state at import time. The
+[report guide](https://glinte.github.io/metapathology/report/) explains every
+section and finding category.
 
 ## Resource use
 
@@ -122,8 +127,13 @@ currently no event limit or silent dropping policy. For a long-running or
 import-heavy process, call `report()` and `uninstall()` once the behavior of
 interest has been captured. Stack traces are stored for `sys.meta_path`
 changes, which makes mutation records more expensive than finder-call records.
+See [limitations and resource behavior](https://glinte.github.io/metapathology/limitations/)
+before monitoring a long-running process.
 
 ## How Python finds an imported module
+
+The [detailed import walkthrough](https://glinte.github.io/metapathology/concepts/)
+connects these Python mechanisms to what metapathology can record.
 
 Python first checks the requested module's fully qualified name in
 `sys.modules`. If an entry is already there, Python returns that same module
@@ -188,3 +198,6 @@ use a different kind of loader, the report notes that the normal
   installed callback remains as an inactive no-op after uninstalling.
 - This tool changes `sys.meta_path` while it is running. Use it for debugging,
   not as part of an application's normal runtime.
+
+See the complete [limitations guide](https://glinte.github.io/metapathology/limitations/)
+for timing, visibility, replay, cleanup, and memory boundaries.

@@ -7,6 +7,8 @@ changed (with stack traces), and which modules were loaded without the normal
 Preferred usage is the CLI: ``python -m metapathology <script.py>`` or
 ``python -m metapathology -m <module>``. The library API below exists for
 cases where a wrapper is impossible (notebooks, conftest.py-only access).
+
+Documentation: https://glinte.github.io/metapathology/
 """
 
 from importlib.metadata import version as _distribution_version
