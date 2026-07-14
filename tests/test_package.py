@@ -8,4 +8,4 @@ def test_package_is_importable() -> None:
 
 
 def test_distribution_metadata_is_available() -> None:
-    assert version("metapathology") == "0.1.0"
+    assert version("metapathology") == "0.1.0.dev0"

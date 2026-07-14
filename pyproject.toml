@@ -1,6 +1,6 @@
 [project]
 name = "metapathology"
-version = "0.1.0"
+version = "0.1.0.dev0"
 description = "sys.meta_path diagnostics: find out who is messing with Python's import machinery"
 readme = "README.md"
 authors = [

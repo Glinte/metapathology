@@ -1,0 +1,54 @@
+name: Publish release to PyPI
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+concurrency:
+  group: pypi-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to PyPI
+    if: github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/metapathology/
+    permissions:
+      contents: read
+      id-token: write # Authenticate to PyPI through GitHub OIDC.
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.13"
+          python-version: "3.14"
+          enable-cache: false
+
+      - name: Verify release version
+        shell: bash
+        run: test "v$(uv version --short)" = "$RELEASE_TAG"
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+
+      - name: Build wheel and source distribution
+        run: uv build
+
+      - name: Test wheel in isolation
+        run: uv run --isolated --no-project --with ./dist/metapathology-*.whl python -c "import metapathology"
+
+      - name: Test source distribution in isolation
+        run: uv run --isolated --no-project --with ./dist/metapathology-*.tar.gz python -c "import metapathology"
+
+      - name: Publish to PyPI
+        run: uv publish
