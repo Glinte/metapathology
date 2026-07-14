@@ -54,11 +54,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install uv and Python
+      - name: Install uv
         uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.11.28"
-          python-version: ${{ matrix.python-version }}
           enable-cache: true
 
       - name: Run benchmark
@@ -70,9 +69,7 @@ jobs:
           BENCHMARK_SEED: ${{ inputs.seed }}
           TARGET_PYTHON: ${{ matrix.python-version }}
         run: |
-          $targetPython = uv python find "$env:TARGET_PYTHON"
-          uv run --script scripts/benchmark.py `
-            --python $targetPython `
+          uv run --python "$env:TARGET_PYTHON" --script scripts/benchmark.py `
             --expect-python "$env:TARGET_PYTHON" `
             --counts "$env:BENCHMARK_COUNTS" `
             --repeats "$env:BENCHMARK_REPEATS" `
