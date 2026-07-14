@@ -25,9 +25,20 @@ execution through Python's [`runpy` module][runpy] has some differences from a
 direct invocation, including [`__main__` import metadata][main-metadata] and
 Windows multiprocessing re-import behavior.
 
-Prefer `python -m metapathology` to a console-script shortcut. The `-m` form
-guarantees that the monitor is installed in the same interpreter and virtual
-environment as the target.
+## Use the shorter command
+
+Installation also provides a `metapathology` executable with the same script
+and module modes:
+
+```console
+metapathology path/to/script.py argument-one
+metapathology -m package.module argument-one
+```
+
+Prefer `python -m metapathology` when interpreter selection matters. The `-m`
+form guarantees that the monitor is installed in the same interpreter and
+virtual environment as the target, while the shorter command uses whichever
+installation appears first on the shell's command search path.
 
 The target's integer `SystemExit` status is preserved. An unhandled exception
 prints its traceback and produces exit status 1. The diagnostic report is

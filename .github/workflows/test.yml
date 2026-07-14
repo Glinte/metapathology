@@ -103,11 +103,13 @@ jobs:
         run: |
           uv run --isolated --no-project --with ./dist/metapathology-*.whl python -c "from importlib.metadata import distribution; dist = distribution('metapathology'); assert dist.requires is None; assert any(str(path).endswith('metapathology/py.typed') for path in (dist.files or ()))"
           uv run --isolated --no-project --with ./dist/metapathology-*.whl python -m metapathology --help
+          uv run --isolated --no-project --with ./dist/metapathology-*.whl metapathology --help
 
       - name: Test source distribution in isolation
         run: |
           uv run --isolated --no-project --with ./dist/metapathology-*.tar.gz python -c "from importlib.metadata import distribution; dist = distribution('metapathology'); assert dist.requires is None; assert any(str(path).endswith('metapathology/py.typed') for path in (dist.files or ()))"
           uv run --isolated --no-project --with ./dist/metapathology-*.tar.gz python -m metapathology --help
+          uv run --isolated --no-project --with ./dist/metapathology-*.tar.gz metapathology --help
 
   pytest:
     name: Python ${{ matrix.python-version }} on ${{ matrix.os }}

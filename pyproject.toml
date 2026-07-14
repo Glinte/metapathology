@@ -30,6 +30,9 @@ classifiers = [
 ]
 dependencies = []
 
+[project.scripts]
+metapathology = "metapathology.__main__:main"
+
 [project.urls]
 Documentation = "https://glinte.github.io/metapathology/"
 Homepage = "https://github.com/Glinte/metapathology"

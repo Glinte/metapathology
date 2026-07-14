@@ -15,6 +15,8 @@ import metapathology
 _USAGE = """\
 usage: python -m metapathology <script.py> [args...]
        python -m metapathology -m <module> [args...]
+       metapathology <script.py> [args...]
+       metapathology -m <module> [args...]
 
 Runs the target under the metapathology import-machinery monitor and writes a
 diagnostic report to stderr when the target finishes.

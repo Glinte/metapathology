@@ -43,9 +43,15 @@ $ python -m metapathology myscript.py --my-args
 $ python -m metapathology -m pytest tests/
 ```
 
-A report is printed at exit. Prefer `python -m metapathology` over a bare
-`metapathology` command: it guarantees the hooks land in the same interpreter
-and venv as the code under investigation.
+A report is printed at exit. An installed `metapathology` command provides a
+shorter equivalent:
+
+```console
+$ metapathology myscript.py --my-args
+```
+
+Prefer `python -m metapathology`: it guarantees the hooks land in the same
+interpreter and venv as the code under investigation.
 
 [Library API](https://glinte.github.io/metapathology/api/), for when a wrapper
 isn't possible (notebooks, embedded interpreters, "I can only touch
@@ -128,6 +134,7 @@ import-heavy process, call `report()` and `uninstall()` once the behavior of
 interest has been captured. Stack traces are stored for `sys.meta_path`
 changes, which makes mutation records more expensive than finder-call records.
 See [limitations and resource behavior](https://glinte.github.io/metapathology/limitations/)
+and the reproducible [speed and memory benchmarks](https://glinte.github.io/metapathology/performance/)
 before monitoring a long-running process.
 
 ## How Python finds an imported module

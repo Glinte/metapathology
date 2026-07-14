@@ -18,6 +18,18 @@ def run_cli(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def run_console_script(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    executable = Path(sys.executable).with_name("metapathology.exe" if sys.platform == "win32" else "metapathology")
+    return subprocess.run(
+        [executable, *args],
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+        check=False,
+        timeout=SUBPROCESS_TIMEOUT,
+    )
+
+
 def test_script_mode_runs_target_with_its_argv_and_reports(tmp_path: Path) -> None:
     script = tmp_path / "prog.py"
     script.write_text("import sys\nimport colorsys\nprint('argv:', sys.argv[1:])\n")
@@ -62,4 +74,11 @@ def test_no_arguments_prints_usage_and_fails(tmp_path: Path) -> None:
 def test_help_links_to_usage_documentation(tmp_path: Path) -> None:
     proc = run_cli("--help", cwd=tmp_path)
     assert proc.returncode == 0
+    assert "https://glinte.github.io/metapathology/usage/" in proc.stdout
+
+
+def test_installed_console_script_runs_cli(tmp_path: Path) -> None:
+    proc = run_console_script("--help", cwd=tmp_path)
+    assert proc.returncode == 0
+    assert "usage:" in proc.stdout
     assert "https://glinte.github.io/metapathology/usage/" in proc.stdout
