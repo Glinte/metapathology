@@ -14,9 +14,10 @@ motivating incident.
 
 ## Status
 
-Early design phase. Nothing usable yet.
+First working version: all three layers, CLI, and exit report are implemented
+and tested. Published to PyPI.
 
-## Planned usage
+## Usage
 
 Primary: run your program under observation, no code changes needed —
 
@@ -41,7 +42,7 @@ metapathology.install()  # as early as possible
 No dependencies, no configuration required. It's a debug tool: run it, read
 the report, remove it.
 
-## How it will work
+## How it works
 
 Three layers, escalating in invasiveness, covering each other's blind spots:
 

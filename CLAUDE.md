@@ -109,6 +109,13 @@ These came out of the design discussion; they are not optional style.
 ## Layout & tooling
 
 - `src/metapathology/` — package source (`py.typed`; fully type-annotated).
+  - `_records.py` — frozen event dataclasses + `type_name()`; leaf module,
+    no imports from siblings.
+  - `_monitor.py` — `Monitor` (all three layers), `_InstrumentedMetaPath`,
+    and the module-level API (`install`/`uninstall`/`report`/...).
+  - `_report.py` — all rendering and the bypass/no-spec analysis; imports
+    `_monitor` only under `TYPE_CHECKING` (avoids the runtime cycle).
+  - `__main__.py` — the CLI (runpy wrapper).
 - Build backend: `uv_build`; use `uv` for everything (`uv run`, `uv sync`).
   Note: `venv/` in the repo root is a stray non-uv env; `uv` will use `.venv`.
 - Tests will need subprocess isolation: most of this tool's behavior can only

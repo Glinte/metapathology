@@ -1,0 +1,570 @@
+"""Core monitor: audit hook, instrumented ``sys.meta_path`` list, finder shadowing.
+
+Hot-path rules (see CLAUDE.md): everything needed here is imported at module
+scope; recording code takes ``_record_lock`` only around plain-data appends;
+foreign objects are reduced to type names and ids at capture time.
+"""
+
+import atexit
+import contextlib
+import functools
+import sys
+import threading
+import traceback
+from typing import TYPE_CHECKING, Any, SupportsIndex, TextIO
+
+from metapathology import _report
+from metapathology._records import (
+    FindSpecCall,
+    InternalError,
+    MetaPathMutation,
+    MetaPathReassignment,
+    MonitorEvent,
+    type_name,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+    from types import FrameType
+
+    from _typeshed.importlib import MetaPathFinderProtocol
+    from typing_extensions import Self
+
+# Frames captured per event; the report trims further (and filters noise) at display time.
+_STACK_CAPTURE_LIMIT = 20
+
+
+def _capture_stack(frame: "FrameType") -> traceback.StackSummary:
+    """Capture a stack summary from ``frame`` outward without reading source lines.
+
+    ``lookup_lines=False`` keeps source reading (and any ``__loader__.get_source``
+    side effects) out of the import hot path; lines resolve at format time.
+
+    Args:
+        frame: Innermost frame to start walking from.
+    """
+    return traceback.StackSummary.extract(traceback.walk_stack(frame), limit=_STACK_CAPTURE_LIMIT, lookup_lines=False)
+
+
+class Monitor:
+    """Records import-machinery activity. Use the module-level :func:`install`."""
+
+    def __init__(self) -> None:
+        # Guards _events/_seq/_patched/_skipped. Held only around plain-data
+        # reads/writes, never across foreign code.
+        self._record_lock = threading.Lock()
+        # Serializes install/uninstall/reinstall. Lock order: _reinstall_lock
+        # may be held while taking _record_lock, never the other way around.
+        self._reinstall_lock = threading.Lock()
+        # Per-thread re-entrancy flag (.in_audit) so an import triggered from
+        # inside _audit cannot recurse back into it.
+        self._local = threading.local()
+        # One counter for all record types, so the report can interleave the
+        # different event kinds chronologically.
+        self._seq = 0
+        self._events: list[MonitorEvent] = []
+        # Master switch: hooks stay registered after uninstall() (audit hooks
+        # are irremovable) but become no-ops when this is False.
+        self._enabled = False
+        # sys.addaudithook is one-way; remember so a reinstall never stacks a second hook.
+        self._audit_installed = False
+        # Whether our atexit callback is currently registered (mirrors it for unregister).
+        self._report_at_exit = False
+        # The exact list object we last put into sys.meta_path. The audit hook
+        # compares by identity: a mismatch means someone reassigned sys.meta_path.
+        self._instrumented: _InstrumentedMetaPath | None = None
+        # Both dicts key by id(finder) and hold strong finder references, keeping ids
+        # unique for the process lifetime.
+        # id -> (finder, original find_spec). A None original marks an
+        # in-progress claim, so concurrent callers cannot double-wrap.
+        self._patched: dict[int, tuple[Any, Any]] = {}
+        # id -> (finder, human-readable reason it could not be instrumented).
+        self._skipped: dict[int, tuple[Any, str]] = {}
+        # sys.modules names at install time; the report analyzes only modules
+        # imported afterwards.
+        self._baseline_modules: frozenset[str] = frozenset()
+        # Finder display names at install time, for the report header.
+        self._initial_meta_path: tuple[str, ...] = ()
+
+    @property
+    def enabled(self) -> bool:
+        """Whether the monitor is currently observing."""
+        return self._enabled
+
+    @property
+    def initial_meta_path(self) -> tuple[str, ...]:
+        """Finder names in ``sys.meta_path`` at install time."""
+        return self._initial_meta_path
+
+    @property
+    def baseline_modules(self) -> frozenset[str]:
+        """Names present in ``sys.modules`` at install time."""
+        return self._baseline_modules
+
+    def events(self) -> list[MonitorEvent]:
+        """Return a snapshot of all recorded events, in capture order."""
+        with self._record_lock:
+            return list(self._events)
+
+    def skipped_finders(self) -> list[tuple[str, str]]:
+        """Return ``(finder name, reason)`` for meta-path entries that could not be instrumented."""
+        with self._record_lock:
+            return [(type_name(finder), reason) for finder, reason in self._skipped.values()]
+
+    def install(self, *, report_at_exit: bool = True) -> None:
+        """Instrument ``sys.meta_path`` and register the import audit hook (idempotent).
+
+        Args:
+            report_at_exit: Also register an atexit callback that writes the
+                report to stderr.
+        """
+        with self._reinstall_lock:
+            if self._enabled:
+                return
+            self._enabled = True
+            self._baseline_modules = frozenset(sys.modules)
+            current = sys.meta_path
+            self._initial_meta_path = tuple(type_name(f) for f in current)
+            instrumented = _InstrumentedMetaPath(current, self)
+            for finder in list(instrumented):
+                self._instrument_finder(finder)
+            self._instrumented = instrumented
+            sys.meta_path = instrumented
+            if not self._audit_installed:
+                # Audit hooks are irremovable; _audit goes inert when disabled.
+                sys.addaudithook(self._audit)
+                self._audit_installed = True
+        if report_at_exit and not self._report_at_exit:
+            self._report_at_exit = True
+            atexit.register(self._report_atexit)
+
+    def uninstall(self) -> None:
+        """Restore a plain ``sys.meta_path`` list and unshadow all finders (idempotent)."""
+        with self._reinstall_lock:
+            if not self._enabled:
+                return
+            self._enabled = False
+            current = sys.meta_path
+            if isinstance(current, _InstrumentedMetaPath):
+                sys.meta_path = list(current)
+            self._instrumented = None
+            for finder, _original in list(self._patched.values()):
+                with contextlib.suppress(AttributeError, KeyError, TypeError):
+                    del finder.__dict__["find_spec"]
+            with self._record_lock:
+                self._patched.clear()
+                self._skipped.clear()
+        if self._report_at_exit:
+            self._report_at_exit = False
+            atexit.unregister(self._report_atexit)
+
+    def _audit(self, event: str, args: tuple[Any, ...]) -> None:
+        """``sys.addaudithook`` callback: detect ``sys.meta_path`` reassignment on each ``import`` event.
+
+        Audit hooks are irremovable, so this must stay a cheap no-op once the
+        monitor is disabled. Exceptions are diverted into the event log because
+        an exception escaping an audit hook would abort the user's import.
+
+        Args:
+            event: Audit event name; everything but ``"import"`` is ignored.
+            args: Audit event arguments; for ``import`` the first item is the
+                name of the module being resolved.
+        """
+        if event != "import" or not self._enabled:
+            return
+        if getattr(self._local, "in_audit", False):
+            return
+        self._local.in_audit = True
+        try:
+            if sys.meta_path is self._instrumented:
+                return
+            self._reinstall(args)
+        except Exception as exc:
+            # An exception escaping an audit hook aborts the user's import.
+            self._record_internal_error("audit_hook", exc)
+        finally:
+            self._local.in_audit = False
+
+    def _reinstall(self, args: tuple[Any, ...]) -> None:
+        """Wrap a foreign ``sys.meta_path`` in fresh instrumentation and record the reassignment.
+
+        Args:
+            args: The ``import`` audit event arguments, used to attribute the
+                detection to the import that was in flight.
+        """
+        with self._reinstall_lock:
+            # Re-check: another importing thread may have reinstalled already.
+            current = sys.meta_path
+            expected = self._instrumented
+            if current is expected or expected is None or not self._enabled:
+                return
+            old_contents = tuple(type_name(f) for f in list(expected))
+            new_contents = tuple(type_name(f) for f in list(current))
+            replacement = _InstrumentedMetaPath(current, self)
+            for finder in list(replacement):
+                self._instrument_finder(finder)
+            self._instrumented = replacement
+            sys.meta_path = replacement
+        fullname = args[0] if args and isinstance(args[0], str) else "<unknown>"
+        stack = _capture_stack(sys._getframe())
+        thread_name = threading.current_thread().name
+        with self._record_lock:
+            self._seq += 1
+            self._events.append(
+                MetaPathReassignment(
+                    seq=self._seq,
+                    during_import=fullname,
+                    old_contents=old_contents,
+                    new_contents=new_contents,
+                    thread_name=thread_name,
+                    stack=stack,
+                )
+            )
+
+    def _instrument_finder(self, finder: object) -> None:
+        """Shadow ``finder.find_spec`` with a recording wrapper in the instance dict (layer 3).
+
+        Instance-dict shadowing keeps third-party ``isinstance`` scans of
+        ``sys.meta_path`` working. Entries that cannot be shadowed (classes,
+        ``__slots__`` instances, objects without ``find_spec``) are remembered
+        as skipped and attributed by elimination at report time.
+
+        Args:
+            finder: Any ``sys.meta_path`` entry; safe to pass repeatedly.
+        """
+        finder_id = id(finder)
+        with self._record_lock:
+            if finder_id in self._patched or finder_id in self._skipped:
+                return
+            # Claim the id before touching the finder so concurrent callers don't double-wrap.
+            self._patched[finder_id] = (finder, None)
+        if isinstance(finder, type):
+            # Class entries (PathFinder and friends) are shared stdlib state; never mutate them.
+            self._skip_finder(finder_id, finder, "class entry; instance-dict shadowing not applicable")
+            return
+        try:
+            original = getattr(finder, "find_spec", None)
+        except Exception as exc:
+            self._skip_finder(finder_id, finder, "find_spec lookup raised")
+            self._record_internal_error("instrument_finder", exc)
+            return
+        if not callable(original):
+            self._skip_finder(finder_id, finder, "no callable find_spec")
+            return
+        wrapper = self._make_find_spec_wrapper(finder, original)
+        try:
+            setattr(finder, "find_spec", wrapper)
+        except Exception:
+            self._skip_finder(finder_id, finder, "find_spec not settable on the instance")
+            return
+        with self._record_lock:
+            self._patched[finder_id] = (finder, original)
+
+    def _skip_finder(self, finder_id: int, finder: object, reason: str) -> None:
+        """Mark a finder as uninstrumentable, releasing any claim taken by ``_instrument_finder``.
+
+        Args:
+            finder_id: ``id(finder)``, the claim key.
+            finder: The entry itself; kept referenced so its id stays unique.
+            reason: Human-readable explanation shown in the report.
+        """
+        with self._record_lock:
+            self._patched.pop(finder_id, None)
+            self._skipped[finder_id] = (finder, reason)
+
+    def _make_find_spec_wrapper(self, finder: object, original: "Callable[..., Any]") -> "Callable[..., Any]":
+        """Build the ``find_spec`` replacement that records each call and delegates to the original.
+
+        Args:
+            finder: The finder being shadowed, for attribution.
+            original: The bound ``find_spec`` to delegate to.
+
+        Returns:
+            A plain function suitable for the finder's instance dict; functions
+            stored there are not bound, so it takes no ``self``.
+        """
+
+        @functools.wraps(original)
+        def find_spec(fullname: str, path: Any = None, target: Any = None) -> Any:
+            spec = None
+            exception_type_name: str | None = None
+            try:
+                spec = original(fullname, path, target)
+            except BaseException as exc:
+                exception_type_name = type(exc).__name__
+                raise
+            finally:
+                self._record_find_spec(finder, fullname, spec, exception_type_name)
+            return spec
+
+        return find_spec
+
+    def _record_find_spec(self, finder: object, fullname: str, spec: Any, exception_type_name: str | None) -> None:
+        """Record one ``find_spec`` call, reducing the spec to primitives before taking the lock.
+
+        Args:
+            finder: The finder that was called.
+            fullname: The module name that was probed.
+            spec: Whatever ``find_spec`` returned; ``None`` means the finder passed.
+            exception_type_name: Set when the call raised instead of returning.
+        """
+        try:
+            loader_type_name: str | None = None
+            origin: str | None = None
+            if spec is not None:
+                loader = getattr(spec, "loader", None)
+                if loader is not None:
+                    loader_type_name = type_name(loader)
+                raw_origin = getattr(spec, "origin", None)
+                if isinstance(raw_origin, str):
+                    origin = raw_origin
+            finder_type_name = type_name(finder)
+            finder_id = id(finder)
+            found = spec is not None
+            thread_name = threading.current_thread().name
+            with self._record_lock:
+                self._seq += 1
+                self._events.append(
+                    FindSpecCall(
+                        seq=self._seq,
+                        fullname=fullname,
+                        finder_type_name=finder_type_name,
+                        finder_id=finder_id,
+                        found=found,
+                        loader_type_name=loader_type_name,
+                        origin=origin,
+                        exception_type_name=exception_type_name,
+                        thread_name=thread_name,
+                    )
+                )
+        except Exception as exc:
+            self._record_internal_error("record_find_spec", exc)
+
+    def _on_meta_path_mutation(
+        self,
+        mutated: "_InstrumentedMetaPath",
+        op: str,
+        added: tuple[object, ...],
+        removed: tuple[object, ...],
+        frame: "FrameType",
+    ) -> None:
+        """Record a mutation of the instrumented list and instrument any newly added finders.
+
+        Called by every overridden mutator of ``_InstrumentedMetaPath``.
+
+        Args:
+            mutated: The list that was mutated (not necessarily the live
+                ``sys.meta_path`` anymore, after a reassignment).
+            op: Name of the mutating method, e.g. ``"insert"``.
+            added: Finders the mutation added.
+            removed: Finders the mutation removed.
+            frame: The mutator's caller, where the stack capture starts.
+        """
+        try:
+            if not self._enabled:
+                return
+            for finder in added:
+                self._instrument_finder(finder)
+            added_names = tuple(type_name(f) for f in added)
+            removed_names = tuple(type_name(f) for f in removed)
+            contents_after = tuple(type_name(f) for f in list(mutated))
+            thread_name = threading.current_thread().name
+            stack = _capture_stack(frame)
+            with self._record_lock:
+                self._seq += 1
+                self._events.append(
+                    MetaPathMutation(
+                        seq=self._seq,
+                        op=op,
+                        added=added_names,
+                        removed=removed_names,
+                        contents_after=contents_after,
+                        thread_name=thread_name,
+                        stack=stack,
+                    )
+                )
+        except Exception as exc:
+            self._record_internal_error("meta_path_mutation", exc)
+
+    def _record_internal_error(self, where: str, exc: BaseException) -> None:
+        """Record an exception raised by our own instrumentation instead of letting it escape.
+
+        Args:
+            where: Short label of the code path that failed.
+            exc: The caught exception; stringified defensively here.
+        """
+        try:
+            message = str(exc)
+        except Exception:
+            message = "<unprintable>"
+        exception_type_name = type(exc).__name__
+        with self._record_lock:
+            self._seq += 1
+            self._events.append(
+                InternalError(seq=self._seq, where=where, exception_type_name=exception_type_name, message=message)
+            )
+
+    def _report_atexit(self) -> None:
+        """Write the report to stderr from atexit without ever breaking interpreter shutdown."""
+        try:
+            _report.write_report(self, sys.stderr)
+        except Exception:
+            traceback.print_exc()
+
+
+class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
+    """Drop-in ``sys.meta_path`` replacement that records mutations.
+
+    A real ``list`` subclass, never a proxy: third-party code that scans
+    ``sys.meta_path`` with ``isinstance``, slices it, or iterates it keeps
+    working unchanged. Mutations made from C via ``PyList_*`` bypass these
+    overrides; that is an accepted blind spot.
+    """
+
+    __slots__ = ("_monitor",)
+
+    def __init__(self, contents: "Iterable[MetaPathFinderProtocol]", monitor: Monitor) -> None:
+        """Wrap ``contents`` without recording a mutation.
+
+        Args:
+            contents: The finders to start with, typically the previous
+                ``sys.meta_path``.
+            monitor: The monitor that receives mutation callbacks.
+        """
+        super().__init__(contents)
+        self._monitor = monitor
+
+    def append(self, item: "MetaPathFinderProtocol") -> None:
+        """Delegate to ``list.append`` and record the addition."""
+        super().append(item)
+        self._monitor._on_meta_path_mutation(self, "append", (item,), (), sys._getframe(1))
+
+    def insert(self, index: SupportsIndex, item: "MetaPathFinderProtocol") -> None:
+        """Delegate to ``list.insert`` and record the addition."""
+        super().insert(index, item)
+        self._monitor._on_meta_path_mutation(self, "insert", (item,), (), sys._getframe(1))
+
+    def extend(self, items: "Iterable[MetaPathFinderProtocol]") -> None:
+        """Record an ``extend``, materializing ``items`` first so one-shot iterators can be both stored and logged."""
+        materialized = tuple(items)
+        super().extend(materialized)
+        self._monitor._on_meta_path_mutation(self, "extend", materialized, (), sys._getframe(1))
+
+    def remove(self, item: "MetaPathFinderProtocol") -> None:
+        """Delegate to ``list.remove`` and record the removal."""
+        super().remove(item)
+        self._monitor._on_meta_path_mutation(self, "remove", (), (item,), sys._getframe(1))
+
+    def pop(self, index: SupportsIndex = -1) -> "MetaPathFinderProtocol":
+        """Delegate to ``list.pop`` and record the removal.
+
+        Returns:
+            The removed finder, as ``list.pop`` would.
+        """
+        item = super().pop(index)
+        self._monitor._on_meta_path_mutation(self, "pop", (), (item,), sys._getframe(1))
+        return item
+
+    def clear(self) -> None:
+        """Record the removal of the entire contents, then delegate to ``list.clear``."""
+        removed = tuple(self)
+        super().clear()
+        self._monitor._on_meta_path_mutation(self, "clear", (), removed, sys._getframe(1))
+
+    def reverse(self) -> None:
+        """Record an order-only mutation; finder precedence changes even though membership does not."""
+        super().reverse()
+        self._monitor._on_meta_path_mutation(self, "reverse", (), (), sys._getframe(1))
+
+    def __setitem__(self, index: SupportsIndex | slice, value: Any) -> None:
+        """Record single-item or slice replacement (slice assignment is how many tools filter finders)."""
+        if isinstance(index, slice):
+            added = tuple(value)
+            removed = tuple(self[index])
+            super().__setitem__(index, added)
+        else:
+            added = (value,)
+            removed = (self[index],)
+            super().__setitem__(index, value)
+        self._monitor._on_meta_path_mutation(self, "__setitem__", added, removed, sys._getframe(1))
+
+    def __delitem__(self, index: SupportsIndex | slice) -> None:
+        """Delegate to ``list.__delitem__`` and record the removed finder(s)."""
+        removed = tuple(self[index]) if isinstance(index, slice) else (self[index],)
+        super().__delitem__(index)
+        self._monitor._on_meta_path_mutation(self, "__delitem__", (), removed, sys._getframe(1))
+
+    def __iadd__(self, items: "Iterable[MetaPathFinderProtocol]") -> "Self":
+        """Record ``+=``, which reaches ``list`` at the C level and would otherwise bypass the ``extend`` override."""
+        materialized = tuple(items)
+        super().extend(materialized)
+        self._monitor._on_meta_path_mutation(self, "__iadd__", materialized, (), sys._getframe(1))
+        return self
+
+
+# One Monitor per process: the instrumentation targets process-global state
+# (sys.meta_path, the audit hook), so multiple instances would fight each other.
+_monitor_singleton: Monitor | None = None
+_singleton_lock = threading.Lock()
+
+
+def install(*, report_at_exit: bool = True) -> Monitor:
+    """Install the import-machinery monitor (idempotent) and return it.
+
+    Call as early as possible: only imports and mutations that happen after
+    this call are observed.
+
+    Args:
+        report_at_exit: Also register an atexit callback that writes the
+            report to stderr.
+    """
+    global _monitor_singleton
+    with _singleton_lock:
+        if _monitor_singleton is None:
+            _monitor_singleton = Monitor()
+        monitor = _monitor_singleton
+    monitor.install(report_at_exit=report_at_exit)
+    return monitor
+
+
+def uninstall() -> None:
+    """Undo :func:`install`: restore a plain ``sys.meta_path`` and unshadow finders."""
+    monitor = get_monitor()
+    if monitor is not None:
+        monitor.uninstall()
+
+
+def get_monitor() -> Monitor | None:
+    """Return the process-wide monitor, or None if :func:`install` was never called."""
+    with _singleton_lock:
+        return _monitor_singleton
+
+
+def report(file: TextIO | None = None) -> None:
+    """Write the diagnostic report to ``file`` (default ``sys.stderr``).
+
+    Raises:
+        RuntimeError: If :func:`install` was never called.
+    """
+    _report.write_report(_require_monitor(), file)
+
+
+def render_report() -> str:
+    """Return the diagnostic report as text.
+
+    Raises:
+        RuntimeError: If :func:`install` was never called.
+    """
+    return _report.render_report(_require_monitor())
+
+
+def _require_monitor() -> Monitor:
+    """Return the singleton monitor.
+
+    Raises:
+        RuntimeError: If :func:`install` was never called.
+    """
+    monitor = get_monitor()
+    if monitor is None:
+        raise RuntimeError("metapathology.install() has not been called")
+    return monitor
