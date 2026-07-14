@@ -1,4 +1,18 @@
-# metapathology
+<h1 align="center">metapathology</h1>
+
+<p align="center">
+  Diagnose Python import hooks without changing import outcomes.
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/metapathology/"><img src="https://img.shields.io/pypi/v/metapathology.svg" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/metapathology/"><img src="https://img.shields.io/pypi/pyversions/metapathology.svg" alt="Supported Python versions"></a>
+  <a href="https://github.com/Glinte/metapathology/actions/workflows/test.yml"><img src="https://github.com/Glinte/metapathology/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="https://sonarcloud.io/summary/new_code?id=Glinte_metapathology"><img src="https://sonarcloud.io/api/project_badges/measure?project=Glinte_metapathology&amp;metric=alert_status" alt="Quality gate status"></a>
+</p>
+
+> [!IMPORTANT]
+> This project is mostly AI generated (for now). I do understand what it does and how it works, but I only skimmed the code. I can attest the explanations in README is accurate though.
 
 `metapathology` is a stdlib-only diagnostic tool for CPython imports. It
 reports:
