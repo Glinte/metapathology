@@ -11,7 +11,11 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+    "basedpyright>=1.31.3",
+    "pyrefly>=0.44.0",
     "pytest>=8.3",
+    "pytest-cov>=6.3",
+    "ruff>=0.12.11",
 ]
 
 [tool.pytest.ini_options]
@@ -19,7 +23,57 @@ addopts = [
     "--strict-config",
     "--strict-markers",
 ]
+filterwarnings = ["error"]
 testpaths = ["tests"]
+xfail_strict = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E4",
+    "E7",
+    "E9",
+    "F",
+    "I",
+    "UP",
+    "RUF",
+    "PT",
+    "RET",
+    "SIM",
+    "PERF",
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.basedpyright]
+pythonVersion = "3.10"
+pythonPlatform = "All"
+typeCheckingMode = "standard"
+include = ["src", "tests"]
+exclude = ["**/__pycache__", "**/.*"]
+strictListInference = true
+strictDictionaryInference = true
+strictSetInference = true
+deprecateTypingAliases = true
+reportMissingParameterType = "error"
+reportUnnecessaryComparison = "error"
+reportUnnecessaryContains = "error"
+
+[tool.pyrefly]
+project-includes = ["src/**/*.py", "tests/**/*.py"]
+python-version = "3.10"
+
+[tool.coverage.run]
+branch = true
+source = ["metapathology"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
 
 [build-system]
 requires = ["uv_build>=0.11.13,<0.12.0"]
