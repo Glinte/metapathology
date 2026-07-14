@@ -9,6 +9,8 @@ Preferred usage is the CLI: ``python -m metapathology <script.py>`` or
 cases where a wrapper is impossible (notebooks, conftest.py-only access).
 """
 
+from importlib.metadata import version as _distribution_version
+
 from metapathology._monitor import Monitor, get_monitor, install, render_report, report, uninstall
 from metapathology._records import (
     FindSpecCall,
@@ -18,7 +20,7 @@ from metapathology._records import (
     MonitorEvent,
 )
 
-__version__ = "0.1.0"
+__version__ = _distribution_version("metapathology")
 
 __all__ = [
     "FindSpecCall",
