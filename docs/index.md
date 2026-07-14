@@ -37,6 +37,7 @@ and lifecycle control.
 - [How it works](concepts.md) — module caching, path hooks, and what the monitor records
 - [Reading the report](report.md) — sections, finding labels, and investigation order
 - [Library API](api.md) — public functions, `Monitor`, and event records
+- [Speed and memory use](performance.md) — overhead sources, benchmarks, and capture sizing
 - [Limitations and resource behavior](limitations.md) — observation boundaries and runtime cost
 - [Development](development.md) — invariants, checks, and documentation workflow
 

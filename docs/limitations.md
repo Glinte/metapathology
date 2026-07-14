@@ -70,7 +70,8 @@ dropped-record policy.
 Mutation and reassignment records are more expensive because they retain stack
 summaries. In a long-running or import-heavy process, install immediately
 before the behavior of interest, then call `report()` and `uninstall()` after
-capturing it. See the [library API](api.md) for lifecycle details.
+capturing it. See [speed and memory use](performance.md) for the cost model and
+reproducible benchmarks, and the [library API](api.md) for lifecycle details.
 
 Reporting copies mutable interpreter collections and tolerates concurrent
 changes, so a report produced while daemon threads are importing may be

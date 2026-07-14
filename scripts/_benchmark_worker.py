@@ -1,0 +1,136 @@
+"""Isolated benchmark worker for ``scripts/benchmark.py``.
+
+This file intentionally has no inline dependencies. The parent may run it with
+any supported CPython interpreter without installing benchmark libraries into
+the process whose imports are being measured.
+"""
+
+import argparse
+import gc
+import importlib
+import json
+import sys
+import time
+import tracemalloc
+from importlib.machinery import PathFinder
+from pathlib import Path
+from typing import Any
+
+import metapathology
+
+
+class _DelegatingFinder:
+    """An instance finder that delegates synthetic imports to ``PathFinder``."""
+
+    def __init__(self, package: str) -> None:
+        self._package = package
+
+    def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> Any:
+        if fullname == self._package or fullname.startswith(f"{self._package}."):
+            return PathFinder.find_spec(fullname, path, target)
+        return None
+
+
+class _NoOpFinder:
+    """Settable finder used to exercise instrumented-list mutations."""
+
+    @staticmethod
+    def find_spec(fullname: str, path: Any = None, target: Any = None) -> None:
+        return None
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--scenario", choices=("native", "attributed", "mutation"), required=True)
+    parser.add_argument("--metric", choices=("time", "memory"), required=True)
+    parser.add_argument("--count", type=int, required=True)
+    parser.add_argument("--package", required=True)
+    parser.add_argument("--fixture", type=Path, required=True)
+    parser.add_argument("--monitored", action="store_true")
+    return parser.parse_args()
+
+
+def _prepare(
+    args: argparse.Namespace,
+) -> tuple[metapathology.Monitor | None, list[str], _NoOpFinder | None, float]:
+    sys.path.insert(0, str(args.fixture))
+    names = [f"{args.package}.module_{index:05d}" for index in range(args.count)]
+    if args.scenario == "attributed":
+        sys.meta_path.insert(0, _DelegatingFinder(args.package))
+    monitor = None
+    install_seconds = 0.0
+    if args.monitored:
+        started = time.perf_counter()
+        monitor = metapathology.install(report_at_exit=False)
+        install_seconds = time.perf_counter() - started
+    mutation_finder = None
+    if args.scenario == "mutation":
+        mutation_finder = _NoOpFinder()
+        sys.meta_path.append(mutation_finder)
+    return monitor, names, mutation_finder, install_seconds
+
+
+def _run_workload(args: argparse.Namespace, names: list[str], mutation_finder: _NoOpFinder | None) -> None:
+    if args.scenario == "mutation":
+        assert mutation_finder is not None
+        for _ in range(args.count):
+            sys.meta_path.pop()
+            sys.meta_path.append(mutation_finder)
+        return
+    for name in names:
+        importlib.import_module(name)
+
+
+def _event_count(monitor: metapathology.Monitor | None) -> int:
+    return 0 if monitor is None else len(monitor.events())
+
+
+def _time_trial(args: argparse.Namespace) -> dict[str, Any]:
+    monitor, names, mutation_finder, install_seconds = _prepare(args)
+    started = time.perf_counter_ns()
+    _run_workload(args, names, mutation_finder)
+    elapsed_ns = time.perf_counter_ns() - started
+    return {
+        "elapsed_seconds": elapsed_ns / 1_000_000_000,
+        "event_count": _event_count(monitor),
+        "install_seconds": install_seconds,
+    }
+
+
+def _memory_trial(args: argparse.Namespace) -> dict[str, Any]:
+    tracemalloc.start()
+    gc.collect()
+    before_install, _ = tracemalloc.get_traced_memory()
+    monitor, names, mutation_finder, install_seconds = _prepare(args)
+    gc.collect()
+    after_install, _ = tracemalloc.get_traced_memory()
+    tracemalloc.reset_peak()
+    ready = {
+        "kind": "ready",
+        "install_seconds": install_seconds,
+        "traced_install_bytes": after_install - before_install,
+    }
+    print(json.dumps(ready), flush=True)
+    if not sys.stdin.readline():
+        raise RuntimeError("benchmark parent closed the memory-trial handshake")
+    _run_workload(args, names, mutation_finder)
+    gc.collect()
+    current, peak = tracemalloc.get_traced_memory()
+    return {
+        "event_count": _event_count(monitor),
+        "traced_current_bytes": current - after_install,
+        "traced_peak_bytes": peak - after_install,
+    }
+
+
+def main() -> int:
+    """Run one isolated sample and write its result as JSON."""
+    args = _parse_args()
+    result = _time_trial(args) if args.metric == "time" else _memory_trial(args)
+    result["kind"] = "result"
+    print(json.dumps(result), flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

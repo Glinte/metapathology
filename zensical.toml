@@ -14,6 +14,7 @@ nav = [
     { "How it works" = "concepts.md" },
     { "Reading the report" = "report.md" },
     { "Library API" = "api.md" },
+    { "Speed and memory" = "performance.md" },
     { "Limitations" = "limitations.md" },
     { "Development" = "development.md" },
 ]

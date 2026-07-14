@@ -55,6 +55,33 @@ from the failing [Hypothesis][hypothesis] example or seed.
 Use snapshot or golden tests only when the complete reviewed text is itself a
 compatibility contract. Otherwise prefer semantic assertions.
 
+## Performance benchmarks
+
+Run the import-throughput and memory benchmark from the repository root:
+
+```console
+uv run --script scripts/benchmark.py
+```
+
+The script uses fresh target-interpreter processes for every sample and writes
+raw JSON, a Markdown summary, plus import and `sys.meta_path` mutation graphs beneath
+`.cache/metapathology-benchmarks/`. Use `--quick` for a smoke run, or customize
+the workload and interpreter, for example:
+
+```console
+uv run --script scripts/benchmark.py --counts 50,250,1000 --repeats 7 --python python3.12
+```
+
+Timing and memory are collected in separate trials so `tracemalloc` does not
+distort the speed measurements. Workers use `python -S` and disable bytecode
+writes to exclude interpreter-specific `.pth` finders and cache-warming order
+effects. The `native` scenario therefore measures the controlled standard-
+finder path; `attributed` installs the same delegating instance finder in both
+control and monitored processes so every synthetic import exercises a retained
+finder-call record. Mutation samples perform repeated `pop`/`append` pairs and
+therefore include the monitor's intentional stack-capture cost. Trials are
+shuffled to balance system warm-up; `--seed` controls and records that order.
+
 ## Documentation
 
 Update the closest discovery surface in the same change as public behavior:
