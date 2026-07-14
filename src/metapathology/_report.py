@@ -225,7 +225,7 @@ def _bypass_findings(name: str, winner: FindSpecCall) -> list[str]:
     origin = winner.origin
     if origin is None or not origin.endswith(_SOURCE_SUFFIXES) or winner.loader_type_name is None:
         return []
-    replay = _replay_path_finder(name)
+    replay = _replay_path_finder(name, winner.search_path)
     if replay is None:
         return [
             f"[unfindable] '{name}' (origin {origin}) was claimed by {winner.finder_type_name}, but the "
@@ -242,7 +242,7 @@ def _bypass_findings(name: str, winner: FindSpecCall) -> list[str]:
     return []
 
 
-def _replay_path_finder(name: str) -> "ModuleSpec | None":
+def _replay_path_finder(name: str, search_path: tuple[str, ...]) -> "ModuleSpec | None":
     """Ask the standard ``PathFinder`` what it would do for ``name``, without importing anything.
 
     Returns:
@@ -250,15 +250,8 @@ def _replay_path_finder(name: str) -> "ModuleSpec | None":
         it finds nothing or the replay is impossible (e.g. the parent package
         is gone or has no ``__path__``).
     """
-    parent_name, _, _ = name.rpartition(".")
-    path = None
-    if parent_name:
-        parent = sys.modules.get(parent_name)
-        path = getattr(parent, "__path__", None)
-        if path is None:
-            return None
     try:
-        return PathFinder.find_spec(name, path)
+        return PathFinder.find_spec(name, search_path)
     except Exception:  # A broken finder chain must not break the report.
         return None
 

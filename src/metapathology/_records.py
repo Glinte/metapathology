@@ -93,6 +93,9 @@ class FindSpecCall:
             there is no spec or no loader (e.g. namespace packages).
         origin: ``spec.origin`` when it is a string (a file path for
             filesystem imports), else None.
+        search_path: Snapshot of the path passed to ``find_spec``, or of
+            ``sys.path`` for a top-level import. Used to replay ``PathFinder``
+            against import-time state rather than mutable report-time state.
         exception_type_name: Type name of the exception if ``find_spec``
             raised instead of returning; ``found`` is False in that case.
         thread_name: Name of the thread that ran the import.
@@ -105,6 +108,7 @@ class FindSpecCall:
     found: bool
     loader_type_name: str | None
     origin: str | None
+    search_path: tuple[str, ...]
     exception_type_name: str | None
     thread_name: str
 

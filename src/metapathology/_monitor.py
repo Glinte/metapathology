@@ -7,6 +7,7 @@ foreign objects are reduced to type names and ids at capture time.
 
 import atexit
 import contextlib
+import copy
 import functools
 import sys
 import threading
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 
 # Frames captured per event; the report trims further (and filters noise) at display time.
 _STACK_CAPTURE_LIMIT = 20
+_MISSING = object()
 
 
 def _capture_stack(frame: "FrameType") -> traceback.StackSummary:
@@ -75,9 +77,9 @@ class Monitor:
         self._instrumented: _InstrumentedMetaPath | None = None
         # Both dicts key by id(finder) and hold strong finder references, keeping ids
         # unique for the process lifetime.
-        # id -> (finder, original find_spec). A None original marks an
-        # in-progress claim, so concurrent callers cannot double-wrap.
-        self._patched: dict[int, tuple[Any, Any]] = {}
+        # id -> (finder, callable find_spec, previous instance-dict value). A
+        # None callable marks an in-progress claim so callers cannot double-wrap.
+        self._patched: dict[int, tuple[Any, Any, Any]] = {}
         # id -> (finder, human-readable reason it could not be instrumented).
         self._skipped: dict[int, tuple[Any, str]] = {}
         # sys.modules names at install time; the report analyzes only modules
@@ -148,9 +150,12 @@ class Monitor:
             if isinstance(current, _InstrumentedMetaPath):
                 sys.meta_path = list(current)
             self._instrumented = None
-            for finder, _original in list(self._patched.values()):
+            for finder, _original, previous in list(self._patched.values()):
                 with contextlib.suppress(AttributeError, KeyError, TypeError):
-                    del finder.__dict__["find_spec"]
+                    if previous is _MISSING:
+                        del finder.__dict__["find_spec"]
+                    else:
+                        finder.__dict__["find_spec"] = previous
             with self._record_lock:
                 self._patched.clear()
                 self._skipped.clear()
@@ -237,7 +242,7 @@ class Monitor:
             if finder_id in self._patched or finder_id in self._skipped:
                 return
             # Claim the id before touching the finder so concurrent callers don't double-wrap.
-            self._patched[finder_id] = (finder, None)
+            self._patched[finder_id] = (finder, None, _MISSING)
         if isinstance(finder, type):
             # Class entries (PathFinder and friends) are shared stdlib state; never mutate them.
             self._skip_finder(finder_id, finder, "class entry; instance-dict shadowing not applicable")
@@ -251,6 +256,11 @@ class Monitor:
         if not callable(original):
             self._skip_finder(finder_id, finder, "no callable find_spec")
             return
+        try:
+            instance_dict = finder.__dict__
+            previous = instance_dict.get("find_spec", _MISSING)
+        except (AttributeError, TypeError):
+            previous = _MISSING
         wrapper = self._make_find_spec_wrapper(finder, original)
         try:
             setattr(finder, "find_spec", wrapper)
@@ -258,7 +268,7 @@ class Monitor:
             self._skip_finder(finder_id, finder, "find_spec not settable on the instance")
             return
         with self._record_lock:
-            self._patched[finder_id] = (finder, original)
+            self._patched[finder_id] = (finder, original, previous)
 
     def _skip_finder(self, finder_id: int, finder: object, reason: str) -> None:
         """Mark a finder as uninstrumentable, releasing any claim taken by ``_instrument_finder``.
@@ -288,24 +298,42 @@ class Monitor:
         def find_spec(fullname: str, path: Any = None, target: Any = None) -> Any:
             spec = None
             exception_type_name: str | None = None
+            search_path = self._snapshot_search_path(path)
             try:
                 spec = original(fullname, path, target)
             except BaseException as exc:
                 exception_type_name = type(exc).__name__
                 raise
             finally:
-                self._record_find_spec(finder, fullname, spec, exception_type_name)
+                self._record_find_spec(finder, fullname, spec, search_path, exception_type_name)
             return spec
 
         return find_spec
 
-    def _record_find_spec(self, finder: object, fullname: str, spec: Any, exception_type_name: str | None) -> None:
+    @staticmethod
+    def _snapshot_search_path(path: Any) -> tuple[str, ...]:
+        """Copy the effective finder path while the import is in progress."""
+        source = sys.path if path is None else path
+        try:
+            return tuple(entry for entry in source if isinstance(entry, str))
+        except Exception:
+            return ()
+
+    def _record_find_spec(
+        self,
+        finder: object,
+        fullname: str,
+        spec: Any,
+        search_path: tuple[str, ...],
+        exception_type_name: str | None,
+    ) -> None:
         """Record one ``find_spec`` call, reducing the spec to primitives before taking the lock.
 
         Args:
             finder: The finder that was called.
             fullname: The module name that was probed.
             spec: Whatever ``find_spec`` returned; ``None`` means the finder passed.
+            search_path: Effective import search path captured before the call.
             exception_type_name: Set when the call raised instead of returning.
         """
         try:
@@ -333,6 +361,7 @@ class Monitor:
                         found=found,
                         loader_type_name=loader_type_name,
                         origin=origin,
+                        search_path=search_path,
                         exception_type_name=exception_type_name,
                         thread_name=thread_name,
                     )
@@ -475,6 +504,30 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
         """Record an order-only mutation; finder precedence changes even though membership does not."""
         super().reverse()
         self._monitor._on_meta_path_mutation(self, "reverse", (), (), sys._getframe(1))
+
+    def sort(self, *, key: "Callable[[MetaPathFinderProtocol], Any] | None" = None, reverse: bool = False) -> None:
+        """Record an order change made with ``list.sort``."""
+        # Typeshed models ``key`` too narrowly here; runtime list.sort accepts None.
+        super().sort(key=key, reverse=reverse)  # type: ignore
+        self._monitor._on_meta_path_mutation(self, "sort", (), (), sys._getframe(1))
+
+    def __imul__(self, value: SupportsIndex) -> "Self":
+        """Record an in-place repeat, including additions or a complete wipe."""
+        before = tuple(self)
+        super().__imul__(value)
+        after = tuple(self)
+        added = after[len(before) :] if len(after) > len(before) else ()
+        removed = before[len(after) :] if len(after) < len(before) else ()
+        self._monitor._on_meta_path_mutation(self, "__imul__", added, removed, sys._getframe(1))
+        return self
+
+    def __copy__(self) -> list["MetaPathFinderProtocol"]:
+        """Match the plain-list interface exposed before instrumentation."""
+        return list(self)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> list["MetaPathFinderProtocol"]:
+        """Deep-copy finders without traversing the monitor's locks and state."""
+        return copy.deepcopy(list(self), memo)
 
     def __setitem__(self, index: SupportsIndex | slice, value: Any) -> None:
         """Record single-item or slice replacement (slice assignment is how many tools filter finders)."""

@@ -250,7 +250,8 @@ import metapathology
 metapathology.install(report_at_exit=False)
 copied = copy.deepcopy(sys.meta_path)
 
-assert copied == sys.meta_path
+assert type(copied) is list
+assert len(copied) == len(sys.meta_path)
 assert copied is not sys.meta_path
 print("OK")
 """
