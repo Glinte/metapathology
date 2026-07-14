@@ -1,13 +1,39 @@
 [project]
 name = "metapathology"
 version = "0.1.0"
-description = "sys.meta_path diagnostics: find out who is messing with Python's import machinery"
+description = "Diagnose which finders handle imports and how sys.meta_path changes"
 readme = "README.md"
 authors = [
     { name = "Glinte", email = "96855131+Glinte@users.noreply.github.com" }
 ]
 requires-python = ">=3.10"
+keywords = [
+    "debugging",
+    "import hooks",
+    "sys.meta_path",
+    "sys.path_hooks",
+]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development :: Debuggers",
+    "Typing :: Typed",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Glinte/metapathology"
+Source = "https://github.com/Glinte/metapathology"
+Issues = "https://github.com/Glinte/metapathology/issues"
 
 [dependency-groups]
 dev = [

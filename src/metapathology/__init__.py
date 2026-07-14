@@ -1,8 +1,8 @@
 """metapathology: sys.meta_path diagnostics.
 
-Find out who is messing with Python's import machinery: which finder claimed
-each import, who mutated ``sys.meta_path`` (with stack traces), and which
-modules were loaded in ways that bypass ``sys.path_hooks``.
+Reports which finder located each imported module, where ``sys.meta_path`` was
+changed (with stack traces), and which modules were loaded without the normal
+``sys.path_hooks`` search.
 
 Preferred usage is the CLI: ``python -m metapathology <script.py>`` or
 ``python -m metapathology -m <module>``. The library API below exists for
