@@ -83,3 +83,39 @@ def test_manually_registered_module_is_flagged_as_no_spec(run_python: RunPython)
     proc = run_python(NO_SPEC)
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout
+
+
+PATH_REMOVED_AFTER_IMPORT = """
+import sys
+from importlib.machinery import PathFinder
+
+import metapathology
+
+class DelegatingFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        return PathFinder.find_spec(fullname, path, target)
+
+module_dir = sys.argv[1]
+sys.path.insert(0, module_dir)
+metapathology.install(report_at_exit=False)
+sys.meta_path.insert(0, DelegatingFinder())
+
+import transient_path_mod
+assert transient_path_mod.VALUE == 7
+sys.path.remove(module_dir)
+
+text = metapathology.render_report()
+assert "[unfindable] 'transient_path_mod'" not in text, text
+assert "[bypass] 'transient_path_mod'" not in text, text
+print("OK")
+"""
+
+
+def test_path_removal_after_import_does_not_create_bypass_finding(run_python: RunPython, tmp_path: Path) -> None:
+    module_dir = tmp_path / "temporary_path"
+    module_dir.mkdir()
+    (module_dir / "transient_path_mod.py").write_text("VALUE = 7\n")
+
+    proc = run_python(PATH_REMOVED_AFTER_IMPORT, str(module_dir))
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout

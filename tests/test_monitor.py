@@ -168,3 +168,95 @@ def test_uninstall_makes_all_layers_inert(run_python: RunPython) -> None:
     proc = run_python(UNINSTALL_STOPS_RECORDING)
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout
+
+
+UNINSTALL_RESTORES_INSTANCE_FIND_SPEC = """
+import sys
+
+import metapathology
+
+class InstanceFinder:
+    pass
+
+finder = InstanceFinder()
+def find_spec(fullname, path=None, target=None):
+    return None
+finder.find_spec = find_spec
+sys.meta_path.insert(0, finder)
+
+metapathology.install(report_at_exit=False)
+assert finder.find_spec is not find_spec
+metapathology.uninstall()
+
+assert finder.find_spec is find_spec
+print("OK")
+"""
+
+
+def test_uninstall_restores_preexisting_instance_find_spec(run_python: RunPython) -> None:
+    proc = run_python(UNINSTALL_RESTORES_INSTANCE_FIND_SPEC)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
+IN_PLACE_REPEAT = """
+import sys
+
+import metapathology
+from metapathology import MetaPathMutation
+
+monitor = metapathology.install(report_at_exit=False)
+
+sys.meta_path *= 2
+ops = [event.op for event in monitor.events() if isinstance(event, MetaPathMutation)]
+assert "__imul__" in ops, ops
+print("OK")
+"""
+
+
+def test_in_place_repeat_mutation_is_recorded(run_python: RunPython) -> None:
+    proc = run_python(IN_PLACE_REPEAT)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
+SORT_MUTATION = """
+import sys
+
+import metapathology
+from metapathology import MetaPathMutation
+
+monitor = metapathology.install(report_at_exit=False)
+
+sys.meta_path.sort(key=id)
+ops = [event.op for event in monitor.events() if isinstance(event, MetaPathMutation)]
+assert "sort" in ops, ops
+print("OK")
+"""
+
+
+def test_sort_mutation_is_recorded(run_python: RunPython) -> None:
+    proc = run_python(SORT_MUTATION)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
+DEEP_COPY = """
+import copy
+import sys
+
+import metapathology
+
+metapathology.install(report_at_exit=False)
+copied = copy.deepcopy(sys.meta_path)
+
+assert copied == sys.meta_path
+assert copied is not sys.meta_path
+print("OK")
+"""
+
+
+def test_instrumented_meta_path_can_be_deep_copied(run_python: RunPython) -> None:
+    proc = run_python(DEEP_COPY)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
