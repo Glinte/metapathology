@@ -31,6 +31,9 @@ testpaths = ["tests"]
 timeout = 30
 xfail_strict = true
 
+[tool.uv]
+exclude-newer = "7 days"
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"
