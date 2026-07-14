@@ -106,6 +106,20 @@ These came out of the design discussion; they are not optional style.
   the event itself. It also doesn't fire on `sys.modules` cache hits or
   manual `spec_from_file_location` + `exec_module` loads.
 
+## Resource and failure behavior
+
+- Import monitoring can produce data for the lifetime of the target process.
+  Do not add an unbounded queue, cache, or retry loop accidentally. For every
+  new producer/consumer path, define and test its capacity, overflow policy,
+  and shutdown behavior. If exhaustive capture intentionally grows with the
+  number of observed events, document that cost rather than silently dropping
+  records.
+- Keep observation failures isolated from the target program. Reporting and
+  cleanup should degrade gracefully on malformed, partially initialized, or
+  concurrently changing import state; they must not change import outcomes.
+- Make nondeterminism explicit. Tests using concurrency, randomized inputs, or
+  generated cases must be reproducible from their reported seed or example.
+
 ## Layout & tooling
 
 - `src/metapathology/` — package source (`py.typed`; fully type-annotated).
@@ -133,6 +147,23 @@ These came out of the design discussion; they are not optional style.
 - Use Google-style docstrings for non-obvious modules and public APIs. Include
   `Args` and `Raises` where applicable; include `Returns` when the return value
   is not already clear from its annotation.
+- Keep boundaries injectable where doing so makes import-system behavior
+  independently testable, but prefer small functions and explicit parameters
+  over a dependency-injection framework.
+- Treat the public API, CLI help, report vocabulary, and documented examples as
+  discovery surfaces. New functionality should be findable from the nearest
+  relevant surface without requiring a user to read the implementation.
+- Keep conceptual documentation and behavior in sync in the same change.
+  Update `README.md` when public behavior, CLI usage, limitations, or report
+  interpretation changes; update this file when architectural invariants
+  change. Add a documentation site only when the material outgrows the README.
+- Runtime dependencies remain forbidden. Before adding a development
+  dependency, record why the standard library and existing tools are
+  insufficient, what maintenance/security cost it adds, and whether it
+  replaces an existing tool.
+- Temporary compatibility, migration, or rollout code must leave a `TODO` at
+  every future cleanup point with a concrete removal trigger such as a Python
+  version, dependency version, or date. Vague cleanup reminders are not enough.
 
 ## Testing
 
@@ -141,6 +172,17 @@ These came out of the design discussion; they are not optional style.
 - New features and bug fixes require tests. For a bug fix, first add a test
   that reproduces the failure, then implement the fix and verify the test.
 - Cover relevant edge cases and failure paths, not only the happy path.
+- Express correctness rules as invariants where practical. Use Hypothesis for
+  stateful or property-based coverage of mutation sequences, round trips, and
+  malformed inputs; keep the underlying helpers callable without the CLI so
+  they remain fuzzable.
+- Assert invariants after each operation in generated sequences, not only at
+  the end. Include repeated operations, reordering, concurrent mutation, and
+  interrupted cleanup when those failure modes apply.
+- Keep a small corpus of representative historical inputs or outputs when a
+  serialization or report format becomes a compatibility contract. Prefer
+  semantic assertions; use snapshot/golden tests only when the reviewed whole
+  output is itself the contract and a diff is useful.
 - Prefer real finders, modules, files, and subprocesses over mocks. Do not test
   third-party library behavior or private implementation details.
 - Keep shared fixtures in `tests/conftest.py` or `tests/fixtures/`; leave a
@@ -152,5 +194,11 @@ These came out of the design discussion; they are not optional style.
 
 - For GitHub Actions changes, check the current action release and pin actions
   by full commit hash rather than a mutable version tag.
+- CI must run formatting/linting, both type checkers, tests, and package-build
+  checks across the supported Python range as appropriate. Public examples or
+  generated reference material should be executable or checked for drift
+  rather than trusted to stay current manually.
 - Keep commits atomic when commits are requested. Use concise, imperative,
-  scoped commit messages and explain the reason in the body when needed.
+  scoped subjects. In the body, explain the user-visible problem or invariant,
+  why the chosen approach is appropriate, and important tradeoffs or follow-up
+  triggers; do not merely narrate the diff (mitchellh style).

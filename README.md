@@ -47,10 +47,75 @@ interpreters, "I can only touch `conftest.py`"):
 ```python
 import metapathology
 
-metapathology.install()  # as early as possible
+monitor = metapathology.install()  # as early as possible
 ```
 
-There are no runtime dependencies or configuration options.
+`install()` is idempotent and returns the process-wide `Monitor`. By default,
+it prints a report to standard error when Python exits. To control when or
+where the report is written, disable that callback and report explicitly:
+
+```python
+import sys
+
+import metapathology
+
+monitor = metapathology.install(report_at_exit=False)
+try:
+    import package_under_investigation
+finally:
+    metapathology.report(sys.stdout)
+    metapathology.uninstall()
+```
+
+`uninstall()` is idempotent. It restores a plain `sys.meta_path`, removes the
+wrappers from finders, and unregisters the exit report. The CPython audit hook
+cannot be removed, so it remains installed as an inactive no-op. Recorded
+events remain available after uninstalling.
+
+For integration with another diagnostic or test harness:
+
+- `metapathology.render_report()` returns the same report as a string;
+- `metapathology.report(file=None)` writes it to `file`, or to standard error
+  when omitted;
+- `metapathology.get_monitor()` returns the process-wide monitor, or `None`
+  before the first call to `install()`; and
+- `monitor.events()` returns a capture-order snapshot of the structured
+  `FindSpecCall`, `MetaPathMutation`, `MetaPathReassignment`, and
+  `InternalError` records. Mutating the returned list does not alter the
+  monitor.
+
+Calling `report()` or `render_report()` before `install()` raises
+`RuntimeError`. There are no runtime dependencies.
+
+## Reading the report
+
+The mutation and reassignment sections show how finder precedence changed.
+Finder attribution groups recorded `find_spec()` calls by finder and lists the
+modules each finder claimed. The suspicious-findings section uses these
+labels:
+
+- `[bypass]` means a custom finder claimed a source module, but a fresh
+  `PathFinder` lookup would choose a different loader or origin. Tools attached
+  through `sys.path_hooks` did not see the import that actually happened.
+- `[unfindable]` means a custom finder claimed a source module that a fresh
+  `PathFinder` lookup cannot find at all. This is a stronger form of bypass.
+- `[no-spec]` means a new `sys.modules` entry has neither a `__spec__` nor a
+  recorded finder claim. It was probably created manually or loaded through
+  an `exec_module()`-style path that is invisible to meta-path finders.
+
+These are diagnostic leads, not necessarily defects. Custom finders may bypass
+the standard path machinery intentionally, and the report replays the current
+`PathFinder` state rather than the exact state at import time.
+
+## Resource use
+
+The monitor retains every recorded finder call, mutation, reassignment, and
+internal error so the final report is exhaustive. Its memory use therefore
+grows with import activity for as long as monitoring remains enabled; there is
+currently no event limit or silent dropping policy. For a long-running or
+import-heavy process, call `report()` and `uninstall()` once the behavior of
+interest has been captured. Stack traces are stored for `sys.meta_path`
+changes, which makes mutation records more expensive than finder-call records.
 
 ## How Python finds an imported module
 

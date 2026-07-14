@@ -101,10 +101,16 @@ def _render_lines(monitor: "Monitor") -> list[str]:
     lines.append(f"-- internal errors ({len(errors)}) --")
     if not errors:
         lines.append("(none)")
-    lines.extend(f"#{e.seq} in {e.where}: {e.exception_type_name}: {e.message}" for e in errors)
+    lines.extend(_internal_error_line(error) for error in errors)
 
     lines.append("")
     return lines
+
+
+def _internal_error_line(error: InternalError) -> str:
+    """Format an internal error without requiring captured foreign exception text."""
+    line = f"#{error.seq} in {error.where}: {error.exception_type_name}"
+    return line if error.message is None else f"{line}: {error.message}"
 
 
 def _current_meta_path_names() -> tuple[str, ...]:

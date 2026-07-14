@@ -125,13 +125,15 @@ class InternalError:
             :class:`MetaPathMutation`).
         where: Short label of the failing code path, e.g. ``"audit_hook"``.
         exception_type_name: Type name of the caught exception.
-        message: ``str(exc)``, or a placeholder if stringification failed too.
+        message: Optional pre-sanitized detail. The monitor leaves this unset
+            because stringifying an exception supplied by foreign import
+            machinery can execute arbitrary code while an import is in flight.
     """
 
     seq: int
     where: str
     exception_type_name: str
-    message: str
+    message: str | None = None
 
 
 # Everything the monitor records goes into one chronological log; ``seq`` orders records across types.

@@ -3,7 +3,37 @@
 import subprocess
 from collections.abc import Callable
 
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
+
 RunPython = Callable[..., "subprocess.CompletedProcess[str]"]
+
+MutationOperation = tuple[str, int, int]
+MUTATION_OPERATIONS = st.lists(
+    st.tuples(
+        st.sampled_from(
+            [
+                "append",
+                "clear",
+                "del_item",
+                "del_slice",
+                "extend",
+                "iadd",
+                "imul",
+                "insert",
+                "pop",
+                "reverse",
+                "set_item",
+                "set_slice",
+                "sort",
+            ]
+        ),
+        st.integers(min_value=-8, max_value=8),
+        st.integers(min_value=-8, max_value=8),
+    ),
+    min_size=1,
+    max_size=30,
+)
 
 INSTALL_RESTORE = """
 import sys
@@ -259,5 +289,308 @@ print("OK")
 
 def test_instrumented_meta_path_can_be_deep_copied(run_python: RunPython) -> None:
     proc = run_python(DEEP_COPY)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
+MUTATION_SEQUENCE = """
+import sys
+
+import metapathology
+from metapathology import MetaPathMutation
+
+operations = __OPERATIONS__
+
+class DummyFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        return None
+
+def new_finders(count):
+    return [DummyFinder() for _ in range(count)]
+
+monitor = metapathology.install(report_at_exit=False)
+expected = list(sys.meta_path)
+expected_ops = []
+
+for op, first, second in operations:
+    if op == "append":
+        item = DummyFinder()
+        sys.meta_path.append(item)
+        expected.append(item)
+    elif op == "clear":
+        sys.meta_path.clear()
+        expected.clear()
+    elif op == "del_item":
+        if not expected:
+            continue
+        index = first % len(expected)
+        del sys.meta_path[index]
+        del expected[index]
+    elif op == "del_slice":
+        index = slice(first, second)
+        del sys.meta_path[index]
+        del expected[index]
+    elif op == "extend":
+        items = new_finders(abs(first) % 3)
+        sys.meta_path.extend(iter(items))
+        expected.extend(items)
+    elif op == "iadd":
+        items = new_finders(abs(first) % 3)
+        sys.meta_path += iter(items)
+        expected += items
+    elif op == "imul":
+        multiplier = abs(first) % 3
+        sys.meta_path *= multiplier
+        expected *= multiplier
+    elif op == "insert":
+        item = DummyFinder()
+        sys.meta_path.insert(first, item)
+        expected.insert(first, item)
+    elif op == "pop":
+        if not expected:
+            continue
+        index = first % len(expected)
+        assert sys.meta_path.pop(index) is expected.pop(index)
+    elif op == "reverse":
+        sys.meta_path.reverse()
+        expected.reverse()
+    elif op == "set_item":
+        if not expected:
+            continue
+        index = first % len(expected)
+        item = DummyFinder()
+        sys.meta_path[index] = item
+        expected[index] = item
+    elif op == "set_slice":
+        index = slice(first, second)
+        items = new_finders(abs(first - second) % 3)
+        sys.meta_path[index] = iter(items)
+        expected[index] = items
+    elif op == "sort":
+        sys.meta_path.sort(key=id, reverse=bool(first % 2))
+        expected.sort(key=id, reverse=bool(first % 2))
+    else:
+        raise AssertionError(op)
+
+    expected_ops.append({
+        "del_item": "__delitem__",
+        "del_slice": "__delitem__",
+        "iadd": "__iadd__",
+        "imul": "__imul__",
+        "set_item": "__setitem__",
+        "set_slice": "__setitem__",
+    }.get(op, op))
+    assert len(sys.meta_path) == len(expected)
+    assert all(actual is wanted for actual, wanted in zip(sys.meta_path, expected))
+
+recorded_ops = [event.op for event in monitor.events() if isinstance(event, MetaPathMutation)]
+assert recorded_ops == expected_ops, (recorded_ops, expected_ops)
+print("OK")
+"""
+
+
+@settings(max_examples=12, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(operations=MUTATION_OPERATIONS)
+def test_generated_mutation_sequences_match_plain_list(
+    run_python: RunPython, operations: list[MutationOperation]
+) -> None:
+    proc = run_python(MUTATION_SEQUENCE.replace("__OPERATIONS__", repr(operations)))
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
+HOSTILE_FINDER = """
+import sys
+
+import metapathology
+from metapathology import InternalError
+
+class HostileError(Exception):
+    stringify_count = 0
+
+    def __str__(self):
+        type(self).stringify_count += 1
+        raise AssertionError("instrumentation must not stringify foreign exceptions")
+
+class HostileFinder:
+    def __getattribute__(self, name):
+        if name == "find_spec":
+            raise HostileError()
+        return object.__getattribute__(self, name)
+
+monitor = metapathology.install(report_at_exit=False)
+finder = HostileFinder()
+sys.meta_path.append(finder)
+
+assert finder in sys.meta_path
+assert HostileError.stringify_count == 0
+errors = [event for event in monitor.events() if isinstance(event, InternalError)]
+assert any(event.where == "instrument_finder" for event in errors), errors
+assert HostileError.stringify_count == 0
+print("OK")
+"""
+
+
+def test_instrumentation_failure_does_not_escape_or_stringify_foreign_exception(run_python: RunPython) -> None:
+    proc = run_python(HOSTILE_FINDER)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
+REENTRANT_FINDER = """
+import sys
+
+import metapathology
+from metapathology import FindSpecCall
+
+class ReentrantFinder:
+    def __init__(self):
+        self.nested = False
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "fractions" and not self.nested:
+            self.nested = True
+            import colorsys
+            assert colorsys.rgb_to_hsv(0.0, 0.0, 0.0) == (0.0, 0.0, 0.0)
+        return None
+
+monitor = metapathology.install(report_at_exit=False)
+finder = ReentrantFinder()
+sys.meta_path.insert(0, finder)
+
+import fractions
+assert fractions.Fraction(1, 2).numerator == 1
+
+calls = [
+    event
+    for event in monitor.events()
+    if isinstance(event, FindSpecCall) and event.finder_id == id(finder)
+]
+names = [event.fullname for event in calls]
+assert "fractions" in names, calls
+assert "colorsys" not in names, calls
+print("OK")
+"""
+
+
+def test_finder_wrapper_is_reentrancy_guarded(run_python: RunPython) -> None:
+    proc = run_python(REENTRANT_FINDER)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
+CONCURRENT_ACTIVITY = """
+import sys
+import threading
+
+import metapathology
+
+class DummyFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        return None
+
+module_names = [f"concurrent_module_{index}" for index in range(40)]
+for index, module_name in enumerate(module_names):
+    with open(f"{module_name}.py", "w", encoding="utf-8") as module_file:
+        module_file.write(f"value = {index}\\n")
+
+monitor = metapathology.install(report_at_exit=False)
+failures = []
+barrier = threading.Barrier(7)
+
+def mutate():
+    try:
+        barrier.wait()
+        for _ in range(100):
+            finder = DummyFinder()
+            sys.meta_path.append(finder)
+            sys.meta_path.remove(finder)
+    except BaseException as exc:
+        failures.append(exc)
+
+def read_events():
+    try:
+        barrier.wait()
+        for _ in range(200):
+            events = monitor.events()
+            assert all(left.seq < right.seq for left, right in zip(events, events[1:]))
+    except BaseException as exc:
+        failures.append(exc)
+
+def render():
+    try:
+        barrier.wait()
+        for _ in range(20):
+            assert "metapathology" in metapathology.render_report()
+    except BaseException as exc:
+        failures.append(exc)
+
+def import_modules():
+    try:
+        barrier.wait()
+        for index, module_name in enumerate(module_names):
+            module = __import__(module_name)
+            assert module.value == index
+    except BaseException as exc:
+        failures.append(exc)
+
+threads = [threading.Thread(target=mutate) for _ in range(3)]
+threads.extend(
+    [threading.Thread(target=read_events), threading.Thread(target=render), threading.Thread(target=import_modules)]
+)
+for thread in threads:
+    thread.start()
+barrier.wait()
+for thread in threads:
+    thread.join()
+
+assert not failures, failures
+assert all(module_name in sys.modules for module_name in module_names)
+assert monitor.enabled
+metapathology.uninstall()
+assert type(sys.meta_path) is list
+print("OK")
+"""
+
+
+def test_concurrent_mutation_event_reads_and_reports_are_safe(run_python: RunPython) -> None:
+    proc = run_python(CONCURRENT_ACTIVITY)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
+CONCURRENT_UNINSTALL = """
+import sys
+import threading
+
+import metapathology
+
+monitor = metapathology.install(report_at_exit=False)
+barrier = threading.Barrier(9)
+failures = []
+
+def uninstall():
+    try:
+        barrier.wait()
+        metapathology.uninstall()
+    except BaseException as exc:
+        failures.append(exc)
+
+threads = [threading.Thread(target=uninstall) for _ in range(8)]
+for thread in threads:
+    thread.start()
+barrier.wait()
+for thread in threads:
+    thread.join()
+
+assert not failures, failures
+assert not monitor.enabled
+assert type(sys.meta_path) is list
+print("OK")
+"""
+
+
+def test_concurrent_uninstall_is_idempotent(run_python: RunPython) -> None:
+    proc = run_python(CONCURRENT_UNINSTALL)
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout

@@ -56,7 +56,7 @@ jobs:
         run: uv run --locked prek run --all-files
 
   typecheck:
-    name: basedpyright
+    name: Type checking
     runs-on: ubuntu-latest
 
     steps:
@@ -76,6 +76,9 @@ jobs:
 
       - name: Run basedpyright
         run: uv run --locked basedpyright --level warning
+
+      - name: Run pyrefly
+        run: uv run --locked pyrefly check
 
   build:
     name: Build distributions
@@ -97,7 +100,14 @@ jobs:
         run: uv build
 
       - name: Test wheel in isolation
-        run: uv run --isolated --no-project --with ./dist/metapathology-*.whl python -c "import metapathology"
+        run: |
+          uv run --isolated --no-project --with ./dist/metapathology-*.whl python -c "from importlib.metadata import distribution; dist = distribution('metapathology'); assert dist.requires is None; assert any(str(path).endswith('metapathology/py.typed') for path in (dist.files or ()))"
+          uv run --isolated --no-project --with ./dist/metapathology-*.whl python -m metapathology --help
+
+      - name: Test source distribution in isolation
+        run: |
+          uv run --isolated --no-project --with ./dist/metapathology-*.tar.gz python -c "from importlib.metadata import distribution; dist = distribution('metapathology'); assert dist.requires is None; assert any(str(path).endswith('metapathology/py.typed') for path in (dist.files or ()))"
+          uv run --isolated --no-project --with ./dist/metapathology-*.tar.gz python -m metapathology --help
 
   pytest:
     name: Python ${{ matrix.python-version }} on ${{ matrix.os }}

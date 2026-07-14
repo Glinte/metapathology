@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     from types import FrameType
 
     from _typeshed.importlib import MetaPathFinderProtocol
-    from typing_extensions import Self
 
 # Frames captured per event; the report trims further (and filters noise) at display time.
 _STACK_CAPTURE_LIMIT = 20
@@ -58,8 +57,9 @@ class Monitor:
         # Serializes install/uninstall/reinstall. Lock order: _reinstall_lock
         # may be held while taking _record_lock, never the other way around.
         self._reinstall_lock = threading.Lock()
-        # Per-thread re-entrancy flag (.in_audit) so an import triggered from
-        # inside _audit cannot recurse back into it.
+        # Per-thread re-entrancy flag around every hook and wrapper. Nested
+        # imports still run normally, but our instrumentation delegates without
+        # trying to observe itself recursively.
         self._local = threading.local()
         # One counter for all record types, so the report can interleave the
         # different event kinds chronologically.
@@ -177,9 +177,9 @@ class Monitor:
         """
         if event != "import" or not self._enabled:
             return
-        if getattr(self._local, "in_audit", False):
+        if getattr(self._local, "active", False):
             return
-        self._local.in_audit = True
+        self._local.active = True
         try:
             if sys.meta_path is self._instrumented:
                 return
@@ -188,7 +188,7 @@ class Monitor:
             # An exception escaping an audit hook aborts the user's import.
             self._record_internal_error("audit_hook", exc)
         finally:
-            self._local.in_audit = False
+            self._local.active = False
 
     def _reinstall(self, args: tuple[Any, ...]) -> None:
         """Wrap a foreign ``sys.meta_path`` in fresh instrumentation and record the reassignment.
@@ -296,16 +296,22 @@ class Monitor:
 
         @functools.wraps(original)
         def find_spec(fullname: str, path: Any = None, target: Any = None) -> Any:
+            if getattr(self._local, "active", False):
+                return original(fullname, path, target)
+            self._local.active = True
             spec = None
             exception_type_name: str | None = None
-            search_path = self._snapshot_search_path(path)
             try:
-                spec = original(fullname, path, target)
-            except BaseException as exc:
-                exception_type_name = type(exc).__name__
-                raise
+                search_path = self._snapshot_search_path(path)
+                try:
+                    spec = original(fullname, path, target)
+                except BaseException as exc:
+                    exception_type_name = type(exc).__name__
+                    raise
+                finally:
+                    self._record_find_spec(finder, fullname, spec, search_path, exception_type_name)
             finally:
-                self._record_find_spec(finder, fullname, spec, search_path, exception_type_name)
+                self._local.active = False
             return spec
 
         return find_spec
@@ -389,6 +395,9 @@ class Monitor:
             removed: Finders the mutation removed.
             frame: The mutator's caller, where the stack capture starts.
         """
+        if getattr(self._local, "active", False):
+            return
+        self._local.active = True
         try:
             if not self._enabled:
                 return
@@ -414,24 +423,21 @@ class Monitor:
                 )
         except Exception as exc:
             self._record_internal_error("meta_path_mutation", exc)
+        finally:
+            self._local.active = False
 
     def _record_internal_error(self, where: str, exc: BaseException) -> None:
         """Record an exception raised by our own instrumentation instead of letting it escape.
 
         Args:
             where: Short label of the code path that failed.
-            exc: The caught exception; stringified defensively here.
+            exc: The caught exception. Only its type name is captured; calling
+                ``str(exc)`` here could execute foreign code during an import.
         """
-        try:
-            message = str(exc)
-        except Exception:
-            message = "<unprintable>"
         exception_type_name = type(exc).__name__
         with self._record_lock:
             self._seq += 1
-            self._events.append(
-                InternalError(seq=self._seq, where=where, exception_type_name=exception_type_name, message=message)
-            )
+            self._events.append(InternalError(seq=self._seq, where=where, exception_type_name=exception_type_name))
 
     def _report_atexit(self) -> None:
         """Write the report to stderr from atexit without ever breaking interpreter shutdown."""
@@ -507,11 +513,12 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
 
     def sort(self, *, key: "Callable[[MetaPathFinderProtocol], Any] | None" = None, reverse: bool = False) -> None:
         """Record an order change made with ``list.sort``."""
-        # Typeshed models ``key`` too narrowly here; runtime list.sort accepts None.
+        # Runtime list.sort accepts None; the two type checkers model its
+        # overloads incompatibly for an unconstrained list element type.
         super().sort(key=key, reverse=reverse)  # type: ignore
         self._monitor._on_meta_path_mutation(self, "sort", (), (), sys._getframe(1))
 
-    def __imul__(self, value: SupportsIndex) -> "Self":
+    def __imul__(self, value: SupportsIndex) -> "_InstrumentedMetaPath":
         """Record an in-place repeat, including additions or a complete wipe."""
         before = tuple(self)
         super().__imul__(value)
@@ -547,7 +554,7 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
         super().__delitem__(index)
         self._monitor._on_meta_path_mutation(self, "__delitem__", (), removed, sys._getframe(1))
 
-    def __iadd__(self, items: "Iterable[MetaPathFinderProtocol]") -> "Self":
+    def __iadd__(self, items: "Iterable[MetaPathFinderProtocol]") -> "_InstrumentedMetaPath":
         """Record ``+=``, which reaches ``list`` at the C level and would otherwise bypass the ``extend`` override."""
         materialized = tuple(items)
         super().extend(materialized)
