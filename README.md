@@ -133,6 +133,14 @@ currently no event limit or silent dropping policy. For a long-running or
 import-heavy process, call `report()` and `uninstall()` once the behavior of
 interest has been captured. Stack traces are stored for `sys.meta_path`
 changes, which makes mutation records more expensive than finder-call records.
+At the 400-import point in the reference benchmark matrix, monitoring added a
+median 3% to the standard-finder workload and 13% when retaining one attributed
+finder record per import; those records retained about 223 bytes each. Imports
+already present in `sys.modules` are cache hits: they do not call finders or
+create new records. A large application can still resolve thousands of distinct
+modules during startup, however, and each import can produce records from more
+than one instrumented finder.
+
 See [limitations and resource behavior](https://glinte.github.io/metapathology/limitations/)
 and the reproducible [speed and memory benchmarks](https://glinte.github.io/metapathology/performance/)
 before monitoring a long-running process.

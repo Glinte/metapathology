@@ -79,6 +79,37 @@ and peak traced allocations, and sampled peak RSS growth. Treat small timing
 differences as noise unless they persist across more repetitions and dedicated
 hardware.
 
+## Reference results
+
+A [default environment-matrix run][reference-run] on July 14, 2026, measured
+commit `a94f2ee` on GitHub-hosted Linux, Windows, and macOS runners with CPython
+3.10 and 3.14. Each environment used five fresh-process timing samples and
+three memory samples per point.
+
+The 400-operation points produced these cross-environment ranges:
+
+| Measure | Range | Median across environments |
+| --- | ---: | ---: |
+| Monitor installation | 0.020–0.043 ms | 0.033 ms |
+| 400 native imports, monitored/control time | 1.02–1.11x | 1.03x |
+| 400 attributed imports, monitored/control time | 1.00–1.19x | 1.13x |
+| Retained memory per attributed finder-call record | 203–240 bytes | 223 bytes |
+| Monitored `pop`/`append` pair | 17–44 µs | 29 µs |
+| Retained memory per mutation record | 665–830 bytes | 747 bytes |
+
+The native result is the best approximation of import overhead when only the
+standard class finders handle imports and no finder-call records are retained.
+The attributed result includes search-path snapshots and retained records.
+Mutation ratios are intentionally not summarized: a plain-list `pop`/`append`
+pair is so short that a relative multiplier exaggerates the practical cost;
+the absolute microseconds per pair are more useful.
+
+These figures describe the synthetic workload on shared hosted runners, not a
+performance guarantee. Real applications can probe several instrumentable
+finders per import, use longer search paths, or mutate `sys.meta_path` with
+deeper stacks. Re-run the benchmark in the target environment when sizing a
+long capture.
+
 ## Run the environment matrix
 
 The repository's [**Benchmarks** GitHub Actions workflow][benchmark-workflow]
@@ -102,3 +133,4 @@ before treating a small percentage change as significant.
 
 [benchmark-script]: https://github.com/Glinte/metapathology/blob/main/scripts/benchmark.py
 [benchmark-workflow]: https://github.com/Glinte/metapathology/actions/workflows/benchmark.yml
+[reference-run]: https://github.com/Glinte/metapathology/actions/runs/29309310010
