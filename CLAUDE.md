@@ -116,3 +116,41 @@ These came out of the design discussion; they are not optional style.
   irremovable, import state is global). Prefer `uv run python -c ...` /
   script-based tests over in-process pytest tests for anything touching
   `install()`.
+
+## Development practices
+
+- Prefer simple, readable, maintainable solutions over clever abstractions.
+  Add shared helpers only when they remove meaningful duplication; do not
+  over-engineer speculative reuse.
+- Keep all production code and tests fully type-annotated. Use built-in
+  generics (`list`, `tuple`, etc.) and `collections.abc` rather than legacy
+  aliases from `typing`.
+- Keep imports at module scope. The import-hook hot paths are especially
+  strict: anything they need must already have been imported by `install()`.
+- Put repeated hardcoded values in named module-level constants.
+- Comments should explain why a non-obvious decision exists, not narrate the
+  code. Do not rewrite unrelated comments while making a focused change.
+- Use Google-style docstrings for non-obvious modules and public APIs. Include
+  `Args` and `Raises` where applicable; include `Returns` when the return value
+  is not already clear from its annotation.
+
+## Testing
+
+- Use pytest through `uv run pytest`; do not invoke an environment's bare
+  `pytest` executable.
+- New features and bug fixes require tests. For a bug fix, first add a test
+  that reproduces the failure, then implement the fix and verify the test.
+- Cover relevant edge cases and failure paths, not only the happy path.
+- Prefer real finders, modules, files, and subprocesses over mocks. Do not test
+  third-party library behavior or private implementation details.
+- Keep shared fixtures in `tests/conftest.py` or `tests/fixtures/`; leave a
+  fixture in a test module only when it is specific to that module.
+- Avoid tautological assertions that merely repeat test setup without
+  exercising behavior.
+
+## CI and commits
+
+- For GitHub Actions changes, check the current action release and pin actions
+  by full commit hash rather than a mutable version tag.
+- Keep commits atomic when commits are requested. Use concise, imperative,
+  scoped commit messages and explain the reason in the body when needed.
