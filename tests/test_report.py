@@ -85,6 +85,27 @@ def test_manually_registered_module_is_flagged_as_no_spec(run_python: RunPython)
     assert "OK" in proc.stdout
 
 
+DEFAULT_FINDERS = """
+import metapathology
+
+metapathology.install(report_at_exit=False)
+print(metapathology.render_report())
+"""
+
+
+def test_standard_unwrapped_finders_are_explained(run_python: RunPython) -> None:
+    proc = run_python(DEFAULT_FINDERS)
+    assert proc.returncode == 0, proc.stderr
+    assert "standard CPython finders left unwrapped (expected)" in proc.stdout
+    assert "BuiltinImporter handles built-in modules" in proc.stdout
+    assert "FrozenImporter handles frozen modules" in proc.stdout
+    assert "PathFinder handles sys.path and package paths" in proc.stdout
+    assert "classes shared by the interpreter" in proc.stdout
+    assert "BuiltinImporter: class entry" not in proc.stdout
+    assert "FrozenImporter: class entry" not in proc.stdout
+    assert "PathFinder: class entry" not in proc.stdout
+
+
 PATH_REMOVED_AFTER_IMPORT = """
 import sys
 from importlib.machinery import PathFinder

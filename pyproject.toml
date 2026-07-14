@@ -31,6 +31,7 @@ classifiers = [
 dependencies = []
 
 [project.urls]
+Documentation = "https://glinte.github.io/metapathology/"
 Homepage = "https://github.com/Glinte/metapathology"
 Source = "https://github.com/Glinte/metapathology"
 Issues = "https://github.com/Glinte/metapathology/issues"
@@ -46,6 +47,11 @@ dev = [
     "pytest-timeout>=2.4",
     "ruff>=0.12.11",
 ]
+# Zensical is isolated from the development toolchain because it is needed
+# only to build and publish the user documentation site.
+docs = [
+    "zensical>=0.0.47,<0.1",
+]
 
 [tool.pytest.ini_options]
 addopts = [
@@ -58,6 +64,7 @@ timeout = 30
 xfail_strict = true
 
 [tool.uv]
+default-groups = ["dev"]
 exclude-newer = "7 days"
 
 [tool.ruff]

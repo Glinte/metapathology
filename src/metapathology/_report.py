@@ -34,6 +34,7 @@ _SOURCE_SUFFIXES = (".py", ".pyc")
 _STACK_DISPLAY_FRAMES = 5
 # Max claimed modules listed per finder in the attribution section.
 _MAX_LISTED_MODULES = 25
+_STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 
 
 def write_report(monitor: "Monitor", file: TextIO | None = None) -> None:
@@ -66,9 +67,20 @@ def _render_lines(monitor: "Monitor") -> list[str]:
     lines.append(f"initial sys.meta_path: {_names_line(monitor.initial_meta_path)}")
     lines.append(f"current sys.meta_path: {_names_line(_current_meta_path_names())}")
     skipped = monitor.skipped_finders()
-    if skipped:
-        lines.append("finders observed but not instrumented (attribution by elimination):")
-        lines.extend(f"    {name}: {reason}" for name, reason in skipped)
+    standard_skipped = [item for item in skipped if item[1].startswith(_STANDARD_CLASS_FINDER_REASON_PREFIX)]
+    other_skipped = [item for item in skipped if not item[1].startswith(_STANDARD_CLASS_FINDER_REASON_PREFIX)]
+    if standard_skipped:
+        lines.append(
+            f"standard CPython finders left unwrapped (expected): {_names_line(tuple(n for n, _ in standard_skipped))}"
+        )
+        lines.append("    BuiltinImporter handles built-in modules; FrozenImporter handles frozen modules.")
+        lines.append(
+            "    PathFinder handles sys.path and package paths; suspicious custom claims are compared with it later."
+        )
+        lines.append("    These entries are classes shared by the interpreter, so metapathology does not modify them.")
+    if other_skipped:
+        lines.append("other finders observed but not instrumented (direct attribution unavailable):")
+        lines.extend(f"    {name}: {reason}" for name, reason in other_skipped)
     new_modules = _modules_since_install(monitor)
     lines.append(f"modules imported since install: {len(new_modules)}")
 

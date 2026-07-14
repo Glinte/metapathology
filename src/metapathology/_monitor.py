@@ -12,6 +12,7 @@ import functools
 import sys
 import threading
 import traceback
+from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 from typing import TYPE_CHECKING, Any, SupportsIndex, TextIO
 
 from metapathology import _report
@@ -33,6 +34,8 @@ if TYPE_CHECKING:
 # Frames captured per event; the report trims further (and filters noise) at display time.
 _STACK_CAPTURE_LIMIT = 20
 _MISSING = object()
+_STANDARD_CLASS_FINDERS = (BuiltinImporter, FrozenImporter, PathFinder)
+_STANDARD_CLASS_FINDER_REASON = "standard CPython class finder; expected and deliberately left unchanged"
 
 
 def _capture_stack(frame: "FrameType") -> traceback.StackSummary:
@@ -245,7 +248,12 @@ class Monitor:
             self._patched[finder_id] = (finder, None, _MISSING)
         if isinstance(finder, type):
             # Class entries (PathFinder and friends) are shared stdlib state; never mutate them.
-            self._skip_finder(finder_id, finder, "class entry; instance-dict shadowing not applicable")
+            reason = (
+                _STANDARD_CLASS_FINDER_REASON
+                if finder in _STANDARD_CLASS_FINDERS
+                else "class entry; instance-dict shadowing not applicable"
+            )
+            self._skip_finder(finder_id, finder, reason)
             return
         try:
             original = getattr(finder, "find_spec", None)
@@ -452,8 +460,10 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
 
     A real ``list`` subclass, never a proxy: third-party code that scans
     ``sys.meta_path`` with ``isinstance``, slices it, or iterates it keeps
-    working unchanged. Mutations made from C via ``PyList_*`` bypass these
-    overrides; that is an accepted blind spot.
+    working unchanged. It records additions, removals, replacements, clearing,
+    and reordering through the normal Python list operations. Mutations made
+    from C via ``PyList_*`` bypass these overrides; that is an accepted blind
+    spot.
     """
 
     __slots__ = ("_monitor",)
@@ -518,6 +528,7 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
         super().sort(key=key, reverse=reverse)  # type: ignore
         self._monitor._on_meta_path_mutation(self, "sort", (), (), sys._getframe(1))
 
+    # TODO(Python >= 3.11): Return typing.Self once Python 3.10 support is dropped.
     def __imul__(self, value: SupportsIndex) -> "_InstrumentedMetaPath":
         """Record an in-place repeat, including additions or a complete wipe."""
         before = tuple(self)
@@ -554,6 +565,7 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
         super().__delitem__(index)
         self._monitor._on_meta_path_mutation(self, "__delitem__", (), removed, sys._getframe(1))
 
+    # TODO(Python >= 3.11): Return typing.Self once Python 3.10 support is dropped.
     def __iadd__(self, items: "Iterable[MetaPathFinderProtocol]") -> "_InstrumentedMetaPath":
         """Record ``+=``, which reaches ``list`` at the C level and would otherwise bypass the ``extend`` override."""
         materialized = tuple(items)

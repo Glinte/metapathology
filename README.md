@@ -8,6 +8,7 @@
   <a href="https://pypi.org/project/metapathology/"><img src="https://img.shields.io/pypi/v/metapathology.svg" alt="PyPI version"></a>
   <a href="https://pypi.org/project/metapathology/"><img src="https://img.shields.io/pypi/pyversions/metapathology.svg" alt="Supported Python versions"></a>
   <a href="https://github.com/Glinte/metapathology/actions/workflows/test.yml"><img src="https://github.com/Glinte/metapathology/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/Glinte/metapathology/actions/workflows/docs.yml"><img src="https://github.com/Glinte/metapathology/actions/workflows/docs.yml/badge.svg" alt="Documentation"></a>
   <a href="https://sonarcloud.io/summary/new_code?id=Glinte_metapathology"><img src="https://sonarcloud.io/api/project_badges/measure?project=Glinte_metapathology&amp;metric=alert_status" alt="Quality gate status"></a>
 </p>
 
@@ -27,6 +28,11 @@ from seeing a module. The original example was
 [beartype#556](https://github.com/beartype/beartype/issues/556): an editable
 install finder located a module before `beartype.claw`'s path hook could see
 it.
+
+Full guides are published at
+[glinte.github.io/metapathology](https://glinte.github.io/metapathology/).
+They cover usage, import-system concepts, report interpretation, the library
+API, limitations, and development.
 
 ## Usage
 
@@ -119,8 +125,12 @@ changes, which makes mutation records more expensive than finder-call records.
 
 ## How Python finds an imported module
 
-Python first checks whether the module is already present in `sys.modules`. If
-it is not, Python reads [`sys.meta_path`](https://docs.python.org/3/library/sys.html#sys.meta_path),
+Python first checks the requested module's fully qualified name in
+`sys.modules`. If an entry is already there, Python returns that same module
+object without calling any finder or executing the module again. During a
+first import, Python adds the new module to this cache before executing its
+code so recursive imports do not load a second copy. If the name is absent,
+Python reads [`sys.meta_path`](https://docs.python.org/3/library/sys.html#sys.meta_path),
 a list of objects called *finders*. It asks each finder in order whether it can
 locate the module by calling the finder's `find_spec()` method.
 
@@ -130,11 +140,13 @@ spec*: a small object describing the module and how to load it. Python stops
 asking other finders once it receives a spec. The Python documentation calls
 this process [the meta path](https://docs.python.org/3/reference/import.html#the-meta-path).
 
-One of Python's standard finders is `PathFinder`. It performs the familiar
-search through `sys.path` and, as part of that search, consults
-`sys.path_hooks`. A custom finder placed before `PathFinder` can return a spec
-first. That may be intentional, but it also means that `PathFinder` and its
-path hooks do not see that module. See
+One of Python's standard finders is `PathFinder`. It searches `sys.path` for a
+top-level module or a package's `__path__` for a submodule. For each path item,
+it uses a cached path-entry finder or calls the factories in `sys.path_hooks`
+to create one. Path hooks therefore do not receive every import themselves.
+A custom meta-path finder placed before `PathFinder` can return a spec first,
+preventing `PathFinder` and the path-entry finders created by those hooks from
+seeing the module. See
 [the path-based finder](https://docs.python.org/3/reference/import.html#the-path-based-finder)
 for the full protocol.
 
@@ -144,15 +156,19 @@ for the full protocol.
 
 1. It registers a [`sys.addaudithook()`](https://docs.python.org/3/library/sys.html#sys.addaudithook)
    callback for CPython's [`import` audit event](https://docs.python.org/3/library/audit_events.html#audit-events).
-   On each event, it checks whether code replaced the entire `sys.meta_path`
-   list, for example with `sys.meta_path = [...]`. This event says that an
-   import is starting; it does not say which finder will succeed.
+   This event says that an uncached import is starting; it does not say which
+   finder will succeed. It also lets the monitor recover if less-common code
+   assigns an entirely new list to `sys.meta_path`.
 2. It temporarily replaces `sys.meta_path` with a compatible `list` subclass.
-   This records calls such as `append()`, `insert()`, and `remove()`, including
-   the stack trace showing where the change came from.
+   This records the usual changes as they happen: additions, removals,
+   replacements, clearing, and reordering, with a stack trace showing where
+   each change came from. Newly added finders are prepared for call recording.
 3. It wraps each finder's existing `find_spec()` method. The wrapper records
    whether the finder returned `None` or a module spec, then returns the same
    result. It does not supply a spec of its own or load a module.
+
+The standard `BuiltinImporter`, `FrozenImporter`, and `PathFinder` entries are
+classes shared by CPython, so metapathology deliberately leaves them unwrapped.
 
 At exit, the report compares the recorded result with what
 `PathFinder.find_spec()` finds. If `PathFinder` cannot find the module or would

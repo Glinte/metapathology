@@ -1,0 +1,56 @@
+[project]
+site_name = "metapathology"
+site_url = "https://glinte.github.io/metapathology/"
+site_description = "Diagnose sys.meta_path contention and import-hook bypasses."
+site_author = "Glinte"
+repo_url = "https://github.com/Glinte/metapathology"
+repo_name = "Glinte/metapathology"
+edit_uri = "edit/main/docs/"
+docs_dir = "docs"
+site_dir = "site"
+nav = [
+    { "Home" = "index.md" },
+    { "Usage" = "usage.md" },
+    { "How it works" = "concepts.md" },
+    { "Reading the report" = "report.md" },
+    { "Library API" = "api.md" },
+    { "Limitations" = "limitations.md" },
+    { "Development" = "development.md" },
+]
+
+[project.theme]
+language = "en"
+features = [
+    "content.action.edit",
+    "content.action.view",
+    "content.code.copy",
+    "navigation.footer",
+    "navigation.instant",
+    "navigation.instant.prefetch",
+    "navigation.path",
+    "navigation.sections",
+    "navigation.top",
+    "search.highlight",
+]
+
+[[project.theme.palette]]
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.markdown_extensions.admonition]
+[project.markdown_extensions.attr_list]
+[project.markdown_extensions.md_in_html]
+[project.markdown_extensions.toc]
+permalink = true
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+line_spans = "__span"
+pygments_lang_class = true
+[project.markdown_extensions.pymdownx.inlinehilite]
+[project.markdown_extensions.pymdownx.superfences]

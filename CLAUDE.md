@@ -45,28 +45,34 @@ The CLI is the primary interface; `install()` is the library API it wraps.
   `del finder.__dict__['find_spec']`, swap back a plain list, etc. (Audit
   hooks can't be removed — theirs must become inert no-ops on uninstall.)
 
-## Architecture: three layers
+## Architecture: three mechanisms
 
-Each layer covers the blind spots of the one below. Keep them independently
-toggleable.
+Most `sys.meta_path` changes are ordinary list mutations and must be recorded
+at the moment they happen. Direct list replacement and finder calls require
+separate hooks. Keep the three mechanisms independently toggleable.
 
 1. **Audit hook** (`sys.addaudithook`): on each `import` event, snapshot
    `(id(sys.meta_path), [type(f) for f in sys.meta_path])` and diff against
-   the previous snapshot. Only mechanism that catches wholesale reassignment
-   (`sys.meta_path = [...]`). Irremovable by third parties.
+   the previous snapshot. This is the recovery mechanism for the less common
+   direct reassignment (`sys.meta_path = [...]`), which bypasses list methods.
+   Irremovable by third parties.
 2. **Instrumented list**: replace `sys.meta_path` with a `list` subclass
-   overriding `append/insert/extend/remove/pop/__setitem__/__delitem__/__iadd__`.
-   Each mutation logs `traceback.extract_stack()` → attribution at mutation
-   time. When layer 1 detects the subclass was blown away by reassignment,
-   log it and re-install a fresh instrumented list around the new contents.
-   New finders added through the list get auto-instrumented (layer 3).
+   overriding every supported mutator: `append`, `insert`, `extend`, `remove`,
+   `pop`, `clear`, `reverse`, `sort`, item/slice assignment and deletion,
+   `+=`, and `*=`. Each mutation logs `traceback.extract_stack()` for
+   attribution at mutation time. New finders added through the list get
+   auto-instrumented. If mechanism 1 detects direct reassignment, log it and
+   install a fresh instrumented list around the new contents.
 3. **Finder attribution**: shadow each finder's `find_spec` in its *instance
    dict* with a logging wrapper that delegates, recording
    `(fullname, finder, spec_or_None)`. Instance-dict shadowing — never proxy
    objects — because third parties (pytest's `AssertionRewritingHook` among
    them) scan `sys.meta_path` with `isinstance`. Fallbacks: finders with
-   `__slots__` and class-entries (`PathFinder` itself is all classmethods) get
-   post-hoc replay attribution instead; don't mutate stdlib classes.
+   `__slots__` and class entries cannot be wrapped this way; don't mutate
+   shared stdlib classes. The report must identify `BuiltinImporter`,
+   `FrozenImporter`, and `PathFinder` as expected standard class entries,
+   explain their roles, and distinguish them from nonstandard skipped finders.
+   Suspicious custom claims get a post-hoc `PathFinder` replay.
 
 **Bypass detection** (the beartype#556 check): at report time, for each loaded
 module whose `spec.origin` ends in `.py`/`.pyc` and that was claimed by a
@@ -111,7 +117,7 @@ These came out of the design discussion; they are not optional style.
 - `src/metapathology/` — package source (`py.typed`; fully type-annotated).
   - `_records.py` — frozen event dataclasses + `type_name()`; leaf module,
     no imports from siblings.
-  - `_monitor.py` — `Monitor` (all three layers), `_InstrumentedMetaPath`,
+  - `_monitor.py` — `Monitor` (all three mechanisms), `_InstrumentedMetaPath`,
     and the module-level API (`install`/`uninstall`/`report`/...).
   - `_report.py` — all rendering and the bypass/no-spec analysis; imports
     `_monitor` only under `TYPE_CHECKING` (avoids the runtime cycle).
