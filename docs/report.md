@@ -6,6 +6,29 @@ types even though the text report groups them into sections. The
 [library API](api.md#event-records) documents the corresponding structured
 event records.
 
+## JSON report
+
+`render_report(format="json")`, `write_report(..., format="json")`, and JSON
+file output all use the same cutoff-based report document as the human
+renderer. The current experimental schema is identified by:
+
+```json
+{"name": "metapathology.report", "major": 0, "minor": 1}
+```
+
+Its top-level sections are `tool`, `process`, `capture`, `snapshots`,
+`timeline`, `findings`, and `diagnostics`. Timeline events retain their shared
+sequence number and receive an `event:<seq>` identifier. Findings contain
+structured claim and replay evidence rather than requiring consumers to parse
+the human wording.
+
+Schema 0.x is intentionally allowed to change as roadmap T1--T7 introduce
+their real snapshot, timeline, inventory, comparison, and finding models. A
+schema 1.0 review is required before machine consumers treat the shape as
+stable. Capacity and completeness are reported per capture mechanism; the
+current producers retain all records and therefore grow with observed import
+activity.
+
 ## Header
 
 The header shows whether the monitor is enabled, the initial and current

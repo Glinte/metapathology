@@ -9,14 +9,20 @@ import sys
 
 import metapathology
 
-_USAGE = """\
-usage: python -m metapathology <script.py> [args...]
-       python -m metapathology -m <module> [args...]
-       metapathology <script.py> [args...]
-       metapathology -m <module> [args...]
+TYPE_CHECKING = False
 
-Runs the target under the metapathology import-machinery monitor and writes a
-diagnostic report to stderr when the target finishes.
+if TYPE_CHECKING:
+    from typing import Literal
+
+_USAGE = """\
+usage: python -m metapathology [--report PATH] [--report-format {text,json}] <script.py> [args...]
+       python -m metapathology [--report PATH] [--report-format {text,json}] -m <module> [args...]
+       metapathology [--report PATH] [--report-format {text,json}] <script.py> [args...]
+       metapathology [--report PATH] [--report-format {text,json}] -m <module> [args...]
+
+Runs the target under the metapathology import-machinery monitor. Reports go
+to stderr as text by default; file reports default to JSON. Tool options must
+precede the target. Use -- to run a script whose name begins with a dash.
 
 Documentation: https://glinte.github.io/metapathology/usage/
 """
@@ -31,28 +37,71 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         The process exit code.
     """
-    args = sys.argv[1:] if argv is None else argv
+    args = list(sys.argv[1:] if argv is None else argv)
+    report_destination: str | None = None
+    report_format: Literal["text", "json"] | None = None
+    while args:
+        option = args[0]
+        if option == "--":
+            args.pop(0)
+            break
+        if option in ("-h", "--help"):
+            sys.stdout.write(_USAGE)
+            return 0
+        if option == "--report" or option == "--report-format":
+            if len(args) < 2:
+                sys.stderr.write(_USAGE)
+                return 2
+            value = args[1]
+            del args[:2]
+            if option == "--report":
+                report_destination = value
+            else:
+                report_format = _parse_report_format(value)
+                if report_format is None:
+                    sys.stderr.write(_USAGE)
+                    return 2
+            continue
+        break
     if not args:
         sys.stderr.write(_USAGE)
         return 2
-    if args[0] in ("-h", "--help"):
-        sys.stdout.write(_USAGE)
-        return 0
     if args[0] == "-m":
         if len(args) < 2:
             sys.stderr.write(_USAGE)
             return 2
-        return _run(args[1], args[2:], is_module=True)
-    return _run(args[0], args[1:], is_module=False)
+        return _run(
+            args[1],
+            args[2:],
+            is_module=True,
+            report_destination=report_destination,
+            report_format=report_format,
+        )
+    return _run(
+        args[0],
+        args[1:],
+        is_module=False,
+        report_destination=report_destination,
+        report_format=report_format,
+    )
 
 
-def _run(target: str, target_args: list[str], *, is_module: bool) -> int:
+def _run(
+    target: str,
+    target_args: list[str],
+    *,
+    is_module: bool,
+    report_destination: str | None,
+    report_format: "Literal['text', 'json'] | None",
+) -> int:
     """Install the monitor, run the target via runpy, and always write the report.
 
     Args:
         target: Script path, or module name when ``is_module`` is true.
         target_args: Arguments the target sees as ``sys.argv[1:]``.
         is_module: Select ``python -m``-style execution instead of a script path.
+        report_destination: Explicit automatic report path, or None.
+        report_format: Explicit report format, or None for environment/default resolution.
 
     Returns:
         The exit code a direct invocation of the target would produce.
@@ -65,7 +114,11 @@ def _run(target: str, target_args: list[str], *, is_module: bool) -> int:
     import traceback
     from contextlib import suppress
 
-    metapathology.install(report_at_exit=False)
+    monitor = metapathology.install(
+        report_at_exit=False,
+        report_destination=report_destination,
+        report_format=report_format,
+    )
     exit_code = 0
     try:
         sys.argv = [target, *target_args]
@@ -84,10 +137,19 @@ def _run(target: str, target_args: list[str], *, is_module: bool) -> int:
         exit_code = 1
     finally:
         # Reporting is diagnostic-only and must not replace the target's exit
-        # status when stderr is closed or otherwise unusable.
+        # status when stderr or a configured file is unusable.
         with suppress(Exception):
-            metapathology.report()
+            monitor._write_configured_report()
     return exit_code
+
+
+def _parse_report_format(value: str) -> "Literal['text', 'json'] | None":
+    """Narrow a CLI string to a supported report format."""
+    if value == "text":
+        return "text"
+    if value == "json":
+        return "json"
+    return None
 
 
 def _exit_code(exc: SystemExit) -> int:

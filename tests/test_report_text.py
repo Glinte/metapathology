@@ -1,4 +1,4 @@
-"""Report content: bypass detection and the no-spec bucket."""
+"""Human report content: bypass detection and the no-spec bucket."""
 
 import subprocess
 from collections.abc import Callable

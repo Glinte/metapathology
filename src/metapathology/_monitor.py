@@ -14,6 +14,7 @@ import sys
 import threading
 import traceback
 import types
+from contextlib import suppress
 from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 
 from metapathology import _report
@@ -33,8 +34,9 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
     from importlib.machinery import ModuleSpec
+    from os import PathLike
     from types import FrameType, ModuleType
-    from typing import Any, SupportsIndex, TextIO, overload
+    from typing import Any, Literal, SupportsIndex, TextIO, overload
     from typing import cast as _cast
 
     from _typeshed import SupportsRichComparison
@@ -57,6 +59,8 @@ _SEARCH_PATH_CACHE_SIZE = 8
 _MISSING = object()
 _STANDARD_CLASS_FINDERS = (BuiltinImporter, FrozenImporter, PathFinder)
 _STANDARD_CLASS_FINDER_REASON = "standard CPython class finder; expected and deliberately left unchanged"
+_REPORT_DESTINATION_ENV = "METAPATHOLOGY_REPORT"
+_REPORT_FORMAT_ENV = "METAPATHOLOGY_REPORT_FORMAT"
 
 
 class _ThreadState(threading.local):
@@ -103,6 +107,11 @@ class Monitor:
         self._audit_installed = False
         # Whether our atexit callback is currently registered (mirrors it for unregister).
         self._report_at_exit = False
+        # Resolved automatic report destination. None means stderr. The PID is
+        # added only when an automatic file report is written; explicit paths
+        # passed to write_report() remain unchanged.
+        self._report_destination: str | None = None
+        self._report_format = "text"
         # The exact list object we last put into sys.meta_path. The audit hook
         # compares by identity: a mismatch means someone reassigned sys.meta_path.
         self._instrumented: _InstrumentedMetaPath | None = None
@@ -144,7 +153,28 @@ class Monitor:
         with self._record_lock:
             return [(type_name(finder), reason) for finder, reason in self._skipped.values()]
 
-    def install(self, *, report_at_exit: bool = True) -> None:
+    def _report_state(self) -> tuple[int, list[MonitorEvent], list[tuple[object, str]]]:
+        """Copy chronological evidence and skipped finders at one sequence cutoff."""
+        with self._record_lock:
+            return self._seq, list(self._events), list(self._skipped.values())
+
+    def _begin_report_analysis(self) -> bool:
+        """Keep report-time replays from recording activity after their evidence cutoff."""
+        previously_active = self._local.active
+        self._local.active = True
+        return previously_active
+
+    def _end_report_analysis(self, previously_active: bool) -> None:
+        """Restore this thread's re-entrancy state after report analysis."""
+        self._local.active = previously_active
+
+    def install(
+        self,
+        *,
+        report_at_exit: bool = True,
+        report_destination: "str | PathLike[str] | None" = None,
+        report_format: "Literal['text', 'json'] | None" = None,
+    ) -> None:
         """Instrument ``sys.meta_path`` and register the import audit hook (idempotent).
 
         A repeat call on an already-enabled monitor changes nothing except
@@ -152,10 +182,21 @@ class Monitor:
         not registered yet.
 
         Args:
-            report_at_exit: Also register an atexit callback that writes the
-                report to stderr.
+            report_at_exit: Register an atexit callback for the resolved output.
+            report_destination: Automatic report path. When omitted, consult
+                ``METAPATHOLOGY_REPORT`` and then default to stderr.
+            report_format: ``"text"`` or ``"json"``. When omitted, consult
+                ``METAPATHOLOGY_REPORT_FORMAT`` and default according to the
+                destination (text for stderr, JSON for a file).
         """
         with self._reinstall_lock:
+            was_enabled = self._enabled
+            # Validate explicit output configuration before touching import
+            # state so a caller error cannot leave a partially installed monitor.
+            if not was_enabled:
+                self._configure_report(report_destination, report_format, use_environment=True)
+            elif report_destination is not None or report_format is not None:
+                self._configure_report(report_destination, report_format, use_environment=False)
             if not self._enabled:
                 self._enabled = True
                 self._baseline_modules = frozenset(sys.modules)
@@ -183,6 +224,42 @@ class Monitor:
         if report_at_exit and not self._report_at_exit:
             self._report_at_exit = True
             atexit.register(self._report_atexit)
+
+    def _configure_report(
+        self,
+        destination: "str | PathLike[str] | None",
+        format: "Literal['text', 'json'] | None",
+        *,
+        use_environment: bool,
+    ) -> None:
+        """Resolve explicit and environment-backed automatic report settings."""
+        resolved_destination: str | None
+        if destination is not None:
+            path = os.fspath(destination)
+            if not isinstance(path, str):
+                raise TypeError("report destinations must resolve to str, not bytes")
+            resolved_destination = path
+        elif use_environment:
+            environment_path = os.environ.get(_REPORT_DESTINATION_ENV)
+            resolved_destination = environment_path or None
+        else:
+            resolved_destination = self._report_destination
+
+        resolved_format: str | None = format
+        from_environment = False
+        if resolved_format is None and use_environment:
+            resolved_format = os.environ.get(_REPORT_FORMAT_ENV) or None
+            from_environment = resolved_format is not None
+        if resolved_format is None:
+            resolved_format = "json" if resolved_destination is not None else "text"
+        try:
+            self._report_format = _report.validate_format(resolved_format)
+        except ValueError as exc:
+            if not from_environment:
+                raise
+            self._report_format = "json" if resolved_destination is not None else "text"
+            self._record_internal_error("report_configuration", exc)
+        self._report_destination = resolved_destination
 
     def uninstall(self) -> None:
         """Restore a plain ``sys.meta_path`` list and unshadow all finders (idempotent)."""
@@ -609,11 +686,18 @@ class Monitor:
             self._events.append(InternalError(seq=self._seq, where=where, exception_type_name=exception_type_name))
 
     def _report_atexit(self) -> None:
-        """Write the report to stderr from atexit without ever breaking interpreter shutdown."""
-        try:
-            _report.write_report(self, sys.stderr)
-        except Exception:
-            traceback.print_exc()
+        """Write the configured report without breaking interpreter shutdown."""
+        with suppress(Exception):
+            self._write_configured_report()
+
+    def _write_configured_report(self) -> None:
+        """Write the configured report, adding this process's ID to file paths."""
+        with self._reinstall_lock:
+            destination = self._report_destination
+            format = self._report_format
+        if destination is not None:
+            destination = _pid_destination(destination, os.getpid())
+        _report.write_report(self, destination, format=format)
 
 
 class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
@@ -824,22 +908,34 @@ _monitor_singleton: Monitor | None = None
 _singleton_lock = threading.Lock()
 
 
-def install(*, report_at_exit: bool = True) -> Monitor:
+def install(
+    *,
+    report_at_exit: bool = True,
+    report_destination: "str | PathLike[str] | None" = None,
+    report_format: "Literal['text', 'json'] | None" = None,
+) -> Monitor:
     """Install the import-machinery monitor (idempotent) and return it.
 
     Call as early as possible: only imports and mutations that happen after
     this call are observed.
 
     Args:
-        report_at_exit: Also register an atexit callback that writes the
-            report to stderr.
+        report_at_exit: Register an atexit callback for the resolved output.
+        report_destination: Automatic report path, or None to consult the
+            environment and then default to stderr.
+        report_format: ``"text"`` or ``"json"``; the destination determines
+            the default when neither the API nor environment configures it.
     """
     global _monitor_singleton
     with _singleton_lock:
         if _monitor_singleton is None:
             _monitor_singleton = Monitor()
         monitor = _monitor_singleton
-    monitor.install(report_at_exit=report_at_exit)
+    monitor.install(
+        report_at_exit=report_at_exit,
+        report_destination=report_destination,
+        report_format=report_format,
+    )
     return monitor
 
 
@@ -856,22 +952,37 @@ def get_monitor() -> Monitor | None:
         return _monitor_singleton
 
 
-def report(file: "TextIO | None" = None) -> None:
-    """Write the diagnostic report to ``file`` (default ``sys.stderr``).
+def write_report(
+    destination: "TextIO | str | PathLike[str] | None" = None,
+    *,
+    format: "Literal['text', 'json']" = "text",
+) -> None:
+    """Write a text or JSON report to stderr, a stream, or an atomic file.
 
     Raises:
         RuntimeError: If :func:`install` was never called.
+        ValueError: If ``format`` is unsupported.
+        OSError: If a file or stream write fails.
     """
-    _report.write_report(_require_monitor(), file)
+    _report.write_report(_require_monitor(), destination, format=format)
 
 
-def render_report() -> str:
-    """Return the diagnostic report as text.
+def render_report(*, format: "Literal['text', 'json']" = "text") -> str:
+    """Return the diagnostic report as text or versioned JSON.
 
     Raises:
         RuntimeError: If :func:`install` was never called.
+        ValueError: If ``format`` is unsupported.
     """
-    return _report.render_report(_require_monitor())
+    return _report.render_report(_require_monitor(), format=format)
+
+
+def _pid_destination(path: str, pid: int) -> str:
+    """Add ``pid`` to an automatic filename, replacing ``{pid}`` when supplied."""
+    if "{pid}" in path:
+        return path.replace("{pid}", str(pid))
+    stem, suffix = os.path.splitext(path)
+    return f"{stem}.{pid}{suffix}"
 
 
 def _require_monitor() -> Monitor:

@@ -16,7 +16,7 @@ Documentation: https://glinte.github.io/metapathology/
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from metapathology._monitor import Monitor, get_monitor, install, render_report, report, uninstall
+    from metapathology._monitor import Monitor, get_monitor, install, render_report, uninstall, write_report
     from metapathology._records import (
         FindSpecCall,
         InternalError,
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 # comparatively expensive ``importlib.metadata`` module.
 __version__ = "0.2.3"
 
-_MONITOR_EXPORTS = frozenset(("Monitor", "get_monitor", "install", "render_report", "report", "uninstall"))
+_MONITOR_EXPORTS = frozenset(("Monitor", "get_monitor", "install", "render_report", "uninstall", "write_report"))
 _RECORD_EXPORTS = frozenset(
     ("FindSpecCall", "InternalError", "MetaPathMutation", "MetaPathReassignment", "MonitorEvent")
 )
@@ -46,8 +46,8 @@ __all__ = [
     "get_monitor",
     "install",
     "render_report",
-    "report",
     "uninstall",
+    "write_report",
 ]
 
 

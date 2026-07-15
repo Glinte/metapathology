@@ -1,313 +1,108 @@
-"""Rendering of the diagnostic report.
+"""Report rendering and output boundaries.
 
-All stringification of foreign data (specs, loaders, stack frames) happens
-here, at report time, never while an import is in flight. Ordinary reporting
-errors are contained because reports usually run from an atexit callback;
-process-control ``BaseException`` subclasses are deliberately allowed through.
+All live-state capture and counterfactual analysis happens once in
+``_report_data``. The renderers only project that document, while this module
+contains the I/O behavior shared by explicit, CLI, and atexit reporting.
 """
 
+import json
 import os
 import sys
-from importlib.machinery import PathFinder
+import tempfile
+from contextlib import suppress
 
-from metapathology._records import (
-    FindSpecCall,
-    InternalError,
-    MetaPathMutation,
-    MetaPathReassignment,
-    type_name,
-)
+from metapathology._records import type_name
+from metapathology._report_data import capture_document, failed_json_document, json_document
+from metapathology._report_text import render_lines
 
 # Supported type checkers treat this conventional name as true without making
 # report generation import typing solely for annotations.
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-    from importlib.machinery import ModuleSpec
-    from traceback import StackSummary
-    from typing import TextIO, TypeVar
+    from os import PathLike
+    from typing import Literal, TextIO
 
     from metapathology._monitor import Monitor
 
-    _EventT = TypeVar("_EventT")
 
-# This package's own directory, normcased for comparison: used to drop our
-# frames from displayed stacks.
-_PACKAGE_DIR = os.path.normcase(os.path.dirname(os.path.abspath(__file__)))
-# Only claims with these origin suffixes get the bypass check; extension
-# modules, builtins, and synthetic origins have no PathFinder baseline.
-_SOURCE_SUFFIXES = (".py", ".pyc")
-# Max non-noise frames shown per stack in the report.
-_STACK_DISPLAY_FRAMES = 5
-# Max claimed modules listed per finder in the attribution section.
-_MAX_LISTED_MODULES = 25
-_STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
+_REPORT_FORMATS = frozenset(("json", "text"))
 
 
-def write_report(monitor: "Monitor", file: "TextIO | None" = None) -> None:
-    """Render the report for ``monitor`` and write it to ``file`` (default ``sys.stderr``)."""
-    out = sys.stderr if file is None else file
-    out.write(render_report(monitor))
+def validate_format(format: str) -> "Literal['text', 'json']":
+    """Validate and narrow a public report-format value."""
+    if format not in _REPORT_FORMATS:
+        choices = ", ".join(sorted(_REPORT_FORMATS))
+        raise ValueError(f"unknown report format {format!r}; expected one of: {choices}")
+    return format  # type: ignore[return-value]
 
 
-def render_report(monitor: "Monitor") -> str:
-    """Render the full diagnostic report as text.
+def write_report(
+    monitor: "Monitor",
+    destination: "TextIO | str | PathLike[str] | None" = None,
+    *,
+    format: str = "text",
+) -> None:
+    """Render a report and write it to stderr, a stream, or an atomic file.
 
-    Ordinary exceptions become a failure message in the report. Control-flow
-    exceptions outside ``Exception`` (such as ``KeyboardInterrupt`` and
-    ``SystemExit``) propagate unchanged.
+    Errors are recorded and re-raised here. Automatic callers provide the
+    suppression boundary so explicit I/O retains conventional error handling.
     """
+    report_format = validate_format(format)
     try:
-        return "\n".join(_render_lines(monitor)) + "\n"
+        rendered = render_report(monitor, format=report_format)
+        if destination is None:
+            sys.stderr.write(rendered)
+        elif isinstance(destination, (str, os.PathLike)):
+            _write_atomic(destination, rendered)
+        else:
+            destination.write(rendered)
+    except Exception as exc:
+        monitor._record_internal_error("report_write", exc)
+        raise
+
+
+def render_report(monitor: "Monitor", *, format: str = "text") -> str:
+    """Render the full diagnostic report as text or experimental JSON.
+
+    Ordinary exceptions become a valid failure report. Control-flow
+    exceptions outside ``Exception`` continue to propagate unchanged.
+    """
+    report_format = validate_format(format)
+    try:
+        document = capture_document(monitor)
+        if report_format == "json":
+            return json.dumps(json_document(document), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        return "\n".join(render_lines(document)) + "\n"
     except Exception as exc:  # The report must never break the host program.
-        return f"== metapathology report ==\nreport generation failed: {type_name(exc)}\n"
+        error_name = type_name(exc)
+        if report_format == "json":
+            return json.dumps(failed_json_document(error_name), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        return f"== metapathology report ==\nreport generation failed: {error_name}\n"
 
 
-def _render_lines(monitor: "Monitor") -> list[str]:
-    """Build the report body as a list of lines; the caller joins and appends the trailing newline."""
-    events = monitor.events()
-    mutations = _events_of_type(events, MetaPathMutation)
-    reassignments = _events_of_type(events, MetaPathReassignment)
-    calls = _events_of_type(events, FindSpecCall)
-    errors = _events_of_type(events, InternalError)
-
-    lines = ["== metapathology report =="]
-    lines.append("report guide: https://glinte.github.io/metapathology/report/")
-    lines.append(f"monitor enabled: {monitor.enabled}")
-    lines.append(f"initial sys.meta_path: {_names_line(monitor.initial_meta_path)}")
-    lines.append(f"current sys.meta_path: {_names_line(_current_meta_path_names())}")
-    skipped = monitor.skipped_finders()
-    standard_skipped = [item for item in skipped if item[1].startswith(_STANDARD_CLASS_FINDER_REASON_PREFIX)]
-    other_skipped = [item for item in skipped if not item[1].startswith(_STANDARD_CLASS_FINDER_REASON_PREFIX)]
-    if standard_skipped:
-        lines.append(
-            f"standard CPython finders left unwrapped (expected): {_names_line(tuple(n for n, _ in standard_skipped))}"
-        )
-        lines.append("    BuiltinImporter handles built-in modules; FrozenImporter handles frozen modules.")
-        lines.append(
-            "    PathFinder handles sys.path and package paths; suspicious custom claims are compared with it later."
-        )
-        lines.append("    These entries are classes shared by the interpreter, so metapathology does not modify them.")
-    if other_skipped:
-        lines.append("other finders observed but not instrumented (direct attribution unavailable):")
-        lines.extend(f"    {name}: {reason}" for name, reason in other_skipped)
-    new_modules = _modules_since_install(monitor)
-    lines.append(f"modules imported since install: {len(new_modules)}")
-
-    lines.append("")
-    lines.append(f"-- sys.meta_path mutations ({len(mutations)}) --")
-    if not mutations:
-        lines.append("(none)")
-    for mutation in mutations:
-        lines.extend(_mutation_lines(mutation))
-
-    lines.append("")
-    lines.append(f"-- sys.meta_path reassignments ({len(reassignments)}) --")
-    if not reassignments:
-        lines.append("(none)")
-    for reassignment in reassignments:
-        lines.extend(_reassignment_lines(reassignment))
-
-    lines.append("")
-    lines.append("-- finder attribution (instrumented finders only) --")
-    lines.extend(_attribution_lines(calls))
-
-    findings = _suspicious_findings(monitor, calls)
-    lines.append("")
-    lines.append(f"-- suspicious findings ({len(findings)}) --")
-    if not findings:
-        lines.append("(none)")
-    lines.extend(findings)
-
-    lines.append("")
-    lines.append(f"-- internal errors ({len(errors)}) --")
-    if not errors:
-        lines.append("(none)")
-    lines.extend(_internal_error_line(error) for error in errors)
-
-    lines.append("")
-    return lines
-
-
-def _events_of_type(events: "Iterable[object]", event_type: "type[_EventT]") -> "list[_EventT]":
-    """Return only events of ``event_type``, preserving that concrete type for callers."""
-    return [event for event in events if isinstance(event, event_type)]
-
-
-def _internal_error_line(error: InternalError) -> str:
-    """Format an internal error without requiring captured foreign exception text."""
-    line = f"#{error.seq} in {error.where}: {error.exception_type_name}"
-    return line if error.message is None else f"{line}: {error.message}"
-
-
-def _current_meta_path_names() -> tuple[str, ...]:
-    """Name the current ``sys.meta_path`` entries, tolerating a broken interpreter state at shutdown."""
+def _write_atomic(path: "str | PathLike[str]", rendered: str) -> None:
+    """Write through a same-directory temporary file, then atomically replace."""
+    raw_path = os.fspath(path)
+    if not isinstance(raw_path, str):
+        raise TypeError("report paths must resolve to str, not bytes")
+    absolute = os.path.abspath(raw_path)
+    temporary_path: str | None = None
     try:
-        return tuple(type_name(f) for f in list(sys.meta_path))
-    except Exception:
-        return ("<unavailable>",)
-
-
-def _modules_since_install(monitor: "Monitor") -> list[str]:
-    """List names added to ``sys.modules`` after the monitor was installed."""
-    baseline = monitor.baseline_modules
-    try:
-        return [name for name in list(sys.modules) if name not in baseline]
-    except Exception:
-        return []
-
-
-def _names_line(names: tuple[str, ...]) -> str:
-    """Format finder names as a bracketed, comma-separated list."""
-    return "[" + ", ".join(names) + "]"
-
-
-def _mutation_lines(mutation: MetaPathMutation) -> list[str]:
-    """Format one mutation record: op, added/removed delta, resulting contents, and user-code stack."""
-    delta_parts: list[str] = []
-    if mutation.added:
-        delta_parts.append("+" + _names_line(mutation.added))
-    if mutation.removed:
-        delta_parts.append("-" + _names_line(mutation.removed))
-    delta = " ".join(delta_parts) if delta_parts else "(order change)"
-    lines = [f"#{mutation.seq} {mutation.op} {delta} [thread {mutation.thread_name}]"]
-    lines.append(f"    meta_path after: {_names_line(mutation.contents_after)}")
-    lines.extend(_stack_lines(mutation.stack))
-    return lines
-
-
-def _reassignment_lines(reassignment: MetaPathReassignment) -> list[str]:
-    """Format one reassignment record with before/after contents and the detection stack."""
-    lines = [
-        f"#{reassignment.seq} sys.meta_path REASSIGNED, detected during import of "
-        f"'{reassignment.during_import}' [thread {reassignment.thread_name}]"
-    ]
-    lines.append(f"    before: {_names_line(reassignment.old_contents)}")
-    lines.append(f"    after:  {_names_line(reassignment.new_contents)}")
-    lines.append("    instrumentation reinstalled; stack shows the triggering import, not the reassignment itself:")
-    lines.extend(_stack_lines(reassignment.stack))
-    return lines
-
-
-def _attribution_lines(calls: list[FindSpecCall]) -> list[str]:
-    """Summarize ``find_spec`` traffic per finder: probe counts and claimed modules, capped per finder."""
-    probes: dict[tuple[str, int], int] = {}
-    wins: dict[tuple[str, int], list[str]] = {}
-    for call in calls:
-        key = (call.finder_type_name, call.finder_id)
-        probes[key] = probes.get(key, 0) + 1
-        if call.found:
-            wins.setdefault(key, []).append(call.fullname)
-    if not probes:
-        return ["(no find_spec activity recorded on instrumented finders)"]
-    lines: list[str] = []
-    for (name, finder_id), count in sorted(probes.items()):
-        claimed = wins.get((name, finder_id), [])
-        lines.append(f"{name} (id 0x{finder_id:x}): {count} find_spec calls, {len(claimed)} claimed")
-        lines.extend(f"    {module}" for module in claimed[:_MAX_LISTED_MODULES])
-        if len(claimed) > _MAX_LISTED_MODULES:
-            lines.append(f"    ... and {len(claimed) - _MAX_LISTED_MODULES} more")
-    return lines
-
-
-def _suspicious_findings(monitor: "Monitor", calls: list[FindSpecCall]) -> list[str]:
-    """Cross-reference ``sys.modules`` against recorded claims and return finding lines.
-
-    Modules claimed by an instrumented finder get the bypass check; modules
-    with no recorded claim and no ``__spec__`` are flagged as manual loads.
-    Modules that predate the monitor are ignored.
-    """
-    winners: dict[str, FindSpecCall] = {}
-    for call in calls:
-        if call.found:
-            winners[call.fullname] = call
-    findings: list[str] = []
-    baseline = monitor.baseline_modules
-    for name, module in list(sys.modules.items()):
-        if name in baseline or name == "__main__":
-            continue
-        winner = winners.get(name)
-        if winner is not None:
-            findings.extend(_bypass_findings(name, winner))
-            continue
-        try:
-            spec = getattr(module, "__spec__", None)
-        except Exception:  # sys.modules values can be arbitrarily weird objects.
-            spec = None
-        if spec is None:
-            findings.append(
-                f"[no-spec] '{name}' is in sys.modules with no __spec__ and no recorded finder claim "
-                "(manually created or exec_module-style load; invisible to all import hooks)."
-            )
-    return findings
-
-
-def _bypass_findings(name: str, winner: FindSpecCall) -> list[str]:
-    """Check one claimed source module against a fresh ``PathFinder`` replay.
-
-    Args:
-        name: The claimed module's fullname.
-        winner: The recorded ``find_spec`` call that claimed it.
-
-    Returns:
-        At most one finding line: ``[bypass]`` when the standard machinery
-        would produce a different loader or origin, ``[unfindable]`` when it
-        finds nothing at all, empty when the claim looks compliant or has no
-        filesystem source origin.
-    """
-    origin = winner.origin
-    if origin is None or not origin.endswith(_SOURCE_SUFFIXES) or winner.loader_type_name is None:
-        return []
-    replay = _replay_path_finder(name, winner.search_path)
-    if replay is None:
-        return [
-            f"[unfindable] '{name}' (origin {origin}) was claimed by {winner.finder_type_name}, but the "
-            "standard sys.path machinery cannot find it: sys.path_hooks-based tools never see this module."
-        ]
-    replay_loader = None if replay.loader is None else type_name(replay.loader)
-    replay_origin = replay.origin if isinstance(replay.origin, str) else None
-    if replay_loader != winner.loader_type_name or not _same_path(replay_origin, origin):
-        return [
-            f"[bypass] '{name}' was claimed by {winner.finder_type_name} "
-            f"(loader {winner.loader_type_name}, origin {origin}); the standard sys.path machinery would use "
-            f"loader {replay_loader} (origin {replay_origin}). sys.path_hooks-based tools were bypassed."
-        ]
-    return []
-
-
-def _replay_path_finder(name: str, search_path: tuple[str, ...]) -> "ModuleSpec | None":
-    """Ask the standard ``PathFinder`` what it would do for ``name``, without importing anything.
-
-    Returns:
-        The spec the standard path machinery would produce now, or None when
-        it finds nothing or the replay is impossible (e.g. the parent package
-        is gone or has no ``__path__``).
-    """
-    try:
-        return PathFinder.find_spec(name, search_path)
-    except Exception:  # A broken finder chain must not break the report.
-        return None
-
-
-def _same_path(a: str | None, b: str | None) -> bool:
-    """Compare two filesystem paths after absolutization and case normalization."""
-    if a is None or b is None:
-        return a == b
-    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
-
-
-def _stack_lines(stack: "StackSummary") -> list[str]:
-    """Format the interesting frames of a captured stack, innermost first, noise filtered out."""
-    frames = [f for f in stack if not _is_noise_frame(f.filename)]
-    shown = frames[:_STACK_DISPLAY_FRAMES]  # walk_stack order: innermost first.
-    if not shown:
-        return ["    (no frames outside the import machinery)"]
-    return [f"    at {f.filename}:{f.lineno} in {f.name}" for f in shown]
-
-
-def _is_noise_frame(filename: str) -> bool:
-    """Return True for frames from the import machinery or from metapathology itself."""
-    if filename.startswith("<frozen importlib"):
-        return True
-    return os.path.normcase(os.path.abspath(filename)).startswith(_PACKAGE_DIR)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            prefix=f".{os.path.basename(absolute)}.",
+            suffix=".tmp",
+            dir=os.path.dirname(absolute),
+            delete=False,
+        ) as temporary:
+            temporary_path = temporary.name
+            temporary.write(rendered)
+        os.replace(temporary_path, absolute)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            with suppress(OSError):
+                os.unlink(temporary_path)

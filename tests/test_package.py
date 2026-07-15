@@ -18,8 +18,8 @@ _EXPECTED_PUBLIC_API = frozenset(
         "get_monitor",
         "install",
         "render_report",
-        "report",
         "uninstall",
+        "write_report",
     }
 )
 

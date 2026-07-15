@@ -26,8 +26,8 @@ finder early in `sys.meta_path` may see one probe per uncached import; several
 instrumentable finders that decline the same import can produce several
 records.
 
-Event records use small read-only slotted classes rather than dataclasses.
-This keeps externally visible snapshots immutable while avoiding dataclass
+Event and report records use small read-only slotted classes rather than
+dataclasses. This keeps captured snapshots immutable while avoiding dataclass
 code-generation and value-comparison costs in import hot paths.
 
 List mutations are intentionally heavier. Each append, removal, replacement,
@@ -52,7 +52,7 @@ monitor = metapathology.install(report_at_exit=False)
 try:
     import package_under_investigation
 finally:
-    metapathology.report()
+    metapathology.write_report()
     metapathology.uninstall()
 ```
 

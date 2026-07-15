@@ -74,9 +74,15 @@ dropped-record policy.
 
 Mutation and reassignment records are more expensive because they retain stack
 summaries. In a long-running or import-heavy process, install immediately
-before the behavior of interest, then call `report()` and `uninstall()` after
+before the behavior of interest, then call `write_report()` and `uninstall()` after
 capturing it. See [speed and memory use](performance.md) for the cost model and
 reproducible benchmarks, and the [library API](api.md) for lifecycle details.
+
+Rendering temporarily copies the retained events and relevant interpreter
+state into one cutoff-based document. JSON file size and peak report-time
+memory are therefore also proportional to captured activity. Automatic file
+reporting makes one synchronous write attempt and does not queue, aggregate,
+or retry records.
 
 Reporting copies mutable interpreter collections and tolerates concurrent
 changes, so a report produced while daemon threads are importing may be

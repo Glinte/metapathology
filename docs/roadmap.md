@@ -148,21 +148,29 @@ imports leave no stable module to inventory.
   trigger loads.
 - The report labels the inventory as post-hoc rather than exact attribution.
 
-## T5: Add structured, file-based reports
+## T5: Add structured, file-based reports (implemented)
 
 **Weakness:** Frozen GUI applications and embedded interpreters may have no
 usable stderr. Multiple worker processes also make human-readable stderr
 reports difficult to collect reliably.
 
-**Recommendation:** Add a versioned JSON report containing environment
-metadata, snapshots, records, findings, and internal errors. Allow the report
-destination to include the process ID. Write through an explicit API and an
-environment-variable bootstrap configuration; avoid importing serialization
-helpers from hot paths.
+**Implementation:** Text and experimental schema-versioned JSON are projections
+of one cutoff-based report document containing process metadata, snapshots, a
+chronological timeline, structured findings, and diagnostics. Every automatic
+report filename includes the process ID: `{pid}` is replaced when present;
+otherwise it is inserted before the file extension (`report.json` becomes
+`report.1234.json` for process 1234). Direct `write_report()` paths remain
+unchanged. The CLI, public API, and
+`METAPATHOLOGY_REPORT` configuration all reach the same atomic file writer.
 
-Define capacity and shutdown behavior before adding any cross-process
-aggregation. The first version should write one bounded-by-existing-event-data
-file per process rather than introduce a queue or collector service.
+The initial schema is 0.1 rather than a prematurely stable 1.0. T1--T7 may
+extend or reshape schema 0.x as their actual evidence models are implemented;
+perform a schema 1.0 review after T7 and before T9 pins semantic assertions.
+Human and JSON renderers must continue to consume the same report document.
+
+There is no cross-process aggregation. Each process performs one synchronous
+write bounded by existing retained events and copied report-time state, with no
+queue, collector, retry loop, or silent dropping policy.
 
 **Dependencies:** None.
 
@@ -172,8 +180,8 @@ file per process rather than introduce a queue or collector service.
 - Concurrent processes do not overwrite each other's files.
 - Write failures become isolated internal errors and never change the target
   exit status.
-- The schema carries a version field, bumps it on breaking change, and has a
-  round-trip test.
+- Schema 0.x is explicitly experimental and covered by round-trip and semantic
+  tests; schema 1.0 is the future compatibility boundary.
 
 ## T6: Generalize counterfactual replay
 

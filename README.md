@@ -41,10 +41,13 @@ Primary: run your program under observation, no code changes needed —
 ```console
 $ python -m metapathology myscript.py --my-args
 $ python -m metapathology -m pytest tests/
+$ python -m metapathology --report diagnostic.json myscript.py
 ```
 
-A report is printed at exit. An installed `metapathology` command provides a
-shorter equivalent:
+A text report is printed to standard error by default. `--report PATH` writes
+an atomic file instead; files default to JSON, or select text with
+`--report-format text`. An installed `metapathology` command provides a shorter
+equivalent:
 
 ```console
 $ metapathology myscript.py --my-args
@@ -52,6 +55,15 @@ $ metapathology myscript.py --my-args
 
 Prefer `python -m metapathology`: it guarantees the hooks land in the same
 interpreter and venv as the code under investigation.
+
+Metapathology adds the current process ID to every automatic report filename,
+so concurrent workers write different files. For process 1234,
+`diagnostic.json` becomes `diagnostic.1234.json`. To control the position, put
+`{pid}` in the path: `diagnostic-{pid}.json` becomes
+`diagnostic-1234.json`. Frozen and embedded bootstraps can set
+`METAPATHOLOGY_REPORT` and `METAPATHOLOGY_REPORT_FORMAT` before calling
+`install()`. Reports can contain argv values, paths, origins, and stack
+filenames; treat them as potentially sensitive diagnostic artifacts.
 
 [Library API](https://glinte.github.io/metapathology/api/), for when a wrapper
 isn't possible (notebooks, embedded interpreters, "I can only touch
@@ -76,7 +88,7 @@ monitor = metapathology.install(report_at_exit=False)
 try:
     import package_under_investigation
 finally:
-    metapathology.report(sys.stdout)
+    metapathology.write_report(sys.stdout)
     metapathology.uninstall()
 ```
 
@@ -87,9 +99,10 @@ events remain available after uninstalling.
 
 For integration with another diagnostic or test harness:
 
-- `metapathology.render_report()` returns the same report as a string;
-- `metapathology.report(file=None)` writes it to `file`, or to standard error
-  when omitted;
+- `metapathology.render_report(format="text")` returns text or experimental
+  schema-versioned JSON as a string;
+- `metapathology.write_report(destination=None, format="text")` writes to
+  standard error, a text stream, or an atomic file path;
 - `metapathology.get_monitor()` returns the process-wide monitor, or `None`
   before the first call to `install()`; and
 - `monitor.events()` returns a capture-order snapshot of the structured
@@ -97,7 +110,7 @@ For integration with another diagnostic or test harness:
   `InternalError` records. Mutating the returned list does not alter the
   monitor.
 
-Calling `report()` or `render_report()` before `install()` raises
+Calling `write_report()` or `render_report()` before `install()` raises
 `RuntimeError`. There are no runtime dependencies. See the complete
 [usage guide](https://glinte.github.io/metapathology/usage/) for CLI behavior,
 lifecycle details, and integration examples.
@@ -130,7 +143,7 @@ The monitor retains every recorded finder call, mutation, reassignment, and
 internal error so the final report is exhaustive. Its memory use therefore
 grows with import activity for as long as monitoring remains enabled; there is
 currently no event limit or silent dropping policy. For a long-running or
-import-heavy process, call `report()` and `uninstall()` once the behavior of
+import-heavy process, call `write_report()` and `uninstall()` once the behavior of
 interest has been captured. Stack traces are stored for `sys.meta_path`
 changes, which makes mutation records more expensive than finder-call records.
 At the 400-import point in the reference benchmark matrix, monitoring added a

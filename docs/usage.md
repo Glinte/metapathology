@@ -44,6 +44,34 @@ The target's integer `SystemExit` status is preserved. An unhandled exception
 prints its traceback and produces exit status 1. The diagnostic report is
 still written to standard error in both cases.
 
+## Write a file report
+
+Put metapathology options before the script or `-m` target:
+
+```console
+python -m metapathology --report diagnostics.json path/to/script.py
+python -m metapathology --report diagnostics.txt --report-format text -m package.module
+```
+
+Automatic file destinations are process-safe. `{pid}` is replaced when it is
+present; otherwise the PID is inserted before the final suffix. For example,
+`diagnostics.json` becomes `diagnostics.1234.json`. The parent directory must
+already exist. Each process writes one selected format, without a collector,
+background worker, or retry loop.
+
+For frozen or embedded bootstrap code, configure the same behavior before
+calling `install()`:
+
+```console
+METAPATHOLOGY_REPORT=diagnostics-{pid}.json
+METAPATHOLOGY_REPORT_FORMAT=json
+```
+
+Environment variables configure an installed monitor; they do not cause
+metapathology to import or install itself. Explicit API or CLI values take
+precedence. Reports include argv, origins, filesystem paths, and stack
+filenames, so treat them as potentially sensitive diagnostic artifacts.
+
 [runpy]: https://docs.python.org/3/library/runpy.html
 [main-metadata]: https://docs.python.org/3/reference/import.html#special-considerations-for-main
 
@@ -70,7 +98,7 @@ monitor = metapathology.install(report_at_exit=False)
 try:
     import package_under_investigation
 finally:
-    metapathology.report(sys.stdout)
+    metapathology.write_report(sys.stdout)
     metapathology.uninstall()
 ```
 
@@ -80,11 +108,12 @@ remain available from `monitor.events()`.
 
 ## Integrate with another diagnostic
 
-Use `metapathology.render_report()` when a harness needs the report as a
-string, or inspect the [structured event records](api.md#event-records)
+Use `metapathology.render_report(format="json")` when a harness needs a
+machine-readable report string, or inspect the [structured event
+records](api.md#event-records)
 returned by `monitor.events()`. The returned event list is a snapshot;
 changing it does not alter the monitor.
 
-Calling `report()` or `render_report()` before the first `install()` raises
+Calling `write_report()` or `render_report()` before the first `install()` raises
 `RuntimeError`. See the [Library API](api.md) for the complete public surface
 and [Reading the report](report.md) for interpretation.

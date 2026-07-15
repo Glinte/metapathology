@@ -9,12 +9,23 @@ truth for the supported public API.
 
 ## Lifecycle and reporting
 
-### `install(*, report_at_exit=True) -> Monitor`
+### `install(*, report_at_exit=True, report_destination=None, report_format=None) -> Monitor`
 
 Installs the process-wide monitor and returns it. Repeated calls return and
 enable the same monitor. Only activity after installation can be observed.
-When `report_at_exit` is true, a report is registered for standard error at
-interpreter exit using Python's [`atexit` mechanism][atexit].
+When `report_at_exit` is true, a report is registered using Python's
+[`atexit` mechanism][atexit]. `report_destination` selects an automatic file;
+otherwise `METAPATHOLOGY_REPORT` is consulted before defaulting to standard
+error. `report_format` accepts `"text"` or `"json"`; API values override
+`METAPATHOLOGY_REPORT_FORMAT`, and files default to JSON while standard error
+defaults to text.
+
+Automatic reports always include the current process ID in their filename. For
+process 1234, `report.json` becomes `report.1234.json`. When the configured path
+contains `{pid}`, that marker is replaced instead, so `report-{pid}.json`
+becomes `report-1234.json`. Explicit `write_report()` paths are used unchanged.
+Write failures are recorded and suppressed by automatic reporting so they do
+not replace the target's exit status.
 
 [atexit]: https://docs.python.org/3/library/atexit.html
 
@@ -30,17 +41,23 @@ no-op.
 Returns the process-wide monitor, or `None` if `install()` has never been
 called.
 
-### `report(file=None) -> None`
+### `write_report(destination=None, *, format="text") -> None`
 
-Writes the current report to the supplied text stream, or standard error when
-omitted. Raises `RuntimeError` before the first installation.
+Writes the current report to standard error, a supplied text stream, or a
+string/path-like file destination. Paths are exact for explicit calls and are
+written through a same-directory temporary file plus `os.replace()`. Explicit
+I/O failures are recorded as `InternalError` and re-raised. Raises
+`RuntimeError` before the first installation and `ValueError` for an unknown
+format.
 
-### `render_report() -> str`
+### `render_report(*, format="text") -> str`
 
-Returns the current report, including its trailing newline. Raises
-`RuntimeError` before the first installation. Report generation is designed to
-degrade to an error message rather than propagate an internal reporting
-failure.
+Returns text or JSON, including its trailing newline. JSON currently uses the
+experimental `metapathology.report` schema version 0.1. Its shape may change
+throughout schema 0.x; schema 1.0 will be reviewed after roadmap T1--T7.
+Raises `RuntimeError` before the first installation and `ValueError` for an
+unknown format. Ordinary generation failures degrade to a valid failure
+report rather than propagating.
 
 ## `Monitor`
 

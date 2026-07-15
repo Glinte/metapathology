@@ -1,5 +1,7 @@
 """python -m metapathology: script mode, module mode, exit codes."""
 
+import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -7,12 +9,13 @@ from pathlib import Path
 SUBPROCESS_TIMEOUT = 25
 
 
-def run_cli(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+def run_cli(*args: str, cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "metapathology", *args],
         capture_output=True,
         text=True,
         cwd=cwd,
+        env=env,
         check=False,
         timeout=SUBPROCESS_TIMEOUT,
     )
@@ -128,3 +131,100 @@ def test_keyboard_interrupt_propagates_like_direct_python(tmp_path: Path) -> Non
 
     assert monitored.returncode == direct.returncode
     assert "KeyboardInterrupt" in monitored.stderr
+
+
+def test_automatic_json_filename_includes_pid(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("print('target ran')\n")
+    destination = tmp_path / "worker.json"
+
+    proc = run_cli("--report", str(destination), str(script), cwd=tmp_path)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "target ran" in proc.stdout
+    assert proc.stderr == ""
+    reports = list(tmp_path.glob("worker.*.json"))
+    assert len(reports) == 1
+    document = json.loads(reports[0].read_text(encoding="utf-8"))
+    assert reports[0].name == f"worker.{document['process']['pid']}.json"
+
+
+def test_text_file_report_and_target_option_passthrough(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("import sys\nprint(sys.argv[1:])\n")
+    destination = tmp_path / "worker.txt"
+
+    proc = run_cli(
+        "--report",
+        str(destination),
+        "--report-format",
+        "text",
+        str(script),
+        "--report",
+        "target-value",
+        cwd=tmp_path,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "['--report', 'target-value']" in proc.stdout
+    reports = list(tmp_path.glob("worker.*.txt"))
+    assert len(reports) == 1
+    assert "== metapathology report ==" in reports[0].read_text(encoding="utf-8")
+
+
+def test_automatic_write_failure_does_not_replace_target_exit_code(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("raise SystemExit(6)\n")
+    destination = tmp_path / "missing" / "worker.json"
+
+    proc = run_cli("--report", str(destination), str(script), cwd=tmp_path)
+
+    assert proc.returncode == 6
+
+
+def test_environment_configures_automatic_report(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("print('target ran')\n")
+    destination = tmp_path / "environment-{pid}.txt"
+    env = dict(os.environ)
+    env["METAPATHOLOGY_REPORT"] = str(destination)
+    env["METAPATHOLOGY_REPORT_FORMAT"] = "text"
+
+    proc = run_cli(str(script), cwd=tmp_path, env=env)
+
+    assert proc.returncode == 0, proc.stderr
+    reports = list(tmp_path.glob("environment-*.txt"))
+    assert len(reports) == 1
+    assert "== metapathology report ==" in reports[0].read_text(encoding="utf-8")
+
+
+def test_concurrent_workers_do_not_overwrite_reports(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("import time\ntime.sleep(0.2)\n")
+    destination = tmp_path / "shared.json"
+    commands = [
+        sys.executable,
+        "-m",
+        "metapathology",
+        "--report",
+        str(destination),
+        str(script),
+    ]
+    workers = [
+        subprocess.Popen(
+            commands,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=tmp_path,
+        )
+        for _ in range(2)
+    ]
+
+    completed = [worker.communicate(timeout=SUBPROCESS_TIMEOUT) for worker in workers]
+
+    assert [worker.returncode for worker in workers] == [0, 0], completed
+    reports = list(tmp_path.glob("shared.*.json"))
+    assert len(reports) == 2
+    pids = {json.loads(report.read_text(encoding="utf-8"))["process"]["pid"] for report in reports}
+    assert len(pids) == 2
