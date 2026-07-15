@@ -34,6 +34,13 @@ Wholesale `sys.meta_path` and `sys.path_hooks` replacements are discovered at
 the next import. Their exact assignment stacks and assignment-time contents
 are unavailable.
 
+Importer-cache observation is passive. Full snapshots occur at installation,
+around observed path-hook list mutations, and at report time. The import audit
+hook checks only cache identity and length, so a same-size replacement or a
+clear-and-repopulate sequence entirely between full observations may be
+visible only in the final state or missed altogether. Non-string keys are
+counted but omitted without inspection.
+
 ## Replay is diagnostic
 
 Bypass detection replays `PathFinder` at report time. It uses the search path
@@ -60,6 +67,8 @@ is left untouched and goes stale, so a caller that kept a reference to it and
 mutates it later no longer affects the corresponding live `sys` attribute.
 This is the known case where monitoring changes the behavior of code that was
 otherwise working. Path-hook monitoring can be disabled independently.
+Importer-cache monitoring can also be disabled independently and never
+replaces or subclasses `sys.path_importer_cache`.
 
 `uninstall()` restores plain lists preserving the live objects and ordering,
 and reverses finder changes. Python cannot unregister
@@ -80,6 +89,13 @@ summaries. In a long-running or import-heavy process, install immediately
 before the behavior of interest, then call `write_report()` and `uninstall()` after
 capturing it. See [speed and memory use](performance.md) for the cost model and
 reproducible benchmarks, and the [library API](api.md) for lifecycle details.
+
+Importer-cache storage retains two full plain-data maps: the install snapshot
+and a rolling latest snapshot that is replaced on every successful
+observation. Diff events are retained without a limit. Concurrent full
+observation requests are coalesced rather than queued, and reports expose the
+coalesced count. Strong references to unique observed cached finders remain
+live until uninstall so object IDs cannot be reused during one capture.
 
 Rendering temporarily copies the retained events and relevant interpreter
 state into one cutoff-based document. JSON file size and peak report-time

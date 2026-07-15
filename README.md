@@ -19,7 +19,8 @@
 reports:
 
 - which finder located each imported module;
-- where code changed `sys.meta_path` or `sys.path_hooks`, with a stack trace; and
+- where code changed `sys.meta_path` or `sys.path_hooks`, with a stack trace;
+- how `sys.path_importer_cache` entries were added, removed, or replaced; and
 - which modules were found without going through the usual `sys.path` and
   `sys.path_hooks` search.
 
@@ -43,6 +44,7 @@ $ python -m metapathology myscript.py --my-args
 $ python -m metapathology -m pytest tests/
 $ python -m metapathology --report diagnostic.json myscript.py
 $ python -m metapathology --no-path-hook-monitoring myscript.py
+$ python -m metapathology --no-importer-cache-monitoring myscript.py
 ```
 
 A text report is printed to standard error by default. `--report PATH` writes
@@ -111,7 +113,7 @@ For integration with another diagnostic or test harness:
 - `metapathology.get_monitor()` returns the process-wide monitor, or `None`
   before the first call to `install()`; and
 - `monitor.events()` returns a capture-order snapshot of the structured
-  `FindSpecCall`, meta-path, path-hooks, and `InternalError` records. Path-hook
+  `FindSpecCall`, meta-path, path-hooks, importer-cache, and `InternalError` records. Path-hook
   records use `ImportObjectRef` values containing captured identity and safe
   type/name metadata. Mutating the returned list does not alter the monitor.
 
@@ -151,6 +153,10 @@ currently no event limit or silent dropping policy. For a long-running or
 import-heavy process, call `write_report()` and `uninstall()` once the behavior of
 interest has been captured. Stack traces are stored for `sys.meta_path` and
 `sys.path_hooks` changes, which makes mutation records more expensive than finder-call records.
+Importer-cache monitoring retains an install snapshot, a rolling latest
+snapshot, and every diff. Full cache observations happen at path-hook mutation
+boundaries and report time; the import audit hook performs only an O(1)
+identity-and-length fingerprint check.
 At the 400-import point in the reference benchmark matrix, monitoring added a
 median 3% to the standard-finder workload and 13% when retaining one attributed
 finder record per import; those records retained about 223 bytes each. Imports
@@ -195,7 +201,7 @@ for the full protocol.
 
 ## How it works
 
-`metapathology` observes that process in three ways:
+`metapathology` observes that process with five mechanisms:
 
 1. It registers a [`sys.addaudithook()`](https://docs.python.org/3/library/sys.html#sys.addaudithook)
    callback for CPython's [`import` audit event](https://docs.python.org/3/library/audit_events.html#audit-events).
@@ -213,6 +219,10 @@ for the full protocol.
 4. It wraps each finder's existing `find_spec()` method. The wrapper records
    whether the finder returned `None` or a module spec, then returns the same
    result. It does not supply a spec of its own or load a module.
+5. It passively snapshots `sys.path_importer_cache` at installation, around
+   observed path-hook mutations, and at report time. Pass
+   `monitor_importer_cache=False`, or use `--no-importer-cache-monitoring`, to
+   disable this mechanism. The cache object is never replaced or wrapped.
 
 The standard `BuiltinImporter`, `FrozenImporter`, and `PathFinder` entries are
 classes shared by CPython, so metapathology deliberately leaves them unwrapped.
@@ -234,6 +244,8 @@ use a different kind of loader, the report notes that the normal
   installed callback remains as an inactive no-op after uninstalling.
 - This tool changes `sys.meta_path` while it is running. Use it for debugging,
   not as part of an application's normal runtime.
+- Importer-cache diffs are passive boundary observations, not a complete log
+  of short-lived changes between boundaries.
 
 See the complete [limitations guide](https://glinte.github.io/metapathology/limitations/)
 for timing, visibility, replay, cleanup, and memory boundaries.

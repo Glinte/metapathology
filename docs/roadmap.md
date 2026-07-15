@@ -58,27 +58,33 @@ effect.
 - Subprocess tests cover mutation, reassignment, re-entrancy, concurrent
   mutation, and interrupted cleanup.
 
-## T2: Diff `sys.path_importer_cache`
+## T2: Diff `sys.path_importer_cache` (implemented)
 
 **Weakness:** Clearing or repopulating `sys.path_importer_cache` can change the
 finder serving a path without changing `sys.meta_path`. Beartype#599 depends on
 this: beartype clears cached PyInstaller finders after changing path hooks.
 
-**Recommendation:** Passively snapshot cache entries at install time, before
+**Implementation:** The default-on, independently toggleable mechanism
+passively snapshots cache entries at install time, before
 and after observed path-hook mutations, and at report time. Store path strings
 plus finder identity and type/name. Report additions, removals, replacements,
 and negative (`None`) entries.
 
-Do not take a full snapshot at every import audit event. The cache grows with
+It does not take a full snapshot at every import audit event. The cache grows with
 one entry per path entry per package `__path__` and can reach thousands of
 entries; O(cache size) work inside every import contradicts the minimal-
 perturbation goal. Inside the audit hook, use a cheap fingerprint (e.g.,
 `len(sys.path_importer_cache)` plus dictionary identity) to decide whether a
-full snapshot is warranted.
+later full observation is warranted.
 
-Do not replace the cache with a dictionary subclass initially. Importlib may
+The cache is never replaced with a dictionary subclass. Importlib may
 hold references to the exact dictionary, and instrumentation would add work to
 every path lookup. Passive diffs are less complete but safer.
+
+Full snapshot storage is bounded to the install snapshot and a rolling latest
+snapshot; the latter is replaced after each successful observation. Diff
+events retain all captured changes. Concurrent full observation requests are
+coalesced rather than queued, and reports expose the coalesced count.
 
 **Dependencies:** None. T1 provides better attribution for cache changes.
 

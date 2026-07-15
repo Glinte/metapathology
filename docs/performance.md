@@ -2,7 +2,8 @@
 
 `metapathology` is a diagnostic tool rather than permanent application
 instrumentation. Its overhead depends primarily on which finder handles an
-import and how much `sys.meta_path` or `sys.path_hooks` changes during the capture window.
+import, how much `sys.meta_path` or `sys.path_hooks` changes, and the size of
+`sys.path_importer_cache` at passive observation boundaries.
 
 ## Where the cost comes from
 
@@ -17,6 +18,12 @@ been replaced, that path performs an enabled check, a thread-local re-entrancy
 check, and identity comparisons for the enabled instrumented lists. Standard CPython class finders such as
 `PathFinder` are deliberately not wrapped, so a normal import resolved entirely
 by those entries does not create a finder-call record.
+
+When importer-cache monitoring is enabled, that same audit path additionally
+reads only the cache dictionary's identity and length. It never performs a
+full cache scan inside the audit hook. Full scans occur at installation,
+before and after observed path-hook mutations, and during report capture, so
+their cost is proportional to cache size but normally paid at rare boundaries.
 
 Instrumentable finder instances have their `find_spec()` method wrapped. Each
 probe snapshots the effective search path and retains a `FindSpecCall`, whether
@@ -39,6 +46,9 @@ rare compared with imports.
 The monitor keeps every event so the final report is exhaustive. Retained
 memory grows approximately with the number and kind of recorded events until
 the monitor is uninstalled; there is no fixed limit or silent dropping policy.
+Importer-cache full-snapshot storage is bounded to the install and rolling
+latest maps; its diff events follow the retain-all event policy. Concurrent
+snapshot requests are coalesced without a queue.
 
 ## Limit the capture window
 

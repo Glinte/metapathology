@@ -9,7 +9,7 @@ truth for the supported public API.
 
 ## Lifecycle and reporting
 
-### `install(*, report_at_exit=True, report_destination=None, report_format=None, monitor_path_hooks=True) -> Monitor`
+### `install(*, report_at_exit=True, report_destination=None, report_format=None, monitor_path_hooks=True, monitor_importer_cache=True) -> Monitor`
 
 Installs the process-wide monitor and returns it. Repeated calls return and
 enable the same monitor. Only activity after installation can be observed.
@@ -23,6 +23,8 @@ defaults to text.
 `monitor_path_hooks` controls path-hook observation and defaults to true. A later
 true value enables it if initially disabled; false does not disable an active
 mechanism. Use `uninstall()` for cleanup.
+`monitor_importer_cache` has the same enable-later semantics and controls
+passive `sys.path_importer_cache` snapshots and diffs.
 
 Automatic reports always include the current process ID in their filename. For
 process 1234, `report.json` becomes `report.1234.json`. When the configured path
@@ -58,7 +60,7 @@ format.
 ### `render_report(*, format="text") -> str`
 
 Returns text or JSON, including its trailing newline. JSON currently uses the
-experimental `metapathology.report` schema version 0.2. Its shape may change
+experimental `metapathology.report` schema version 0.3. Its shape may change
 throughout schema 0.x; schema 1.0 will be reviewed once the evidence model stabilizes.
 Raises `RuntimeError` before the first installation and `ValueError` for an
 unknown format. Ordinary generation failures degrade to a valid failure
@@ -74,6 +76,10 @@ competing monitors is not supported because import state is process-global.
 - `path_hooks_enabled: bool` — whether path-hook observation is currently active.
 - `initial_path_hooks: tuple[ImportObjectRef, ...]` — identities and safe
   type/name metadata captured when path-hook monitoring was enabled.
+- `importer_cache_enabled: bool` — whether passive importer-cache observation
+  is currently active.
+- `initial_importer_cache: tuple[ImporterCacheEntry, ...]` — string-keyed
+  cache entries captured when importer-cache monitoring was enabled.
 - `baseline_modules: frozenset[str]` — `sys.modules` names at installation.
 - `events() -> list[MonitorEvent]` — capture-order snapshot of all records.
 - `skipped_finders() -> list[tuple[str, str]]` — finder display name and the
@@ -90,7 +96,7 @@ the intended entry points.
 All records are immutable, slotted classes with a standard field-based repr.
 They deliberately use identity equality and do not define positional pattern
 matching. Their shared `seq` field provides a single chronological order
-across record types. `MonitorEvent` is the union of the six event classes.
+across record types. `MonitorEvent` includes the seven event classes below.
 
 ### `ImportObjectRef`
 
@@ -102,6 +108,18 @@ callable name. It never retains or stringifies the foreign object.
 Records the module name, finder type and identity, whether the finder claimed
 the module, loader type, origin, captured search path, exception type if the
 finder raised, and thread name.
+
+### `ImporterCacheEntry` and `ImporterCacheReplacement`
+
+An entry stores a path and either an `ImportObjectRef` or `None`; `None`
+explicitly represents a negative cache entry. A replacement stores the path
+and its before/after cached values.
+
+### `ImporterCacheDiff`
+
+Records additions, removals, replacements, omitted non-string-key counts,
+the passive observation boundary, and thread name. It participates in the
+shared event sequence.
 
 ### `MetaPathMutation`
 

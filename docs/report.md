@@ -13,7 +13,7 @@ file output all use the same cutoff-based report document as the human
 renderer. The current experimental schema is identified by:
 
 ```json
-{"name": "metapathology.report", "major": 0, "minor": 2}
+{"name": "metapathology.report", "major": 0, "minor": 3}
 ```
 
 Its top-level sections are `tool`, `process`, `capture`, `snapshots`,
@@ -26,12 +26,13 @@ Schema 0.x is intentionally allowed to change as the remaining snapshot,
 timeline, inventory, comparison, and finding models are introduced. A
 schema 1.0 review is required before machine consumers treat the shape as
 stable. Capacity and completeness are reported per capture mechanism; the
-current producers retain all records and therefore grow with observed import
-activity.
+event producers retain all records and therefore grow with observed import
+activity. Importer-cache snapshot storage is separately bounded at two full
+maps with a replace-latest policy.
 
 ## Header
 
-The header shows whether the monitor and path-hook mechanism are enabled,
+The header shows whether the monitor, path-hook, and importer-cache mechanisms are enabled,
 the initial and current `sys.meta_path` and `sys.path_hooks` snapshots, finders
 that could not be wrapped, and the number of modules added to `sys.modules`
 since installation.
@@ -86,6 +87,19 @@ Direct replacement is detected at the next uncached import by the existing
 audit hook. The report therefore shows the triggering import stack rather
 than the unknowable assignment stack. Recovery installs an instrumented copy;
 the list object originally assigned becomes stale.
+
+## `sys.path_importer_cache` changes
+
+Cache diffs show string paths added, removed, or switched to a different
+finder identity. A `None` finder is a negative cache entry. Non-string keys
+are counted but never formatted. The text report lists at most 25 changes per
+diff; JSON retains every captured change.
+
+Snapshots occur at installation, before and after observed path-hook list
+mutations, and at report time. The audit hook only marks a changed
+identity/length fingerprint dirty, so short-lived or same-size cache changes
+between full observations may be absent. Sequence numbers place retained
+diffs relative to the other event mechanisms.
 
 ## Finder attribution
 

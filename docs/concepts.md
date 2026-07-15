@@ -68,7 +68,7 @@ documentation][path-based-finder] describes the complete protocol.
 
 ## What metapathology records
 
-Metapathology uses three mechanisms because Python exposes different parts of
+Metapathology uses several mechanisms because Python exposes different parts of
 the import process in different places.
 
 ### Imports and import-list reassignment
@@ -118,6 +118,18 @@ mutation semantics and records safe hook identity/type/name snapshots. It
 does not wrap or call hook factories, so identity and membership checks keep
 seeing the original hook objects. Use `monitor_path_hooks=False` when even the
 temporary list replacement is undesirable.
+
+### Changes to `sys.path_importer_cache`
+
+The cache remains the exact dictionary used by importlib. Metapathology copies
+string-keyed entries at installation, before and after observed path-hook
+mutations, and at report time, then records additions, removals, finder
+replacements, and negative (`None`) entries. It holds observed finders strongly
+while enabled so recorded identities cannot be reused mid-capture.
+
+At each import audit event it compares only dictionary identity and length and
+marks the rolling snapshot dirty. This keeps per-import work independent of
+cache size; a later full observation computes the diff.
 
 ### Finder calls
 

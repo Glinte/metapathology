@@ -55,6 +55,7 @@ Put metapathology options before the script or `-m` target:
 python -m metapathology --report diagnostics.json path/to/script.py
 python -m metapathology --report diagnostics.txt --report-format text -m package.module
 python -m metapathology --no-path-hook-monitoring path/to/script.py
+python -m metapathology --no-importer-cache-monitoring path/to/script.py
 ```
 
 Automatic file destinations are process-safe. `{pid}` is replaced when it is
@@ -66,6 +67,9 @@ background worker, or retry loop.
 Path-hook monitoring is enabled by default. The disable option leaves the
 exact `sys.path_hooks` list object untouched; options after the target are
 passed through to the target rather than parsed by metapathology.
+Importer-cache monitoring is also enabled by default. Its disable option
+skips passive cache snapshots and diffs; metapathology never replaces the
+cache dictionary in either mode.
 
 For frozen or embedded bootstrap code, configure the same behavior before
 calling `install()`:
