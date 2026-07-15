@@ -166,9 +166,11 @@ The suspicious-findings section uses these labels:
   an `exec_module()`-style path that is invisible to meta-path finders.
 
 These are diagnostic leads, not necessarily defects. Custom finders may bypass
-the standard path machinery intentionally. The live replay uses the search
-path captured with the claim, but report-time filesystem and finder state; it
-does not reconstruct the exact state at import time. The
+the standard path machinery intentionally. Findings label the current live
+replay separately from historical structural evidence: the latter compares
+recorded path-hook and importer-cache identities between installation and
+reporting without calling historical foreign finders. Neither reconstructs the
+exact state at import time. The
 [report guide](https://glinte.github.io/metapathology/report/) explains every
 section and finding category.
 
@@ -260,7 +262,9 @@ At exit, the report compares the recorded result with a current live
 `PathFinder.find_spec()` replay over the search path captured with the claim.
 If `PathFinder` cannot find the module or would use a different kind of loader,
 the report notes that the normal `sys.path_hooks` route was skipped. It also
-labels this comparison as report-time live replay evidence.
+compares install and report-time path-hook order and relevant importer-cache
+identities as historical structural evidence; those objects are never called
+by that comparison.
 
 ## Caveats
 

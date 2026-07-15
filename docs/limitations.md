@@ -57,8 +57,12 @@ counted but omitted without inspection.
 
 Bypass detection replays `PathFinder` at report time. It uses the search path
 captured with the original finder call, but the filesystem and other import
-state may have changed. A difference is a reason to investigate, not proof of
-a bug. Only `.py` and `.pyc` origins with a usable loader baseline are checked.
+state may have changed. The accompanying historical structural comparison is
+also bounded: it compares install and report snapshots plus passive cache-diff
+events, not a reconstructed import-time cache. Historical finder objects are
+identified but never called. A difference is a reason to investigate, not
+proof of a bug. Only `.py` and `.pyc` origins with a usable loader baseline are
+checked.
 Calling `PathFinder.find_spec()` can populate
 `sys.path_importer_cache`; replay therefore has that standard-library side
 effect even though metapathology suppresses its own event recording during

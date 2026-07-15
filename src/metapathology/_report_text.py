@@ -366,12 +366,36 @@ def _finding_line(finding: Finding) -> str:
         return (
             f"[unfindable] '{finding.module}' (origin {claim.origin}) was claimed by {claim.finder_type_name}, but "
             "the current live PathFinder replay cannot find it: sys.path_hooks-based tools never see this module."
+            f"\n    {_structural_comparison_line(finding)}"
         )
     return (
         f"[bypass] '{finding.module}' was claimed by {claim.finder_type_name} "
         f"(loader {claim.loader_type_name}, origin {claim.origin}); the current live PathFinder replay would use "
         f"loader {replay.loader_type_name} (origin {replay.origin}). sys.path_hooks-based tools were bypassed."
+        f"\n    {_structural_comparison_line(finding)}"
     )
+
+
+def _structural_comparison_line(finding: Finding) -> str:
+    """Label identity-only evidence separately from the report-time replay."""
+    comparison = finding.structural_comparison
+    if comparison is None:
+        return "historical structural evidence unavailable."
+    if comparison.path_hooks_changed is None:
+        path_hooks = "sys.path_hooks comparison unavailable"
+    elif comparison.path_hooks_changed:
+        path_hooks = "sys.path_hooks changed between install and report"
+    else:
+        path_hooks = "sys.path_hooks unchanged between install and report"
+    if comparison.importer_cache_changed is None:
+        importer_cache = "sys.path_importer_cache comparison unavailable"
+    elif comparison.importer_cache_changed:
+        count = len(comparison.importer_cache_changed_paths)
+        noun = "path" if count == 1 else "paths"
+        importer_cache = f"sys.path_importer_cache changed for {count} captured search {noun}"
+    else:
+        importer_cache = "sys.path_importer_cache unchanged for the captured search path"
+    return f"historical structural evidence: {path_hooks}; {importer_cache}."
 
 
 def _stack_lines(stack: "StackSummary") -> list[str]:

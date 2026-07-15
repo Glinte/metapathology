@@ -130,7 +130,7 @@ correlate a path-hook mutation, cache clear, later import, and changed loader.
 meta-path mutations, path-hook mutations, importer-cache diffs, finder calls,
 and internal errors in one exhaustive capture-order event list. Text reports
 lead with a compact chronological projection while retaining the detailed
-mechanism sections; JSON schema 0.5 projects the same records.
+mechanism sections; the current JSON schema 0.6 projects the same records.
 
 Audit starts copy immediate meta-path identity/type evidence and constant-size
 enabled-mechanism fingerprints. Native-extension load events are filtered from
@@ -222,30 +222,32 @@ queue, collector, retry loop, or silent dropping policy.
 - Schema 0.x is explicitly experimental and covered by round-trip and semantic
   tests; schema 1.0 is the future compatibility boundary.
 
-## T6: Generalize counterfactual replay
+## T6: Generalize counterfactual replay (implemented)
 
-**Weakness:** Current replay asks only what the current `PathFinder` would do.
-It cannot answer what would have happened before path-hook or importer-cache
-mutations.
+**Weakness:** Replay previously asked only what the current `PathFinder` would
+do. It could not contextualize that answer with earlier path-hook or
+importer-cache structure.
 
-**Recommendation:** Compare an observed claim against recorded initial and
-current path-hook/cache structure. Distinguish three evidence levels:
+**Implementation:** Each replay-based finding compares an observed claim
+against recorded install and report-time path-hook/cache structure. Reports
+now define three evidence levels, with the first two shipped:
 
 - structural comparison using recorded identities and type names;
 - live replay using current import objects;
-- speculative replay with a selected hook excluded.
+- speculative replay with a selected hook excluded (deferred).
 
-Historical foreign finder objects should not be called after their owning
-framework has removed or invalidated them unless an explicit deep mode permits
-it. Reports must label speculative results and must not present them as proof.
+The structural comparison uses only captured identities, type names, snapshot
+references, and relevant cache-diff event references. It never calls
+historical foreign finder objects. The live replay uses the search path
+captured with the original claim and current import objects, and both text and
+JSON label its report-time evidence boundary.
 
 Note that even the existing replay perturbs state: `PathFinder.find_spec`
 populates `sys.path_importer_cache` as a side effect. Speculative replay with
 a hook excluded cannot go through `PathFinder` at all without either mutating
 real state or reimplementing the path-entry search against a synthetic cache.
-That reimplementation is the expensive part; ship structural comparison first,
-live replay second, and let speculative replay slip if it demands too much
-importlib duplication.
+That reimplementation is the expensive part. It remains deferred rather than
+duplicating importlib or mutating global hook/cache state to exclude one hook.
 
 **Dependencies:** T1, T2, and T3.
 

@@ -49,6 +49,7 @@ ScikitBuildRedirectingFinder (...): ... find_spec calls, 1 claimed
     the current live PathFinder replay would use loader BeartypeSourceFileLoader
     (origin <reproduction>/src/myproject/__init__.py).
     sys.path_hooks-based tools were bypassed.
+    historical structural evidence: ...
 -- internal errors (0) --
 ```
 

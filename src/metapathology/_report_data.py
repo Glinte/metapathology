@@ -113,16 +113,77 @@ class ReplayResult(_Record):
         self._exception_type_name = exception_type_name
 
 
+class StructuralComparison(_Record):
+    """Identity-only comparison of install and report-time import structure."""
+
+    __slots__ = (
+        "_evidence_level",
+        "_importer_cache_changed",
+        "_importer_cache_changed_paths",
+        "_importer_cache_event_seqs",
+        "_path_hooks_changed",
+    )
+    _fields = (
+        "evidence_level",
+        "path_hooks_changed",
+        "importer_cache_changed",
+        "importer_cache_changed_paths",
+        "importer_cache_event_seqs",
+    )
+    evidence_level = _ReadOnlyField[str]("_evidence_level")
+    path_hooks_changed = _ReadOnlyField[bool | None]("_path_hooks_changed")
+    importer_cache_changed = _ReadOnlyField[bool | None]("_importer_cache_changed")
+    importer_cache_changed_paths = _ReadOnlyField[tuple[str, ...]]("_importer_cache_changed_paths")
+    importer_cache_event_seqs = _ReadOnlyField[tuple[int, ...]]("_importer_cache_event_seqs")
+
+    def __init__(
+        self,
+        path_hooks_changed: bool | None,
+        importer_cache_changed: bool | None,
+        importer_cache_changed_paths: tuple[str, ...],
+        importer_cache_event_seqs: tuple[int, ...],
+    ) -> None:
+        self._evidence_level = "structural_comparison"
+        self._path_hooks_changed = path_hooks_changed
+        self._importer_cache_changed = importer_cache_changed
+        self._importer_cache_changed_paths = importer_cache_changed_paths
+        self._importer_cache_event_seqs = importer_cache_event_seqs
+
+
+class _StructuralContext:
+    """One report's primitive-only index for per-finding comparisons."""
+
+    __slots__ = (
+        "cache_event_seqs_by_path",
+        "current_importer_cache",
+        "initial_importer_cache",
+        "path_hooks_changed",
+    )
+
+    def __init__(
+        self,
+        path_hooks_changed: bool | None,
+        initial_importer_cache: dict[str, tuple[int | None, str | None]],
+        current_importer_cache: dict[str, tuple[int | None, str | None]] | None,
+        cache_event_seqs_by_path: dict[str, tuple[int, ...]],
+    ) -> None:
+        self.path_hooks_changed = path_hooks_changed
+        self.initial_importer_cache = initial_importer_cache
+        self.current_importer_cache = current_importer_cache
+        self.cache_event_seqs_by_path = cache_event_seqs_by_path
+
+
 class Finding(_Record):
     """Structured evidence for one human or machine-readable finding."""
 
-    __slots__ = ("_claim", "_finding_id", "_kind", "_module", "_replay")
-    _fields = ("finding_id", "kind", "module", "claim", "replay")
+    __slots__ = ("_claim", "_finding_id", "_kind", "_module", "_replay", "_structural_comparison")
+    _fields = ("finding_id", "kind", "module", "claim", "replay", "structural_comparison")
     finding_id = _ReadOnlyField[str]("_finding_id")
     kind = _ReadOnlyField[str]("_kind")
     module = _ReadOnlyField[str]("_module")
     claim = _ReadOnlyField[FindSpecCall | None]("_claim")
     replay = _ReadOnlyField[ReplayResult | None]("_replay")
+    structural_comparison = _ReadOnlyField[StructuralComparison | None]("_structural_comparison")
 
     def __init__(
         self,
@@ -131,12 +192,14 @@ class Finding(_Record):
         module: str,
         claim: FindSpecCall | None = None,
         replay: ReplayResult | None = None,
+        structural_comparison: StructuralComparison | None = None,
     ) -> None:
         self._finding_id = finding_id
         self._kind = kind
         self._module = module
         self._claim = claim
         self._replay = replay
+        self._structural_comparison = structural_comparison
 
 
 class EarlySiteBootstrap(_Record):
@@ -313,7 +376,15 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
     )
     previously_active = monitor._begin_report_analysis()
     try:
-        findings = _suspicious_findings(monitor, events, report_errors)
+        findings = _suspicious_findings(
+            monitor,
+            events,
+            monitor.initial_path_hooks,
+            current_path_hooks,
+            importer_cache.initial_entries,
+            importer_cache.latest_entries,
+            report_errors,
+        )
     finally:
         monitor._end_report_analysis(previously_active)
     try:
@@ -397,10 +468,21 @@ def _modules_since_install(monitor: "Monitor", report_errors: list[ReportError])
 def _suspicious_findings(
     monitor: "Monitor",
     events: list[MonitorEvent],
+    initial_path_hooks: tuple[ImportObjectRef, ...],
+    current_path_hooks: tuple[ImportObjectRef, ...] | None,
+    initial_importer_cache: tuple[ImporterCacheEntry, ...],
+    current_importer_cache: tuple[ImporterCacheEntry, ...] | None,
     report_errors: list[ReportError],
 ) -> tuple[Finding, ...]:
     """Cross-reference copied calls against a best-effort module snapshot."""
     winners = {event.fullname: event for event in events if isinstance(event, FindSpecCall) and event.found}
+    structural_context = _structural_context(
+        events,
+        initial_path_hooks,
+        current_path_hooks,
+        initial_importer_cache,
+        current_importer_cache,
+    )
     findings: list[Finding] = []
     baseline = monitor.baseline_modules
     try:
@@ -413,7 +495,7 @@ def _suspicious_findings(
             continue
         winner = winners.get(name)
         if winner is not None:
-            finding = _bypass_finding(name, winner, len(findings) + 1, report_errors)
+            finding = _bypass_finding(name, winner, len(findings) + 1, structural_context, report_errors)
             if finding is not None:
                 findings.append(finding)
             continue
@@ -433,21 +515,115 @@ def _bypass_finding(
     name: str,
     winner: FindSpecCall,
     finding_number: int,
+    structural_context: _StructuralContext,
     report_errors: list[ReportError],
 ) -> Finding | None:
     """Compare one custom source claim with a report-time PathFinder replay."""
     origin = winner.origin
     if origin is None or not origin.endswith(_SOURCE_SUFFIXES) or winner.loader_type_name is None:
         return None
+    structural_comparison = _structural_comparison(winner.search_path, structural_context)
     replay = _replay_path_finder(name, winner.search_path)
     if replay.status == "failed":
         report_errors.append(ReportError("path_finder_replay", replay.exception_type_name or "Exception"))
         return None
     if replay.status == "not_found":
-        return Finding(f"finding:{finding_number}", "unfindable", name, winner, replay)
+        return Finding(f"finding:{finding_number}", "unfindable", name, winner, replay, structural_comparison)
     if replay.loader_type_name != winner.loader_type_name or not _same_path(replay.origin, origin):
-        return Finding(f"finding:{finding_number}", "bypass", name, winner, replay)
+        return Finding(f"finding:{finding_number}", "bypass", name, winner, replay, structural_comparison)
     return None
+
+
+def _structural_context(
+    events: list[MonitorEvent],
+    initial_path_hooks: tuple[ImportObjectRef, ...],
+    current_path_hooks: tuple[ImportObjectRef, ...] | None,
+    initial_importer_cache: tuple[ImporterCacheEntry, ...],
+    current_importer_cache: tuple[ImporterCacheEntry, ...] | None,
+) -> _StructuralContext:
+    """Index captured structure once so per-finding analysis remains linear."""
+    path_hooks_changed = (
+        None
+        if current_path_hooks is None
+        else _import_object_signatures(initial_path_hooks) != _import_object_signatures(current_path_hooks)
+    )
+    return _StructuralContext(
+        path_hooks_changed,
+        _cache_signatures(initial_importer_cache),
+        None if current_importer_cache is None else _cache_signatures(current_importer_cache),
+        _cache_event_index(events),
+    )
+
+
+def _structural_comparison(
+    search_path: tuple[str, ...],
+    context: _StructuralContext,
+) -> StructuralComparison:
+    """Compare captured identities without calling historical import objects."""
+    importer_cache_changed, changed_paths = _changed_cache_paths(
+        search_path,
+        context.initial_importer_cache,
+        context.current_importer_cache,
+    )
+    event_seqs = tuple(sorted({seq for path in search_path for seq in context.cache_event_seqs_by_path.get(path, ())}))
+    return StructuralComparison(
+        context.path_hooks_changed,
+        importer_cache_changed,
+        changed_paths,
+        event_seqs,
+    )
+
+
+def _cache_event_index(events: list[MonitorEvent]) -> dict[str, tuple[int, ...]]:
+    """Index passive cache-diff event sequences by affected path."""
+    indexed: dict[str, list[int]] = {}
+    for event in events:
+        if not isinstance(event, ImporterCacheDiff):
+            continue
+        paths = {entry.path for entry in event.added}
+        paths.update(entry.path for entry in event.removed)
+        paths.update(replacement.path for replacement in event.replaced)
+        for path in paths:
+            indexed.setdefault(path, []).append(event.seq)
+    return {path: tuple(seqs) for path, seqs in indexed.items()}
+
+
+def _cache_signatures(
+    entries: tuple[ImporterCacheEntry, ...],
+) -> dict[str, tuple[int | None, str | None]]:
+    """Reduce one cache snapshot to path and safe finder identity/type data."""
+    return {entry.path: _cache_finder_signature(entry.finder) for entry in entries}
+
+
+def _import_object_signatures(references: tuple[ImportObjectRef, ...]) -> tuple[tuple[int, str], ...]:
+    """Reduce safe object references to comparable identity/type tuples."""
+    return tuple((reference.object_id, reference.type_name) for reference in references)
+
+
+def _changed_cache_paths(
+    search_path: tuple[str, ...],
+    initial: dict[str, tuple[int | None, str | None]],
+    current: dict[str, tuple[int | None, str | None]] | None,
+) -> tuple[bool | None, tuple[str, ...]]:
+    """Compare cache structure only for the captured effective search path."""
+    if current is None:
+        return None, ()
+    changed: list[str] = []
+    seen: set[str] = set()
+    for path in search_path:
+        if path in seen:
+            continue
+        seen.add(path)
+        if (path in initial) != (path in current) or initial.get(path) != current.get(path):
+            changed.append(path)
+    return bool(changed), tuple(changed)
+
+
+def _cache_finder_signature(finder: ImportObjectRef | None) -> tuple[int | None, str | None]:
+    """Describe a cached finder identity while preserving negative entries."""
+    if finder is None:
+        return None, None
+    return finder.object_id, finder.type_name
 
 
 def _replay_path_finder(name: str, search_path: tuple[str, ...]) -> ReplayResult:
@@ -784,6 +960,23 @@ def _json_finding(finding: Finding) -> dict[str, object]:
             "origin": finding.replay.origin,
             "state_phase": finding.replay.state_phase,
             "status": finding.replay.status,
+        }
+    if finding.structural_comparison is not None:
+        comparison = finding.structural_comparison
+        result["structural_comparison"] = {
+            "evidence_level": comparison.evidence_level,
+            "importer_cache": {
+                "changed": comparison.importer_cache_changed,
+                "changed_paths": list(comparison.importer_cache_changed_paths),
+                "change_event_refs": [f"event:{seq}" for seq in comparison.importer_cache_event_seqs],
+                "install_snapshot_ref": "snapshot:importer-cache:install",
+                "report_snapshot_ref": "snapshot:importer-cache:report",
+            },
+            "path_hooks": {
+                "changed": comparison.path_hooks_changed,
+                "install_snapshot_ref": "snapshot:path-hooks:install",
+                "report_snapshot_ref": "snapshot:path-hooks:report",
+            },
         }
     if finding.kind == "no_spec":
         result["evidence"] = {"finder_claim": "not_recorded", "module_spec": "missing"}

@@ -38,6 +38,7 @@ AssertionRewritingHook (...): ... find_spec calls, 4 claimed
     the current live PathFinder replay would use loader BeartypeSourceFileLoader
     (origin <site-packages>/pytest_cov/__init__.py).
     sys.path_hooks-based tools were bypassed.
+    historical structural evidence: ...
 [bypass] 'pytest_cov.plugin' was claimed by AssertionRewritingHook (...);
     the current live PathFinder replay would use loader BeartypeSourceFileLoader (...).
 [bypass] 'pytest_cov.engine' was claimed by AssertionRewritingHook (...);

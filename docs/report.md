@@ -160,6 +160,14 @@ labeled `live_replay` in JSON and as a "current live PathFinder replay" in the
 text report. A package can therefore produce an intentional or time-sensitive
 difference.
 
+Each replay-based finding separately includes historical structural evidence.
+This identity-only comparison says whether `sys.path_hooks` changed between
+the install and report snapshots and whether relevant
+`sys.path_importer_cache` entries changed. JSON links the comparison to those
+snapshots and to passive cache-diff events. It does not call removed or
+invalidated historical finder objects, reconstruct exact import-time state, or
+prove that a structural change caused the replay difference.
+
 Extension modules, built-ins, synthetic origins, and modules that predate
 installation are not subjected to the source-module bypass check.
 
