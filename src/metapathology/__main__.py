@@ -63,6 +63,7 @@ def _run(target: str, target_args: list[str], *, is_module: bool) -> int:
     import os
     import runpy
     import traceback
+    from contextlib import suppress
 
     metapathology.install(report_at_exit=False)
     exit_code = 0
@@ -82,7 +83,10 @@ def _run(target: str, target_args: list[str], *, is_module: bool) -> int:
         traceback.print_exc()
         exit_code = 1
     finally:
-        metapathology.report()
+        # Reporting is diagnostic-only and must not replace the target's exit
+        # status when stderr is closed or otherwise unusable.
+        with suppress(Exception):
+            metapathology.report()
     return exit_code
 
 

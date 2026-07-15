@@ -102,3 +102,11 @@ def test_installed_console_script_runs_cli(tmp_path: Path) -> None:
     assert proc.returncode == 0
     assert "usage:" in proc.stdout
     assert "https://glinte.github.io/metapathology/usage/" in proc.stdout
+
+
+def test_closed_stderr_during_report_does_not_replace_target_exit_code(tmp_path: Path) -> None:
+    script = tmp_path / "closes_stderr.py"
+    script.write_text("import sys\nsys.stderr.close()\nsys.exit(7)\n")
+
+    proc = run_cli(str(script), cwd=tmp_path)
+    assert proc.returncode == 7
