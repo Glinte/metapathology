@@ -145,26 +145,29 @@ class Monitor:
     def install(self, *, report_at_exit: bool = True) -> None:
         """Instrument ``sys.meta_path`` and register the import audit hook (idempotent).
 
+        A repeat call on an already-enabled monitor changes nothing except
+        that ``report_at_exit=True`` still registers the exit report if it is
+        not registered yet.
+
         Args:
             report_at_exit: Also register an atexit callback that writes the
                 report to stderr.
         """
         with self._reinstall_lock:
-            if self._enabled:
-                return
-            self._enabled = True
-            self._baseline_modules = frozenset(sys.modules)
-            current = sys.meta_path
-            self._initial_meta_path = tuple(type_name(f) for f in current)
-            instrumented = _InstrumentedMetaPath(current, self)
-            for finder in list(instrumented):
-                self._instrument_finder(finder)
-            self._instrumented = instrumented
-            sys.meta_path = instrumented
-            if not self._audit_installed:
-                # Audit hooks are irremovable; _audit goes inert when disabled.
-                sys.addaudithook(self._audit)
-                self._audit_installed = True
+            if not self._enabled:
+                self._enabled = True
+                self._baseline_modules = frozenset(sys.modules)
+                current = sys.meta_path
+                self._initial_meta_path = tuple(type_name(f) for f in current)
+                instrumented = _InstrumentedMetaPath(current, self)
+                for finder in list(instrumented):
+                    self._instrument_finder(finder)
+                self._instrumented = instrumented
+                sys.meta_path = instrumented
+                if not self._audit_installed:
+                    # Audit hooks are irremovable; _audit goes inert when disabled.
+                    sys.addaudithook(self._audit)
+                    self._audit_installed = True
         if report_at_exit and not self._report_at_exit:
             self._report_at_exit = True
             atexit.register(self._report_atexit)

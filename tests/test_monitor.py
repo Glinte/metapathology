@@ -640,3 +640,22 @@ def test_concurrent_uninstall_is_idempotent(run_python: RunPython) -> None:
     proc = run_python(CONCURRENT_UNINSTALL)
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout
+
+
+# install() documents report_at_exit as registering the atexit report, but the
+# idempotence early-return skips that block when the monitor is already
+# enabled, silently dropping the request.
+REPORT_AT_EXIT_UPGRADE = """
+import metapathology
+
+metapathology.install(report_at_exit=False)
+metapathology.install(report_at_exit=True)
+print("OK")
+"""
+
+
+def test_install_can_enable_report_at_exit_after_first_install(run_python: RunPython) -> None:
+    proc = run_python(REPORT_AT_EXIT_UPGRADE)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+    assert "== metapathology report ==" in proc.stderr
