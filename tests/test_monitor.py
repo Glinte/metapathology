@@ -901,3 +901,101 @@ def test_reassignment_recovery_replaces_the_foreign_list_with_a_copy(run_python:
     proc = run_python(REASSIGNED_LIST_GOES_STALE)
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout
+
+
+STATEFUL_INDEX = """
+import sys
+
+import metapathology
+
+class DummyFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        return None
+
+class StatefulIndex:
+    def __init__(self):
+        self.calls = 0
+
+    def __index__(self):
+        result = self.calls
+        self.calls += 1
+        return result
+
+metapathology.install(report_at_exit=False)
+
+replacement = DummyFinder()
+set_index = StatefulIndex()
+sys.meta_path[set_index] = replacement
+assert set_index.calls == 1, set_index.calls
+assert sys.meta_path[0] is replacement
+
+first = sys.meta_path[0]
+delete_index = StatefulIndex()
+del sys.meta_path[delete_index]
+assert delete_index.calls == 1, delete_index.calls
+assert first not in sys.meta_path
+
+slice_replacement = DummyFinder()
+set_slice_index = StatefulIndex()
+sys.meta_path[slice(set_slice_index, 1)] = [slice_replacement]
+assert set_slice_index.calls == 1, set_slice_index.calls
+assert sys.meta_path[0] is slice_replacement
+
+delete_slice_index = StatefulIndex()
+del sys.meta_path[slice(delete_slice_index, 1)]
+assert delete_slice_index.calls == 1, delete_slice_index.calls
+assert slice_replacement not in sys.meta_path
+print("OK")
+"""
+
+
+def test_item_mutations_evaluate_stateful_indices_once(run_python: RunPython) -> None:
+    proc = run_python(STATEFUL_INDEX)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
+FAILED_SORT_MUTATION = """
+import sys
+
+import metapathology
+from metapathology import MetaPathMutation
+
+class ComparableFinder:
+    comparisons = 0
+
+    def __init__(self, value):
+        self.value = value
+
+    def __lt__(self, other):
+        type(self).comparisons += 1
+        if type(self).comparisons == 4:
+            raise RuntimeError("comparison failed")
+        return self.value < other.value
+
+    def find_spec(self, fullname, path=None, target=None):
+        return None
+
+monitor = metapathology.install(report_at_exit=False)
+finders = [ComparableFinder(value) for value in [5, 1, 4, 2, 3]]
+sys.meta_path[:] = finders
+event_count = len(monitor.events())
+
+try:
+    sys.meta_path.sort()
+except RuntimeError:
+    pass
+else:
+    raise AssertionError("sort unexpectedly completed")
+
+assert [finder.value for finder in sys.meta_path] != [5, 1, 4, 2, 3]
+new_events = monitor.events()[event_count:]
+assert any(isinstance(event, MetaPathMutation) and event.op == "sort" for event in new_events), new_events
+print("OK")
+"""
+
+
+def test_sort_that_partially_mutates_before_raising_is_recorded(run_python: RunPython) -> None:
+    proc = run_python(FAILED_SORT_MUTATION)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout

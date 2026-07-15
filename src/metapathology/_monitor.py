@@ -9,6 +9,7 @@ import atexit
 import contextlib
 import copy
 import functools
+import operator
 import sys
 import threading
 import traceback
@@ -683,10 +684,20 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
         reverse: bool = False,
     ) -> None:
         """Record an order change made with ``list.sort``."""
+        before = tuple(self)
+        completed = False
         # Runtime list.sort accepts None; the two type checkers model its
         # overloads incompatibly for an unconstrained list element type.
-        super().sort(key=key, reverse=reverse)  # type: ignore
-        self._monitor._on_meta_path_mutation(self, "sort", (), (), sys._getframe(1))
+        try:
+            super().sort(key=key, reverse=reverse)  # type: ignore
+            completed = True
+        finally:
+            # CPython may leave a list partially reordered when a comparison
+            # raises. The mutation still changed finder precedence and must be
+            # reported even though list.sort itself did not return normally.
+            changed = len(before) != len(self) or any(old is not new for old, new in zip(before, self))
+            if completed or changed:
+                self._monitor._on_meta_path_mutation(self, "sort", (), (), sys._getframe(1))
 
     # TODO(Python >= 3.11): Return typing.Self once Python 3.10 support is dropped.
     def __imul__(self, value: "SupportsIndex") -> "_InstrumentedMetaPath":
@@ -726,10 +737,21 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
     ) -> None:
         """Record single-item or slice replacement (slice assignment is how many tools filter finders)."""
         if isinstance(index, slice):
+            # We inspect the old value before mutating. Normalize custom index
+            # objects once so their __index__ methods are not called again by
+            # the subsequent list operation, matching plain-list semantics.
+            index = slice(
+                None if index.start is None else operator.index(index.start),
+                None if index.stop is None else operator.index(index.stop),
+                None if index.step is None else operator.index(index.step),
+            )
             added = tuple(_cast("Iterable[MetaPathFinderProtocol]", value))
             removed = tuple(self[index])
             super().__setitem__(index, added)
         else:
+            # See the slice case above: the lookup and assignment must share
+            # one normalized integer rather than invoking __index__ twice.
+            index = operator.index(index)
             item = _cast("MetaPathFinderProtocol", value)
             added = (item,)
             removed = (self[index],)
@@ -738,6 +760,16 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
 
     def __delitem__(self, index: "SupportsIndex | slice") -> None:
         """Delegate to ``list.__delitem__`` and record the removed finder(s)."""
+        # Capturing the removed value and then deleting would otherwise invoke
+        # a stateful __index__ twice and could observe/delete different items.
+        if isinstance(index, slice):
+            index = slice(
+                None if index.start is None else operator.index(index.start),
+                None if index.stop is None else operator.index(index.stop),
+                None if index.step is None else operator.index(index.step),
+            )
+        else:
+            index = operator.index(index)
         removed = tuple(self[index]) if isinstance(index, slice) else (self[index],)
         super().__delitem__(index)
         self._monitor._on_meta_path_mutation(self, "__delitem__", (), removed, sys._getframe(1))
