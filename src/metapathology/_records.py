@@ -79,6 +79,21 @@ def type_name(obj: object) -> str:
     return type.__getattribute__(cls, "__name__")
 
 
+class ImportObjectRef(_Record):
+    """Plain identity metadata for an object participating in import resolution."""
+
+    __slots__ = ("_name", "_object_id", "_type_name")
+    _fields = ("object_id", "type_name", "name")
+    object_id = _ReadOnlyField[int]("_object_id")
+    type_name = _ReadOnlyField[str]("_type_name")
+    name = _ReadOnlyField[str | None]("_name")
+
+    def __init__(self, object_id: int, type_name: str, name: str | None = None) -> None:
+        self._object_id = object_id
+        self._type_name = type_name
+        self._name = name
+
+
 class MetaPathMutation(_Record):
     """A mutating method call observed on the instrumented ``sys.meta_path`` list.
 
@@ -169,6 +184,73 @@ class MetaPathReassignment(_Record):
         during_import: str,
         old_contents: tuple[str, ...],
         new_contents: tuple[str, ...],
+        thread_name: str,
+        stack: "StackSummary",
+    ) -> None:
+        self._seq = seq
+        self._during_import = during_import
+        self._old_contents = old_contents
+        self._new_contents = new_contents
+        self._thread_name = thread_name
+        self._stack = stack
+
+
+class PathHooksMutation(_Record):
+    """A mutating method call observed on the instrumented ``sys.path_hooks`` list."""
+
+    __slots__ = ("_added", "_contents_after", "_op", "_removed", "_seq", "_stack", "_thread_name")
+    _fields = ("seq", "op", "added", "removed", "contents_after", "thread_name", "stack")
+    seq = _ReadOnlyField[int]("_seq")
+    op = _ReadOnlyField[str]("_op")
+    added = _ReadOnlyField[tuple[ImportObjectRef, ...]]("_added")
+    removed = _ReadOnlyField[tuple[ImportObjectRef, ...]]("_removed")
+    contents_after = _ReadOnlyField[tuple[ImportObjectRef, ...]]("_contents_after")
+    thread_name = _ReadOnlyField[str]("_thread_name")
+    if TYPE_CHECKING:
+        stack = _ReadOnlyField[StackSummary]("_stack")
+    else:
+        stack = _ReadOnlyField("_stack")
+
+    def __init__(
+        self,
+        seq: int,
+        op: str,
+        added: tuple[ImportObjectRef, ...],
+        removed: tuple[ImportObjectRef, ...],
+        contents_after: tuple[ImportObjectRef, ...],
+        thread_name: str,
+        stack: "StackSummary",
+    ) -> None:
+        self._seq = seq
+        self._op = op
+        self._added = added
+        self._removed = removed
+        self._contents_after = contents_after
+        self._thread_name = thread_name
+        self._stack = stack
+
+
+class PathHooksReassignment(_Record):
+    """``sys.path_hooks`` replacement detected at the next import audit event."""
+
+    __slots__ = ("_during_import", "_new_contents", "_old_contents", "_seq", "_stack", "_thread_name")
+    _fields = ("seq", "during_import", "old_contents", "new_contents", "thread_name", "stack")
+    seq = _ReadOnlyField[int]("_seq")
+    during_import = _ReadOnlyField[str]("_during_import")
+    old_contents = _ReadOnlyField[tuple[ImportObjectRef, ...]]("_old_contents")
+    new_contents = _ReadOnlyField[tuple[ImportObjectRef, ...]]("_new_contents")
+    thread_name = _ReadOnlyField[str]("_thread_name")
+    if TYPE_CHECKING:
+        stack = _ReadOnlyField[StackSummary]("_stack")
+    else:
+        stack = _ReadOnlyField("_stack")
+
+    def __init__(
+        self,
+        seq: int,
+        during_import: str,
+        old_contents: tuple[ImportObjectRef, ...],
+        new_contents: tuple[ImportObjectRef, ...],
         thread_name: str,
         stack: "StackSummary",
     ) -> None:
@@ -295,4 +377,6 @@ class InternalError(_Record):
 
 
 # Everything the monitor records goes into one chronological log; ``seq`` orders records across types.
-MonitorEvent = FindSpecCall | InternalError | MetaPathMutation | MetaPathReassignment
+MonitorEvent = (
+    FindSpecCall | InternalError | MetaPathMutation | MetaPathReassignment | PathHooksMutation | PathHooksReassignment
+)

@@ -20,10 +20,13 @@ from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 from metapathology import _report
 from metapathology._records import (
     FindSpecCall,
+    ImportObjectRef,
     InternalError,
     MetaPathMutation,
     MetaPathReassignment,
     MonitorEvent,
+    PathHooksMutation,
+    PathHooksReassignment,
     type_name,
 )
 
@@ -36,13 +39,16 @@ if TYPE_CHECKING:
     from importlib.machinery import ModuleSpec
     from os import PathLike
     from types import FrameType, ModuleType
-    from typing import Any, Literal, SupportsIndex, TextIO, overload
+    from typing import Any, Literal, SupportsIndex, TextIO, TypeVar, overload
     from typing import cast as _cast
 
     from _typeshed import SupportsRichComparison
-    from _typeshed.importlib import MetaPathFinderProtocol
+    from _typeshed.importlib import MetaPathFinderProtocol, PathEntryFinderProtocol
 
     _FindSpec = Callable[[str, Sequence[str] | None, ModuleType | None], ModuleSpec | None]
+    _ImportListItemT = TypeVar("_ImportListItemT")
+    _MetaPathEntry = MetaPathFinderProtocol
+    _PathHook = Callable[[str], PathEntryFinderProtocol]
 else:
 
     def _cast(_type: object, value: object) -> object:
@@ -81,6 +87,16 @@ def _capture_stack(frame: "FrameType") -> traceback.StackSummary:
     return traceback.StackSummary.extract(traceback.walk_stack(frame), limit=_STACK_CAPTURE_LIMIT, lookup_lines=False)
 
 
+def _import_object_ref(obj: object) -> ImportObjectRef:
+    """Reduce an import object to safe identity metadata without foreign dispatch."""
+    name: str | None = None
+    if isinstance(obj, (types.FunctionType, types.BuiltinFunctionType, types.MethodType)):
+        raw_name = object.__getattribute__(obj, "__name__")
+        if isinstance(raw_name, str):
+            name = raw_name
+    return ImportObjectRef(object_id=id(obj), type_name=type_name(obj), name=name)
+
+
 class Monitor:
     """Records import-machinery activity. Use the module-level :func:`install`."""
 
@@ -115,6 +131,12 @@ class Monitor:
         # The exact list object we last put into sys.meta_path. The audit hook
         # compares by identity: a mismatch means someone reassigned sys.meta_path.
         self._instrumented: _InstrumentedMetaPath | None = None
+        # T1 is independently enableable. Observed hooks remain strongly
+        # referenced while active so recorded ids cannot be reused mid-capture.
+        self._path_hooks_enabled = False
+        self._instrumented_path_hooks: _InstrumentedPathHooks | None = None
+        self._initial_path_hooks: tuple[ImportObjectRef, ...] = ()
+        self._observed_path_hooks: dict[int, object] = {}
         # Both dicts key by id(finder) and hold strong finder references, keeping ids
         # unique for the process lifetime.
         # id -> (finder, callable find_spec, previous instance-dict value). A
@@ -137,6 +159,20 @@ class Monitor:
     def initial_meta_path(self) -> tuple[str, ...]:
         """Finder names in ``sys.meta_path`` at install time."""
         return self._initial_meta_path
+
+    @property
+    def path_hooks_enabled(self) -> bool:
+        """Whether ``sys.path_hooks`` mutation monitoring is currently active."""
+        return self._enabled and self._path_hooks_enabled
+
+    @property
+    def initial_path_hooks(self) -> tuple[ImportObjectRef, ...]:
+        """Safe hook identities captured when path-hook monitoring was enabled."""
+        return self._initial_path_hooks
+
+    def _current_path_hook_refs(self) -> tuple[ImportObjectRef, ...]:
+        """Copy current path-hook identities for report capture."""
+        return tuple(_import_object_ref(hook) for hook in list(sys.path_hooks))
 
     @property
     def baseline_modules(self) -> frozenset[str]:
@@ -174,6 +210,7 @@ class Monitor:
         report_at_exit: bool = True,
         report_destination: "str | PathLike[str] | None" = None,
         report_format: "Literal['text', 'json'] | None" = None,
+        monitor_path_hooks: bool = True,
     ) -> None:
         """Instrument ``sys.meta_path`` and register the import audit hook (idempotent).
 
@@ -188,6 +225,9 @@ class Monitor:
             report_format: ``"text"`` or ``"json"``. When omitted, consult
                 ``METAPATHOLOGY_REPORT_FORMAT`` and default according to the
                 destination (text for stderr, JSON for a file).
+            monitor_path_hooks: Instrument and observe ``sys.path_hooks``.
+                A later true value enables the mechanism; false never disables
+                an already-active mechanism.
         """
         with self._reinstall_lock:
             was_enabled = self._enabled
@@ -221,6 +261,8 @@ class Monitor:
                     # Audit hooks are irremovable; _audit goes inert when disabled.
                     sys.addaudithook(self._audit)
                     self._audit_installed = True
+            if monitor_path_hooks and not self._path_hooks_enabled:
+                self._enable_path_hooks()
         if report_at_exit and not self._report_at_exit:
             self._report_at_exit = True
             atexit.register(self._report_atexit)
@@ -261,8 +303,20 @@ class Monitor:
             self._record_internal_error("report_configuration", exc)
         self._report_destination = resolved_destination
 
+    def _enable_path_hooks(self) -> None:
+        """Install the T1 list around the current ``sys.path_hooks`` contents."""
+        contents = list(sys.path_hooks)
+        initial = tuple(_import_object_ref(hook) for hook in contents)
+        instrumented = _InstrumentedPathHooks(contents, self)
+        with self._record_lock:
+            self._observed_path_hooks.update((reference.object_id, hook) for reference, hook in zip(initial, contents))
+        self._initial_path_hooks = initial
+        self._instrumented_path_hooks = instrumented
+        self._path_hooks_enabled = True
+        sys.path_hooks = instrumented
+
     def uninstall(self) -> None:
-        """Restore a plain ``sys.meta_path`` list and unshadow all finders (idempotent)."""
+        """Restore plain import lists and unshadow all finders (idempotent)."""
         with self._reinstall_lock:
             if not self._enabled:
                 return
@@ -271,18 +325,26 @@ class Monitor:
             if isinstance(current, _InstrumentedMetaPath):
                 sys.meta_path = list(current)
             self._instrumented = None
+            if self._path_hooks_enabled:
+                try:
+                    sys.path_hooks = list(sys.path_hooks)
+                except Exception as exc:
+                    self._record_internal_error("uninstall_path_hooks", exc)
+                self._path_hooks_enabled = False
+                self._instrumented_path_hooks = None
             for finder, _original, previous in list(self._patched.values()):
                 self._restore_find_spec(finder, previous)
             with self._record_lock:
                 self._patched.clear()
                 self._skipped.clear()
                 self._search_path_cache.clear()
+                self._observed_path_hooks.clear()
         if self._report_at_exit:
             self._report_at_exit = False
             atexit.unregister(self._report_atexit)
 
     def _audit(self, event: str, args: tuple[object, ...]) -> None:
-        """``sys.addaudithook`` callback: detect ``sys.meta_path`` reassignment on each ``import`` event.
+        """Detect direct import-list reassignment on each ``import`` audit event.
 
         Audit hooks are irremovable, so this must stay a cheap no-op once the
         monitor is disabled. Exceptions are diverted into the event log because
@@ -299,17 +361,19 @@ class Monitor:
             return
         self._local.active = True
         try:
-            if sys.meta_path is self._instrumented:
+            meta_path_current = sys.meta_path is self._instrumented
+            path_hooks_current = not self._path_hooks_enabled or sys.path_hooks is self._instrumented_path_hooks
+            if meta_path_current and path_hooks_current:
                 return
-            self._reinstall(args)
+            self._recover_reassignments(args)
         except Exception as exc:
             # An exception escaping an audit hook aborts the user's import.
             self._record_internal_error("audit_hook", exc)
         finally:
             self._local.active = False
 
-    def _reinstall(self, args: tuple[object, ...]) -> None:
-        """Wrap a foreign ``sys.meta_path`` in fresh instrumentation and record the reassignment.
+    def _recover_reassignments(self, args: tuple[object, ...]) -> None:
+        """Wrap directly replaced import lists and record detection evidence.
 
         This is a copy-and-swap: a plain list cannot be instrumented in place,
         so the foreign list is left untouched and goes stale. A reassigner that
@@ -321,34 +385,70 @@ class Monitor:
             args: The ``import`` audit event arguments, used to attribute the
                 detection to the import that was in flight.
         """
+        meta_data: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+        path_hooks_data: tuple[tuple[ImportObjectRef, ...], tuple[ImportObjectRef, ...]] | None = None
         with self._reinstall_lock:
-            # Re-check: another importing thread may have reinstalled already.
-            current = sys.meta_path
-            expected = self._instrumented
-            if current is expected or expected is None or not self._enabled:
+            if not self._enabled:
                 return
-            old_contents = tuple(type_name(f) for f in list(expected))
-            new_contents = tuple(type_name(f) for f in list(current))
-            replacement = _InstrumentedMetaPath(current, self)
-            for finder in list(replacement):
-                self._instrument_finder(finder)
-            self._instrumented = replacement
-            sys.meta_path = replacement
+            current_meta_path = sys.meta_path
+            expected_meta_path = self._instrumented
+            if current_meta_path is not expected_meta_path and expected_meta_path is not None:
+                old_contents = tuple(type_name(finder) for finder in list(expected_meta_path))
+                new_contents = tuple(type_name(finder) for finder in list(current_meta_path))
+                replacement = _InstrumentedMetaPath(current_meta_path, self)
+                for finder in list(replacement):
+                    self._instrument_finder(finder)
+                self._instrumented = replacement
+                sys.meta_path = replacement
+                meta_data = (old_contents, new_contents)
+
+            current_path_hooks = sys.path_hooks
+            expected_path_hooks = self._instrumented_path_hooks
+            if (
+                self._path_hooks_enabled
+                and current_path_hooks is not expected_path_hooks
+                and expected_path_hooks is not None
+            ):
+                old_hooks = tuple(expected_path_hooks)
+                new_hooks = tuple(current_path_hooks)
+                old_hook_contents = tuple(_import_object_ref(hook) for hook in old_hooks)
+                new_hook_contents = tuple(_import_object_ref(hook) for hook in new_hooks)
+                path_replacement = _InstrumentedPathHooks(new_hooks, self)
+                self._instrumented_path_hooks = path_replacement
+                sys.path_hooks = path_replacement
+                with self._record_lock:
+                    self._observed_path_hooks.update((id(hook), hook) for hook in (*old_hooks, *new_hooks))
+                path_hooks_data = (old_hook_contents, new_hook_contents)
+        if meta_data is None and path_hooks_data is None:
+            return
         fullname = args[0] if args and isinstance(args[0], str) else "<unknown>"
         stack = _capture_stack(sys._getframe())
         thread_name = threading.current_thread().name
         with self._record_lock:
-            self._seq += 1
-            self._events.append(
-                MetaPathReassignment(
-                    seq=self._seq,
-                    during_import=fullname,
-                    old_contents=old_contents,
-                    new_contents=new_contents,
-                    thread_name=thread_name,
-                    stack=stack,
+            if meta_data is not None:
+                self._seq += 1
+                self._events.append(
+                    MetaPathReassignment(
+                        seq=self._seq,
+                        during_import=fullname,
+                        old_contents=meta_data[0],
+                        new_contents=meta_data[1],
+                        thread_name=thread_name,
+                        stack=stack,
+                    )
                 )
-            )
+            if path_hooks_data is not None:
+                self._seq += 1
+                self._events.append(
+                    PathHooksReassignment(
+                        seq=self._seq,
+                        during_import=fullname,
+                        old_contents=path_hooks_data[0],
+                        new_contents=path_hooks_data[1],
+                        thread_name=thread_name,
+                        stack=stack,
+                    )
+                )
 
     def _instrument_finder(self, finder: object) -> None:
         """Shadow ``finder.find_spec`` with a recording wrapper in the instance dict (layer 3).
@@ -672,6 +772,51 @@ class Monitor:
         finally:
             self._local.active = False
 
+    def _on_path_hooks_mutation(
+        self,
+        mutated: "_InstrumentedPathHooks",
+        op: str,
+        added: tuple[object, ...],
+        removed: tuple[object, ...],
+        frame: "FrameType",
+    ) -> None:
+        """Record a ``sys.path_hooks`` mutation without invoking any hook."""
+        if self._local.active:
+            return
+        self._local.active = True
+        try:
+            if not self._enabled or not self._path_hooks_enabled:
+                return
+            added_refs = tuple(_import_object_ref(hook) for hook in added)
+            removed_refs = tuple(_import_object_ref(hook) for hook in removed)
+            contents_after = tuple(_import_object_ref(hook) for hook in list(mutated))
+            observed_hooks = (*added, *removed, *mutated)
+            thread_name = threading.current_thread().name
+            stack = _capture_stack(frame)
+            with self._record_lock:
+                # Uninstall may have completed while this callback was
+                # reducing plain data. Do not retain hooks or append a late
+                # record after cleanup.
+                if not self._enabled or not self._path_hooks_enabled:
+                    return
+                self._observed_path_hooks.update((id(hook), hook) for hook in observed_hooks)
+                self._seq += 1
+                self._events.append(
+                    PathHooksMutation(
+                        seq=self._seq,
+                        op=op,
+                        added=added_refs,
+                        removed=removed_refs,
+                        contents_after=contents_after,
+                        thread_name=thread_name,
+                        stack=stack,
+                    )
+                )
+        except Exception as exc:
+            self._record_internal_error("path_hooks_mutation", exc)
+        finally:
+            self._local.active = False
+
     def _record_internal_error(self, where: str, exc: BaseException) -> None:
         """Record an exception raised by our own instrumentation instead of letting it escape.
 
@@ -700,8 +845,8 @@ class Monitor:
         _report.write_report(self, destination, format=format)
 
 
-class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
-    """Drop-in ``sys.meta_path`` replacement that records mutations.
+class _InstrumentedImportList(list["_ImportListItemT"]):
+    """Shared list semantics for instrumented import-system lists.
 
     A real ``list`` subclass, never a proxy: third-party code that scans
     ``sys.meta_path`` with ``isinstance``, slices it, or iterates it keeps
@@ -713,7 +858,7 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
 
     __slots__ = ("_monitor",)
 
-    def __init__(self, contents: "Iterable[MetaPathFinderProtocol]", monitor: Monitor) -> None:
+    def __init__(self, contents: "Iterable[_ImportListItemT]", monitor: Monitor) -> None:
         """Wrap ``contents`` without recording a mutation.
 
         Args:
@@ -724,17 +869,17 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
         super().__init__(contents)
         self._monitor = monitor
 
-    def append(self, item: "MetaPathFinderProtocol") -> None:
+    def append(self, item: "_ImportListItemT") -> None:
         """Delegate to ``list.append`` and record the addition."""
         super().append(item)
-        self._monitor._on_meta_path_mutation(self, "append", (item,), (), sys._getframe(1))
+        self._notify("append", (item,), (), sys._getframe(1))
 
-    def insert(self, index: "SupportsIndex", item: "MetaPathFinderProtocol") -> None:
+    def insert(self, index: "SupportsIndex", item: "_ImportListItemT") -> None:
         """Delegate to ``list.insert`` and record the addition."""
         super().insert(index, item)
-        self._monitor._on_meta_path_mutation(self, "insert", (item,), (), sys._getframe(1))
+        self._notify("insert", (item,), (), sys._getframe(1))
 
-    def extend(self, items: "Iterable[MetaPathFinderProtocol]") -> None:
+    def extend(self, items: "Iterable[_ImportListItemT]") -> None:
         """Delegate to ``list.extend`` and record whatever was actually added.
 
         ``items`` is passed through unmaterialized so an iterator that raises
@@ -744,7 +889,7 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
         """
         self._extend_and_record("extend", items, sys._getframe(1))
 
-    def _extend_and_record(self, op: str, items: "Iterable[MetaPathFinderProtocol]", frame: "FrameType") -> None:
+    def _extend_and_record(self, op: str, items: "Iterable[_ImportListItemT]", frame: "FrameType") -> None:
         """Shared ``extend``/``__iadd__`` body: extend in place, then record what landed.
 
         Args:
@@ -765,38 +910,38 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
             # A successful zero-item extend is still a recorded call; a raise
             # that added nothing left the list unmutated and records nothing.
             if completed or added:
-                self._monitor._on_meta_path_mutation(self, op, added, (), frame)
+                self._notify(op, added, (), frame)
 
-    def remove(self, item: "MetaPathFinderProtocol") -> None:
+    def remove(self, item: "_ImportListItemT") -> None:
         """Delegate to ``list.remove`` and record the removal."""
         super().remove(item)
-        self._monitor._on_meta_path_mutation(self, "remove", (), (item,), sys._getframe(1))
+        self._notify("remove", (), (item,), sys._getframe(1))
 
-    def pop(self, index: "SupportsIndex" = -1) -> "MetaPathFinderProtocol":
+    def pop(self, index: "SupportsIndex" = -1) -> "_ImportListItemT":
         """Delegate to ``list.pop`` and record the removal.
 
         Returns:
             The removed finder, as ``list.pop`` would.
         """
         item = super().pop(index)
-        self._monitor._on_meta_path_mutation(self, "pop", (), (item,), sys._getframe(1))
+        self._notify("pop", (), (item,), sys._getframe(1))
         return item
 
     def clear(self) -> None:
         """Record the removal of the entire contents, then delegate to ``list.clear``."""
         removed = tuple(self)
         super().clear()
-        self._monitor._on_meta_path_mutation(self, "clear", (), removed, sys._getframe(1))
+        self._notify("clear", (), removed, sys._getframe(1))
 
     def reverse(self) -> None:
         """Record an order-only mutation; finder precedence changes even though membership does not."""
         super().reverse()
-        self._monitor._on_meta_path_mutation(self, "reverse", (), (), sys._getframe(1))
+        self._notify("reverse", (), (), sys._getframe(1))
 
     def sort(
         self,
         *,
-        key: "Callable[[MetaPathFinderProtocol], SupportsRichComparison] | None" = None,
+        key: "Callable[[_ImportListItemT], SupportsRichComparison] | None" = None,
         reverse: bool = False,
     ) -> None:
         """Record an order change made with ``list.sort``."""
@@ -813,20 +958,20 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
             # reported even though list.sort itself did not return normally.
             changed = len(before) != len(self) or any(old is not new for old, new in zip(before, self))
             if completed or changed:
-                self._monitor._on_meta_path_mutation(self, "sort", (), (), sys._getframe(1))
+                self._notify("sort", (), (), sys._getframe(1))
 
     # TODO(Python >= 3.11): Return typing.Self once Python 3.10 support is dropped.
-    def __imul__(self, value: "SupportsIndex") -> "_InstrumentedMetaPath":
+    def __imul__(self, value: "SupportsIndex") -> "_InstrumentedImportList[_ImportListItemT]":
         """Record an in-place repeat, including additions or a complete wipe."""
         before = tuple(self)
         super().__imul__(value)
         after = tuple(self)
         added = after[len(before) :] if len(after) > len(before) else ()
         removed = before[len(after) :] if len(after) < len(before) else ()
-        self._monitor._on_meta_path_mutation(self, "__imul__", added, removed, sys._getframe(1))
+        self._notify("__imul__", added, removed, sys._getframe(1))
         return self
 
-    def __copy__(self) -> list["MetaPathFinderProtocol"]:
+    def __copy__(self) -> list["_ImportListItemT"]:
         """Match the plain-list interface exposed before instrumentation."""
         return list(self)
 
@@ -834,22 +979,22 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
     def __deepcopy__(
         self,
         memo: "dict[int, Any]",  # pyright: ignore[reportExplicitAny]
-    ) -> list["MetaPathFinderProtocol"]:
+    ) -> list["_ImportListItemT"]:
         """Deep-copy finders without traversing the monitor's locks and state."""
         return copy.deepcopy(list(self), memo)
 
     if TYPE_CHECKING:
 
         @overload
-        def __setitem__(self, index: SupportsIndex, value: MetaPathFinderProtocol) -> None: ...
+        def __setitem__(self, index: SupportsIndex, value: _ImportListItemT) -> None: ...
 
         @overload
-        def __setitem__(self, index: slice, value: Iterable[MetaPathFinderProtocol]) -> None: ...
+        def __setitem__(self, index: slice, value: Iterable[_ImportListItemT]) -> None: ...
 
     def __setitem__(
         self,
         index: "SupportsIndex | slice",
-        value: "MetaPathFinderProtocol | Iterable[MetaPathFinderProtocol]",
+        value: "_ImportListItemT | Iterable[_ImportListItemT]",
     ) -> None:
         """Record single-item or slice replacement (slice assignment is how many tools filter finders)."""
         if isinstance(index, slice):
@@ -861,18 +1006,18 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
                 None if index.stop is None else operator.index(index.stop),
                 None if index.step is None else operator.index(index.step),
             )
-            added = tuple(_cast("Iterable[MetaPathFinderProtocol]", value))
+            added = tuple(_cast("Iterable[_ImportListItemT]", value))
             removed = tuple(self[index])
             super().__setitem__(index, added)
         else:
             # See the slice case above: the lookup and assignment must share
             # one normalized integer rather than invoking __index__ twice.
             index = operator.index(index)
-            item = _cast("MetaPathFinderProtocol", value)
+            item = _cast("_ImportListItemT", value)
             added = (item,)
             removed = (self[index],)
             super().__setitem__(index, item)
-        self._monitor._on_meta_path_mutation(self, "__setitem__", added, removed, sys._getframe(1))
+        self._notify("__setitem__", added, removed, sys._getframe(1))
 
     def __delitem__(self, index: "SupportsIndex | slice") -> None:
         """Delegate to ``list.__delitem__`` and record the removed finder(s)."""
@@ -888,10 +1033,10 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
             index = operator.index(index)
         removed = tuple(self[index]) if isinstance(index, slice) else (self[index],)
         super().__delitem__(index)
-        self._monitor._on_meta_path_mutation(self, "__delitem__", (), removed, sys._getframe(1))
+        self._notify("__delitem__", (), removed, sys._getframe(1))
 
     # TODO(Python >= 3.11): Return typing.Self once Python 3.10 support is dropped.
-    def __iadd__(self, items: "Iterable[MetaPathFinderProtocol]") -> "_InstrumentedMetaPath":
+    def __iadd__(self, items: "Iterable[_ImportListItemT]") -> "_InstrumentedImportList[_ImportListItemT]":
         """Record ``+=``, which reaches ``list`` at the C level and would otherwise bypass the ``extend`` override.
 
         Like :meth:`extend`, ``items`` is not materialized up front, so a
@@ -900,6 +1045,46 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
         """
         self._extend_and_record("__iadd__", items, sys._getframe(1))
         return self
+
+    def _notify(
+        self,
+        op: str,
+        added: tuple[object, ...],
+        removed: tuple[object, ...],
+        frame: "FrameType",
+    ) -> None:
+        """Dispatch one completed mutation to the concrete import-list monitor."""
+        raise NotImplementedError
+
+
+class _InstrumentedMetaPath(_InstrumentedImportList["_MetaPathEntry"]):
+    """Drop-in ``sys.meta_path`` replacement with finder instrumentation."""
+
+    __slots__ = ()
+
+    def _notify(
+        self,
+        op: str,
+        added: tuple[object, ...],
+        removed: tuple[object, ...],
+        frame: "FrameType",
+    ) -> None:
+        self._monitor._on_meta_path_mutation(self, op, added, removed, frame)
+
+
+class _InstrumentedPathHooks(_InstrumentedImportList["_PathHook"]):
+    """Drop-in ``sys.path_hooks`` replacement that never wraps hook factories."""
+
+    __slots__ = ()
+
+    def _notify(
+        self,
+        op: str,
+        added: tuple[object, ...],
+        removed: tuple[object, ...],
+        frame: "FrameType",
+    ) -> None:
+        self._monitor._on_path_hooks_mutation(self, op, added, removed, frame)
 
 
 # One Monitor per process: the instrumentation targets process-global state
@@ -913,6 +1098,7 @@ def install(
     report_at_exit: bool = True,
     report_destination: "str | PathLike[str] | None" = None,
     report_format: "Literal['text', 'json'] | None" = None,
+    monitor_path_hooks: bool = True,
 ) -> Monitor:
     """Install the import-machinery monitor (idempotent) and return it.
 
@@ -925,6 +1111,8 @@ def install(
             environment and then default to stderr.
         report_format: ``"text"`` or ``"json"``; the destination determines
             the default when neither the API nor environment configures it.
+        monitor_path_hooks: Observe ``sys.path_hooks`` mutations and direct
+            reassignment. A later true value enables this mechanism.
     """
     global _monitor_singleton
     with _singleton_lock:
@@ -935,6 +1123,7 @@ def install(
         report_at_exit=report_at_exit,
         report_destination=report_destination,
         report_format=report_format,
+        monitor_path_hooks=monitor_path_hooks,
     )
     return monitor
 

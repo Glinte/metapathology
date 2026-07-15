@@ -2,7 +2,7 @@
 
 import pytest
 
-from metapathology import InternalError
+from metapathology import ImportObjectRef, InternalError
 
 
 def test_record_fields_are_read_only_and_slotted() -> None:
@@ -22,3 +22,12 @@ def test_records_keep_repr_without_generated_equality_or_pattern_matching() -> N
     assert type(first).__eq__ is object.__eq__
     assert first != second
     assert not hasattr(type(first), "__match_args__")
+
+
+def test_import_object_reference_is_plain_read_only_identity_data() -> None:
+    reference = ImportObjectRef(object_id=42, type_name="function", name="path_hook_for_FileFinder")
+
+    assert repr(reference) == ("ImportObjectRef(object_id=42, type_name='function', name='path_hook_for_FileFinder')")
+    assert not hasattr(reference, "__dict__")
+    with pytest.raises(AttributeError, match="read-only"):
+        setattr(reference, "name", "changed")

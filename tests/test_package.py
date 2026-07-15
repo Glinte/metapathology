@@ -9,11 +9,14 @@ RunPython = Callable[..., "subprocess.CompletedProcess[str]"]
 _EXPECTED_PUBLIC_API = frozenset(
     {
         "FindSpecCall",
+        "ImportObjectRef",
         "InternalError",
         "MetaPathMutation",
         "MetaPathReassignment",
         "Monitor",
         "MonitorEvent",
+        "PathHooksMutation",
+        "PathHooksReassignment",
         "__version__",
         "get_monitor",
         "install",

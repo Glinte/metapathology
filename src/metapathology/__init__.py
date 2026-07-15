@@ -19,10 +19,13 @@ if TYPE_CHECKING:
     from metapathology._monitor import Monitor, get_monitor, install, render_report, uninstall, write_report
     from metapathology._records import (
         FindSpecCall,
+        ImportObjectRef,
         InternalError,
         MetaPathMutation,
         MetaPathReassignment,
         MonitorEvent,
+        PathHooksMutation,
+        PathHooksReassignment,
     )
 
 # Keep this in sync with ``project.version`` in pyproject.toml. The package
@@ -32,16 +35,28 @@ __version__ = "0.2.3"
 
 _MONITOR_EXPORTS = frozenset(("Monitor", "get_monitor", "install", "render_report", "uninstall", "write_report"))
 _RECORD_EXPORTS = frozenset(
-    ("FindSpecCall", "InternalError", "MetaPathMutation", "MetaPathReassignment", "MonitorEvent")
+    (
+        "FindSpecCall",
+        "ImportObjectRef",
+        "InternalError",
+        "MetaPathMutation",
+        "MetaPathReassignment",
+        "MonitorEvent",
+        "PathHooksMutation",
+        "PathHooksReassignment",
+    )
 )
 
 __all__ = [
     "FindSpecCall",
+    "ImportObjectRef",
     "InternalError",
     "MetaPathMutation",
     "MetaPathReassignment",
     "Monitor",
     "MonitorEvent",
+    "PathHooksMutation",
+    "PathHooksReassignment",
     "__version__",
     "get_monitor",
     "install",
