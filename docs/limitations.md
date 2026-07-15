@@ -24,12 +24,18 @@ That creates deliberate observation boundaries.
 
 ## Events that are not visible
 
-The `import` audit event occurs before resolution and does not identify the
-winner. It also does not fire for `sys.modules` cache hits. Manual loading such
+The retained `ImportAuditStart` occurs before resolution and does not identify
+the winner or prove success or failure. It also does not fire for `sys.modules`
+cache hits. Manual loading such
 as [`spec_from_file_location()`][spec-from-file] followed by
 [`exec_module()`][exec-module] can avoid both the normal meta-path search and
 its audit coverage; some resulting modules can only be recognized post hoc as
 [`[no-spec]`](report.md#suspicious-findings).
+Direct use of lower-level importlib entry points, including
+`importlib.import_module()`, can also perform resolution without crossing the
+builtin import audit boundary on supported CPython versions. Finder wrappers
+may still record instrumented custom finders, but there will be no corresponding
+`ImportAuditStart`.
 
 [audit-events]: https://docs.python.org/3/library/audit_events.html#audit-events
 [site-pth]: https://docs.python.org/3/library/site.html
@@ -85,10 +91,16 @@ instrumentation.
 
 ## Memory growth
 
-The monitor retains every finder call, mutation, reassignment, and internal
-error to keep the report exhaustive. Memory use grows with import activity for
-as long as monitoring remains enabled. There is no event limit and no silent
-dropped-record policy.
+The monitor retains every import-audit start, finder call, mutation,
+reassignment, importer-cache diff, and internal error to keep the report
+exhaustive. Memory use grows with import activity for as long as monitoring
+remains enabled. There is no event limit and no silent dropped-record policy.
+
+One small slotted audit-start record is retained for each observed builtin
+import resolution. It copies the current meta-path finder type names; auxiliary
+path-hook and cache evidence is constant-size. Re-entrant imports that occur
+while a finder wrapper or hook is already active deliberately remain
+unobserved under the mandatory re-entrancy guard.
 
 Meta-path and path-hooks mutation and reassignment records are more expensive because they retain stack
 summaries. In a long-running or import-heavy process, install immediately

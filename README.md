@@ -135,9 +135,10 @@ For integration with another diagnostic or test harness:
 - `metapathology.get_monitor()` returns the process-wide monitor, or `None`
   before the first call to `install()`; and
 - `monitor.events()` returns a capture-order snapshot of the structured
-  `FindSpecCall`, meta-path, path-hooks, importer-cache, and `InternalError` records. Path-hook
-  records use `ImportObjectRef` values containing captured identity and safe
-  type/name metadata. Mutating the returned list does not alter the monitor.
+  `ImportAuditStart`, `FindSpecCall`, meta-path, path-hooks, importer-cache,
+  and `InternalError` records. Path-hook records use `ImportObjectRef` values
+  containing captured identity and safe type/name metadata. Mutating the
+  returned list does not alter the monitor.
 
 Calling `write_report()` or `render_report()` before `install()` raises
 `RuntimeError`. There are no runtime dependencies. See the complete
@@ -146,10 +147,12 @@ lifecycle details, and integration examples.
 
 ## Reading the report
 
-The mutation and reassignment sections show how finder precedence changed.
-Finder attribution groups recorded `find_spec()` calls by finder and lists the
-modules each finder claimed. The suspicious-findings section uses these
-labels:
+Start with the chronological evidence timeline. It interleaves resolution
+starts, import-list changes, importer-cache diffs, and finder calls using the
+monitor's shared sequence numbers. Sequence is deterministic capture order,
+not a global wall-clock order across threads. Detailed sections then show how
+finder precedence changed and group recorded `find_spec()` calls by finder.
+The suspicious-findings section uses these labels:
 
 - `[bypass]` means a custom finder claimed a source module, but a fresh
   `PathFinder` lookup would choose a different loader or origin. Tools attached
@@ -168,24 +171,23 @@ section and finding category.
 
 ## Resource use
 
-The monitor retains every recorded finder call, mutation, reassignment, and
-internal error so the final report is exhaustive. Its memory use therefore
-grows with import activity for as long as monitoring remains enabled; there is
-currently no event limit or silent dropping policy. For a long-running or
-import-heavy process, call `write_report()` and `uninstall()` once the behavior of
-interest has been captured. Stack traces are stored for `sys.meta_path` and
-`sys.path_hooks` changes, which makes mutation records more expensive than finder-call records.
+The monitor retains every recorded resolution start, finder call, mutation,
+reassignment, cache diff, and internal error so the final report is
+exhaustive. Its memory use therefore grows with import activity for as long as
+monitoring remains enabled; there is currently no event limit or silent
+dropping policy. For a long-running or import-heavy process, call
+`write_report()` and `uninstall()` once the behavior of interest has been
+captured. Stack traces are stored for `sys.meta_path` and `sys.path_hooks`
+changes, which makes mutation records more expensive than audit-start or
+finder-call records.
 Importer-cache monitoring retains an install snapshot, a rolling latest
 snapshot, and every diff. Full cache observations happen at path-hook mutation
 boundaries and report time; the import audit hook performs only an O(1)
-identity-and-length fingerprint check.
-At the 400-import point in the reference benchmark matrix, monitoring added a
-median 3% to the standard-finder workload and 13% when retaining one attributed
-finder record per import; those records retained about 223 bytes each. Imports
-already present in `sys.modules` are cache hits: they do not call finders or
-create new records. A large application can still resolve thousands of distinct
-modules during startup, however, and each import can produce records from more
-than one instrumented finder.
+identity-and-length cache fingerprint check. Each observed builtin-import
+resolution start also retains an `ImportAuditStart`; imports already present
+in `sys.modules` remain cache hits and create no new records. The published reference matrix predates
+audit-start retention and is labeled as a pre-T3 baseline in the performance
+guide.
 
 See [limitations and resource behavior](https://glinte.github.io/metapathology/limitations/)
 and the reproducible [speed and memory benchmarks](https://glinte.github.io/metapathology/performance/)
@@ -227,9 +229,11 @@ for the full protocol.
 
 1. It registers a [`sys.addaudithook()`](https://docs.python.org/3/library/sys.html#sys.addaudithook)
    callback for CPython's [`import` audit event](https://docs.python.org/3/library/audit_events.html#audit-events).
-   This event says that an uncached import is starting; it does not say which
-   finder will succeed. It also lets the monitor recover if less-common code
-   assigns an entirely new list to `sys.meta_path` or `sys.path_hooks`.
+   The monitor records that an uncached resolution started, including an
+   immediate `sys.meta_path` snapshot, but the event does not say whether the
+   import succeeds or which finder wins. It also lets the monitor recover if
+   less-common code assigns an entirely new list to `sys.meta_path` or
+   `sys.path_hooks`.
 2. It temporarily replaces `sys.meta_path` with a compatible `list` subclass.
    This records the usual changes as they happen: additions, removals,
    replacements, clearing, and reordering, with a stack trace showing where

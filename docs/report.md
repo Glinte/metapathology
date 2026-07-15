@@ -1,8 +1,8 @@
 # Reading the report
 
-Start with changes to finder order, then identify the winning custom finder,
-then assess suspicious findings. Sequence numbers order records across event
-types even though the text report groups them into sections. The
+Start with the chronological evidence timeline, then use the detailed sections
+to inspect changes to finder order and custom-finder claims before assessing
+suspicious findings. The
 [library API](api.md#event-records) documents the corresponding structured
 event records.
 
@@ -13,7 +13,7 @@ file output all use the same cutoff-based report document as the human
 renderer. The current experimental schema is identified by:
 
 ```json
-{"name": "metapathology.report", "major": 0, "minor": 4}
+{"name": "metapathology.report", "major": 0, "minor": 5}
 ```
 
 Its top-level sections are `tool`, `process`, `capture`, `snapshots`,
@@ -29,6 +29,26 @@ stable. Capacity and completeness are reported per capture mechanism; the
 event producers retain all records and therefore grow with observed import
 activity. Importer-cache snapshot storage is separately bounded at two full
 maps with a replace-latest policy.
+
+## Chronological evidence timeline
+
+The text timeline is the exhaustive, compact projection of the same event list
+used by JSON. It interleaves import audit starts, meta-path and path-hook
+changes, importer-cache diffs, finder calls, and internal errors. Detailed
+mechanism sections remain below it for stacks and fuller values.
+
+Sequence numbers reflect acquisition of the monitor's shared recording lock.
+They provide deterministic capture order but do not claim a process-wide
+wall-clock order for concurrent threads.
+
+An import-audit line proves only that uncached resolution started. It includes
+the copied `sys.meta_path` identity and finder type names plus constant-size
+identities/fingerprints for enabled auxiliary mechanisms. It deliberately says
+`outcome unknown`: the audit event has no completion signal, does not identify
+the winning finder, and does not fire for `sys.modules` cache hits. JSON exposes
+these records as `import_audit_start` with `evidence: resolution_started`.
+Lower-level importlib entry points may bypass the builtin audit boundary, so a
+finder call can legitimately appear without a preceding audit-start event.
 
 ## Header
 

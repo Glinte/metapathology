@@ -121,18 +121,21 @@ coalesced rather than queued, and reports expose the coalesced count.
 - Reports tolerate concurrent cache changes and non-string keys.
 - Tests reproduce clear, negative-cache, and finder-replacement sequences.
 
-## T3: Build a unified evidence timeline
+## T3: Build a unified evidence timeline (implemented)
 
 **Weakness:** Current events are grouped by mechanism. Users must manually
 correlate a path-hook mutation, cache clear, later import, and changed loader.
 
-**Recommendation:** Use the monotonic sequence numbers from the existing shared
-recording state and render a combined timeline containing meta-path mutations,
-path-hook mutations, importer-cache diffs, finder calls, and relevant import
-audit snapshots. Retain the mechanism-specific report sections for focused
-inspection. Structured reports already contain a cross-mechanism event list;
-this task adds the missing audit-start evidence and a useful chronological text
-projection rather than inventing a second timeline model.
+**Implementation:** The existing shared sequence records import audit starts,
+meta-path mutations, path-hook mutations, importer-cache diffs, finder calls,
+and internal errors in one exhaustive capture-order event list. Text reports
+lead with a compact chronological projection while retaining the detailed
+mechanism sections; JSON schema 0.5 projects the same records.
+
+Audit starts copy immediate meta-path identity/type evidence and constant-size
+enabled-mechanism fingerprints. Native-extension load events are filtered from
+resolution starts. Starts are explicitly rendered with unknown outcomes,
+leaving correlation to T13.
 
 The timeline must be based on recorded plain data. It must not perform foreign
 object inspection while an import is active or while the state lock is held.

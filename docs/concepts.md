@@ -74,8 +74,17 @@ the import process in different places.
 ### Imports and import-list reassignment
 
 A CPython [`sys.addaudithook()`][audit-hook] callback observes the documented
-[`import` audit event][audit-events]. The event says that an uncached import is
-starting; it does not say which finder will claim the module.
+[`import` audit event][audit-events]. For normal import statements and
+`__import__()` calls, the event says that uncached resolution is starting; it
+does not say which finder will claim the module or whether the import will
+finish. Metapathology immediately copies the module name,
+`sys.meta_path` identity and finder type names, plus constant-size fingerprints
+from the enabled path-hook and importer-cache mechanisms, into an
+`ImportAuditStart` record. A second audit shape used while loading some native
+extensions is not a new resolution start and is not recorded as one.
+Calling lower-level importlib entry points such as `importlib.import_module()`
+can enter resolution without this builtin audit boundary and therefore creates
+no audit-start record.
 
 Most changes to `sys.meta_path` or `sys.path_hooks` mutate the existing list and are recorded
 immediately as described below. Direct assignment, such as
