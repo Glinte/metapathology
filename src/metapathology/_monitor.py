@@ -111,7 +111,7 @@ class Monitor:
         # added only when an automatic file report is written; explicit paths
         # passed to write_report() remain unchanged.
         self._report_destination: str | None = None
-        self._report_format = "text"
+        self._report_format: Literal["text", "json"] = "text"
         # The exact list object we last put into sys.meta_path. The audit hook
         # compares by identity: a mismatch means someone reassigned sys.meta_path.
         self._instrumented: _InstrumentedMetaPath | None = None

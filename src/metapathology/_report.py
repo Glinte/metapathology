@@ -25,11 +25,13 @@ if TYPE_CHECKING:
 
     from metapathology._monitor import Monitor
 
+    _ReportFormat = Literal["text", "json"]
+
 
 _REPORT_FORMATS = frozenset(("json", "text"))
 
 
-def validate_format(format: str) -> "Literal['text', 'json']":
+def validate_format(format: str) -> "_ReportFormat":
     """Validate and narrow a public report-format value."""
     if format not in _REPORT_FORMATS:
         choices = ", ".join(sorted(_REPORT_FORMATS))
@@ -41,7 +43,7 @@ def write_report(
     monitor: "Monitor",
     destination: "TextIO | str | PathLike[str] | None" = None,
     *,
-    format: str = "text",
+    format: "_ReportFormat" = "text",
 ) -> None:
     """Render a report and write it to stderr, a stream, or an atomic file.
 
@@ -62,7 +64,7 @@ def write_report(
         raise
 
 
-def render_report(monitor: "Monitor", *, format: str = "text") -> str:
+def render_report(monitor: "Monitor", *, format: "_ReportFormat" = "text") -> str:
     """Render the full diagnostic report as text or experimental JSON.
 
     Ordinary exceptions become a valid failure report. Control-flow
