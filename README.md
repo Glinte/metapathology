@@ -71,6 +71,28 @@ so concurrent workers write different files. For process 1234,
 `install()`. Reports can contain argv values, paths, origins, and stack
 filenames; treat them as potentially sensitive diagnostic artifacts.
 
+### Observe later `.pth` startup hooks
+
+The normal wrapper starts after Python processes site-packages. For an
+explicit diagnostic environment on CPython 3.10--3.14, install an inert,
+environment-gated bootstrap into that interpreter's site-packages:
+
+```console
+$ python -m metapathology.site_bootstrap install
+$ METAPATHOLOGY_EARLY_BOOTSTRAP=1 METAPATHOLOGY_REPORT=diagnostic.json python myscript.py
+$ python -m metapathology.site_bootstrap remove
+```
+
+This can record mutations made by `.pth` files sorted after
+`00_metapathology_early.pth` in the same site-packages directory. It cannot
+observe files processed earlier, a previously processed site directory, or
+startup under `-S`. The activation and report variables are inherited by
+child processes, which write separate PID-safe reports. Ordinary package
+installation never creates this file, and startup remains inactive unless
+`METAPATHOLOGY_EARLY_BOOTSTRAP=1` is present. See the
+[usage guide](https://glinte.github.io/metapathology/usage/#observe-later-pth-files)
+for status, custom-directory, ordering, and version details.
+
 [Library API](https://glinte.github.io/metapathology/api/), for when a wrapper
 isn't possible (notebooks, embedded interpreters, "I can only touch
 `conftest.py`"):
@@ -236,9 +258,10 @@ use a different kind of loader, the report notes that the normal
 
 - CPython only (relies on the `import` audit event and import-system
   internals).
-- Monitoring begins when `metapathology` is installed. Finders and hooks added
-  earlier by `.pth` files appear in the initial snapshots, but there can be no
-  stack trace for changes made during Python startup.
+- Normal CLI/API monitoring begins when `metapathology` is installed. Finders
+  and hooks added earlier by `.pth` files appear in the initial snapshots. The
+  opt-in early-site bootstrap can move this boundary into site initialization,
+  subject to directory ordering and version limits.
 - The temporary changes to finders, `sys.meta_path`, and `sys.path_hooks` are reversed by
   `uninstall()`. Python does not provide a way to remove an audit hook, so the
   installed callback remains as an inactive no-op after uninstalling.

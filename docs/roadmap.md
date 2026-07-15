@@ -702,7 +702,7 @@ attempt correlation depends on T13.
 - Failure to capture the aggregate `PathFinder` result degrades to a labeled
   inference rather than blocking T15 or weakening compatibility.
 
-## T17: Add an opt-in early site bootstrap
+## T17: Add an opt-in early site bootstrap (implemented)
 
 **Weakness:** The normal CLI and library API begin after CPython finishes site
 initialization. Finders and path hooks installed by executable `.pth` lines
@@ -710,14 +710,14 @@ therefore appear only in the initial snapshots; their mutations and cache
 effects cannot be attributed. This is the exact blind spot involved when an
 editable or freezer integration installs import machinery from a `.pth` file.
 
-**Recommendation:** Prototype a generated, environment-gated startup file for
-diagnostic environments. On CPython versions that execute `import` lines in
-`.pth` files, place a uniquely owned file early in one explicitly selected
-site-packages directory. Its one-line bootstrap should import metapathology
-and call `install()` only when a dedicated environment variable is enabled.
-Ordinary package installation must never create or activate this file.
+**Implementation:** A generated, environment-gated startup file is available
+for diagnostic environments on CPython 3.10--3.14. It places a uniquely owned
+file early in one explicitly selected site-packages directory. Its one-line
+bootstrap imports metapathology and calls `install()` only when a dedicated
+environment variable is enabled. Ordinary package installation never creates
+or activates this file.
 
-The generator must make the observation boundary honest:
+The generator makes the observation boundary explicit:
 
 - `.pth` names are ordered only within one site-packages directory. A bootstrap
   cannot observe files processed earlier in that directory or files in a site
@@ -733,9 +733,9 @@ The generator must make the observation boundary honest:
   this feature as version-gated and experimental rather than a permanent
   architecture.
 
-Installation and removal should be symmetric commands. Record a generated
-ownership token and refuse to overwrite or remove a file whose contents do not
-match it. Reports should include the bootstrap path, selected site directory,
+Installation and removal are symmetric commands. The generated file carries
+an ownership token; the manager refuses to overwrite or remove a file whose
+contents do not match it. Reports include the bootstrap path, selected site directory,
 activation source, and whether earlier `.pth` files remained outside the
 observable window.
 

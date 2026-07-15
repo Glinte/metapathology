@@ -84,6 +84,56 @@ metapathology to import or install itself. Explicit API or CLI values take
 precedence. Reports include argv, origins, filesystem paths, and stack
 filenames, so treat them as potentially sensitive diagnostic artifacts.
 
+## Observe later `.pth` files
+
+The ordinary wrapper begins after Python has processed executable `.pth`
+lines. In a disposable or explicitly selected diagnostic environment, an
+opt-in bootstrap can move monitoring into site initialization on CPython
+3.10--3.14:
+
+```console
+python -m metapathology.site_bootstrap install
+```
+
+Run that command with the same interpreter/venv as the target. It creates
+`00_metapathology_early.pth` in that interpreter's `purelib` directory. The
+file is inert unless the exact activation value is present:
+
+```console
+METAPATHOLOGY_EARLY_BOOTSTRAP=1 \
+METAPATHOLOGY_REPORT=diagnostics.json \
+python path/to/script.py
+```
+
+PowerShell uses `$env:NAME = "value"` to set the two variables. The normal
+report-format rules still apply, including PID-safe automatic filenames. Both
+variables are inherited by child processes, so a child using the same
+environment activates itself and writes its own report without injection by
+the parent.
+
+Inspect or remove the generated file with symmetric commands:
+
+```console
+python -m metapathology.site_bootstrap status
+python -m metapathology.site_bootstrap remove
+```
+
+All three commands accept `--site-packages DIR`. Installation and removal are
+idempotent. The generated header carries an ownership token; the manager
+refuses to overwrite or remove a foreign file at the selected path and can
+repair or remove a truncated file that still has a valid ownership header.
+Ordinary package installation never creates the bootstrap.
+
+Within one site-packages directory, Python processes `.pth` names in lexical
+order. The bootstrap observes later names in that directory, but not earlier
+names or files in a site directory Python processed first. Reports record the
+selected bootstrap and the lexically earlier `.pth` names in its directory so
+the evidence boundary remains visible. `-S`, disabled site processing, and
+some isolated or embedded configurations skip the bootstrap. The command
+deliberately rejects Python 3.15 and newer because executable `.pth` lines are
+deprecated there; the newer `.start` mechanism runs too late to observe `.pth`
+execution.
+
 [runpy]: https://docs.python.org/3/library/runpy.html
 [main-metadata]: https://docs.python.org/3/reference/import.html#special-considerations-for-main
 

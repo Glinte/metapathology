@@ -26,12 +26,13 @@ The CLI is the primary interface; `install()` is the library API it wraps.
   console script may exist as sugar only.
 - `metapathology.install()` stays public for cases where a wrapper is
   impossible (notebooks, embedded interpreters, conftest.py-only access).
-- Known limitation, document it: finders installed by `.pth` files (this is
-  exactly how scikit-build-core's `ScikitBuildRedirectingFinder` arrives) are
-  added during site initialization, before *any* of our code can run — CLI
-  included. The mutation log can never witness those insertions; they appear
-  in the initial `sys.meta_path` snapshot and get instrumented from there.
-  Coverage.py-style `.pth` injection for subprocesses is out of scope.
+- Known limitation, document it: in the normal CLI/API workflow, finders
+  installed by `.pth` files (this is exactly how scikit-build-core's
+  `ScikitBuildRedirectingFinder` arrives) are added before our code runs. They
+  appear in the initial snapshot. The explicitly managed, environment-gated
+  early-site bootstrap can witness later `.pth` files in one selected
+  directory on CPython 3.10--3.14; it must report its ordering boundary and
+  remain absent from ordinary package installation.
 
 ## Hard constraints
 

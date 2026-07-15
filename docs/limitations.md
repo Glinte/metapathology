@@ -9,12 +9,18 @@ That creates deliberate observation boundaries.
   CPython [`import` audit event][audit-events] and import-system internals.
 - Monitoring starts at `install()`. Existing modules are treated as a
   baseline rather than attributed retrospectively.
-- Finders installed by [`.pth` files][site-pth] are present before any
-  metapathology code can run, including the CLI. They appear in the initial
-  `sys.meta_path` snapshot and are instrumented from then on, but their
-  insertion cannot have a mutation stack trace.
-- Automatic `.pth` injection into child processes is out of scope. Instrument
-  each process explicitly when subprocess coverage is needed.
+- Under the normal CLI/API workflow, finders installed by [`.pth`
+  files][site-pth] are present before metapathology runs. They appear in the
+  initial snapshot, but their insertion has no mutation stack trace.
+- The optional [early-site bootstrap](usage.md#observe-later-pth-files) can
+  observe later `.pth` files in one selected directory on CPython 3.10--3.14.
+  It cannot observe lexically earlier files, site directories Python processed
+  first, `-S` startup, or configurations that disable ordinary site
+  processing. Python 3.15 deprecates its executable `.pth` mechanism, so the
+  manager rejects that version and newer.
+- When early-site activation is explicitly enabled, its environment and
+  report configuration are inherited by child processes. This is not a
+  collector: each child independently activates and writes a PID-safe report.
 
 ## Events that are not visible
 

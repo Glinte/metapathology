@@ -13,7 +13,7 @@ file output all use the same cutoff-based report document as the human
 renderer. The current experimental schema is identified by:
 
 ```json
-{"name": "metapathology.report", "major": 0, "minor": 3}
+{"name": "metapathology.report", "major": 0, "minor": 4}
 ```
 
 Its top-level sections are `tool`, `process`, `capture`, `snapshots`,
@@ -36,6 +36,12 @@ The header shows whether the monitor, path-hook, and importer-cache mechanisms a
 the initial and current `sys.meta_path` and `sys.path_hooks` snapshots, finders
 that could not be wrapped, and the number of modules added to `sys.modules`
 since installation.
+
+When the [early-site bootstrap](usage.md#observe-later-pth-files) activated the
+monitor, the header and JSON `capture.early_site_bootstrap` object identify its
+path, selected site-packages directory, activation variable, and lexically
+earlier `.pth` files in that directory. Those earlier names are explicitly
+outside the event window; other site directories may also have run first.
 
 `BuiltinImporter`, `FrozenImporter`, and `PathFinder` normally appear as
 "standard CPython finders left unwrapped (expected)." They handle built-in,
