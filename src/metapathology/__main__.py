@@ -37,6 +37,7 @@ class _Arguments(argparse.Namespace):
         super().__init__()
         self.report_destination: str | None = None
         self.report_format: Literal["text", "json"] | None = None
+        self.monitor_path_hooks = True
         self.is_module = False
         self.target = ""
         self.target_args: list[str] = []
@@ -60,6 +61,12 @@ def _make_parser() -> argparse.ArgumentParser:
         "--report-format",
         choices=_REPORT_FORMATS,
         help="select text or JSON output; defaults to text on stderr and JSON for files",
+    )
+    parser.add_argument(
+        "--no-path-hook-monitoring",
+        dest="monitor_path_hooks",
+        action="store_false",
+        help="do not instrument or report sys.path_hooks mutations",
     )
     parser.add_argument("-m", dest="is_module", action="store_true", help="run TARGET as a module")
     parser.add_argument("target", metavar="TARGET", help="script path, or module name with -m")
@@ -97,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
             is_module=True,
             report_destination=parsed.report_destination,
             report_format=parsed.report_format,
+            monitor_path_hooks=parsed.monitor_path_hooks,
         )
     return _run(
         parsed.target,
@@ -104,6 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         is_module=False,
         report_destination=parsed.report_destination,
         report_format=parsed.report_format,
+        monitor_path_hooks=parsed.monitor_path_hooks,
     )
 
 
@@ -114,6 +123,7 @@ def _run(
     is_module: bool,
     report_destination: str | None,
     report_format: "Literal['text', 'json'] | None",
+    monitor_path_hooks: bool,
 ) -> int:
     """Install the monitor, run the target via runpy, and always write the report.
 
@@ -123,6 +133,7 @@ def _run(
         is_module: Select ``python -m``-style execution instead of a script path.
         report_destination: Explicit automatic report path, or None.
         report_format: Explicit report format, or None for environment/default resolution.
+        monitor_path_hooks: Whether to instrument ``sys.path_hooks``.
 
     Returns:
         The exit code a direct invocation of the target would produce.
@@ -139,6 +150,7 @@ def _run(
         report_at_exit=False,
         report_destination=report_destination,
         report_format=report_format,
+        monitor_path_hooks=monitor_path_hooks,
     )
     exit_code = 0
     try:
