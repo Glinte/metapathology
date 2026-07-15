@@ -6,7 +6,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import TypedDict, cast
 
 _MINIMUM_PYTHON = (3, 10)
 _PYTHON_VERSION_PATTERN = re.compile(r"(?P<major>\d+)\.(?P<minor>\d+)\Z")
@@ -85,7 +85,7 @@ def inspect_python(python: Path) -> PythonMetadata:
             text=True,
             timeout=15,
         )
-        value: Any = json.loads(completed.stdout)
+        value: object = json.loads(completed.stdout)
         if not isinstance(value, dict):
             raise ValueError("metadata response was not an object")
         version = value.get("version")

@@ -13,7 +13,7 @@ import sys
 import threading
 import traceback
 from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
-from typing import TYPE_CHECKING, Any, SupportsIndex, TextIO
+from typing import TYPE_CHECKING, Any, SupportsIndex, TextIO, cast, overload
 
 from metapathology import _report
 from metapathology._records import (
@@ -26,10 +26,14 @@ from metapathology._records import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
-    from types import FrameType
+    from collections.abc import Callable, Iterable, Sequence
+    from importlib.machinery import ModuleSpec
+    from types import FrameType, ModuleType
 
+    from _typeshed import SupportsRichComparison
     from _typeshed.importlib import MetaPathFinderProtocol
+
+    _FindSpec = Callable[[str, Sequence[str] | None, ModuleType | None], ModuleSpec | None]
 
 # Frames captured per event; the report trims further (and filters noise) at display time.
 _STACK_CAPTURE_LIMIT = 20
@@ -82,9 +86,9 @@ class Monitor:
         # unique for the process lifetime.
         # id -> (finder, callable find_spec, previous instance-dict value). A
         # None callable marks an in-progress claim so callers cannot double-wrap.
-        self._patched: dict[int, tuple[Any, Any, Any]] = {}
+        self._patched: dict[int, tuple[object, _FindSpec | None, object]] = {}
         # id -> (finder, human-readable reason it could not be instrumented).
-        self._skipped: dict[int, tuple[Any, str]] = {}
+        self._skipped: dict[int, tuple[object, str]] = {}
         # sys.modules names at install time; the report analyzes only modules
         # imported afterwards.
         self._baseline_modules: frozenset[str] = frozenset()
@@ -166,7 +170,7 @@ class Monitor:
             self._report_at_exit = False
             atexit.unregister(self._report_atexit)
 
-    def _audit(self, event: str, args: tuple[Any, ...]) -> None:
+    def _audit(self, event: str, args: tuple[object, ...]) -> None:
         """``sys.addaudithook`` callback: detect ``sys.meta_path`` reassignment on each ``import`` event.
 
         Audit hooks are irremovable, so this must stay a cheap no-op once the
@@ -193,7 +197,7 @@ class Monitor:
         finally:
             self._local.active = False
 
-    def _reinstall(self, args: tuple[Any, ...]) -> None:
+    def _reinstall(self, args: tuple[object, ...]) -> None:
         """Wrap a foreign ``sys.meta_path`` in fresh instrumentation and record the reassignment.
 
         Args:
@@ -264,19 +268,20 @@ class Monitor:
         if not callable(original):
             self._skip_finder(finder_id, finder, "no callable find_spec")
             return
+        typed_original = cast("_FindSpec", original)
         try:
             instance_dict = finder.__dict__
             previous = instance_dict.get("find_spec", _MISSING)
         except (AttributeError, TypeError):
             previous = _MISSING
-        wrapper = self._make_find_spec_wrapper(finder, original)
+        wrapper = self._make_find_spec_wrapper(finder, typed_original)
         try:
             setattr(finder, "find_spec", wrapper)
         except Exception:
             self._skip_finder(finder_id, finder, "find_spec not settable on the instance")
             return
         with self._record_lock:
-            self._patched[finder_id] = (finder, original, previous)
+            self._patched[finder_id] = (finder, typed_original, previous)
 
     def _skip_finder(self, finder_id: int, finder: object, reason: str) -> None:
         """Mark a finder as uninstrumentable, releasing any claim taken by ``_instrument_finder``.
@@ -290,7 +295,7 @@ class Monitor:
             self._patched.pop(finder_id, None)
             self._skipped[finder_id] = (finder, reason)
 
-    def _make_find_spec_wrapper(self, finder: object, original: "Callable[..., Any]") -> "Callable[..., Any]":
+    def _make_find_spec_wrapper(self, finder: object, original: "_FindSpec") -> "_FindSpec":
         """Build the ``find_spec`` replacement that records each call and delegates to the original.
 
         Args:
@@ -303,7 +308,11 @@ class Monitor:
         """
 
         @functools.wraps(original)
-        def find_spec(fullname: str, path: Any = None, target: Any = None) -> Any:
+        def find_spec(
+            fullname: str,
+            path: "Sequence[str] | None" = None,
+            target: "ModuleType | None" = None,
+        ) -> "ModuleSpec | None":
             if getattr(self._local, "active", False):
                 return original(fullname, path, target)
             self._local.active = True
@@ -325,7 +334,7 @@ class Monitor:
         return find_spec
 
     @staticmethod
-    def _snapshot_search_path(path: Any) -> tuple[str, ...]:
+    def _snapshot_search_path(path: "Sequence[str] | None") -> tuple[str, ...]:
         """Copy the effective finder path while the import is in progress."""
         source = sys.path if path is None else path
         try:
@@ -337,7 +346,7 @@ class Monitor:
         self,
         finder: object,
         fullname: str,
-        spec: Any,
+        spec: "ModuleSpec | None",
         search_path: tuple[str, ...],
         exception_type_name: str | None,
     ) -> None:
@@ -521,7 +530,12 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
         super().reverse()
         self._monitor._on_meta_path_mutation(self, "reverse", (), (), sys._getframe(1))
 
-    def sort(self, *, key: "Callable[[MetaPathFinderProtocol], Any] | None" = None, reverse: bool = False) -> None:
+    def sort(
+        self,
+        *,
+        key: "Callable[[MetaPathFinderProtocol], SupportsRichComparison] | None" = None,
+        reverse: bool = False,
+    ) -> None:
         """Record an order change made with ``list.sort``."""
         # Runtime list.sort accepts None; the two type checkers model its
         # overloads incompatibly for an unconstrained list element type.
@@ -543,20 +557,35 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
         """Match the plain-list interface exposed before instrumentation."""
         return list(self)
 
-    def __deepcopy__(self, memo: dict[int, Any]) -> list["MetaPathFinderProtocol"]:
+    # ``deepcopy``'s public protocol specifies Any for the heterogeneous memo values.
+    def __deepcopy__(
+        self,
+        memo: dict[int, Any],  # pyright: ignore[reportExplicitAny]
+    ) -> list["MetaPathFinderProtocol"]:
         """Deep-copy finders without traversing the monitor's locks and state."""
         return copy.deepcopy(list(self), memo)
 
-    def __setitem__(self, index: SupportsIndex | slice, value: Any) -> None:
+    @overload
+    def __setitem__(self, index: SupportsIndex, value: "MetaPathFinderProtocol") -> None: ...
+
+    @overload
+    def __setitem__(self, index: slice, value: "Iterable[MetaPathFinderProtocol]") -> None: ...
+
+    def __setitem__(
+        self,
+        index: SupportsIndex | slice,
+        value: "MetaPathFinderProtocol | Iterable[MetaPathFinderProtocol]",
+    ) -> None:
         """Record single-item or slice replacement (slice assignment is how many tools filter finders)."""
         if isinstance(index, slice):
-            added = tuple(value)
+            added = tuple(cast("Iterable[MetaPathFinderProtocol]", value))
             removed = tuple(self[index])
             super().__setitem__(index, added)
         else:
-            added = (value,)
+            item = cast("MetaPathFinderProtocol", value)
+            added = (item,)
             removed = (self[index],)
-            super().__setitem__(index, value)
+            super().__setitem__(index, item)
         self._monitor._on_meta_path_mutation(self, "__setitem__", added, removed, sys._getframe(1))
 
     def __delitem__(self, index: SupportsIndex | slice) -> None:

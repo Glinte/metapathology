@@ -8,7 +8,7 @@ typically written from an atexit callback, so nothing here may raise.
 import os
 import sys
 from importlib.machinery import PathFinder
-from typing import TYPE_CHECKING, TextIO
+from typing import TYPE_CHECKING, TextIO, TypeVar
 
 from metapathology._records import (
     FindSpecCall,
@@ -19,6 +19,7 @@ from metapathology._records import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from importlib.machinery import ModuleSpec
     from traceback import StackSummary
 
@@ -35,6 +36,7 @@ _STACK_DISPLAY_FRAMES = 5
 # Max claimed modules listed per finder in the attribution section.
 _MAX_LISTED_MODULES = 25
 _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
+_EventT = TypeVar("_EventT")
 
 
 def write_report(monitor: "Monitor", file: TextIO | None = None) -> None:
@@ -57,10 +59,10 @@ def render_report(monitor: "Monitor") -> str:
 def _render_lines(monitor: "Monitor") -> list[str]:
     """Build the report body as a list of lines; the caller joins and appends the trailing newline."""
     events = monitor.events()
-    mutations = [e for e in events if isinstance(e, MetaPathMutation)]
-    reassignments = [e for e in events if isinstance(e, MetaPathReassignment)]
-    calls = [e for e in events if isinstance(e, FindSpecCall)]
-    errors = [e for e in events if isinstance(e, InternalError)]
+    mutations = _events_of_type(events, MetaPathMutation)
+    reassignments = _events_of_type(events, MetaPathReassignment)
+    calls = _events_of_type(events, FindSpecCall)
+    errors = _events_of_type(events, InternalError)
 
     lines = ["== metapathology report =="]
     lines.append("report guide: https://glinte.github.io/metapathology/report/")
@@ -118,6 +120,11 @@ def _render_lines(monitor: "Monitor") -> list[str]:
 
     lines.append("")
     return lines
+
+
+def _events_of_type(events: "Iterable[object]", event_type: type[_EventT]) -> list[_EventT]:
+    """Return only events of ``event_type``, preserving that concrete type for callers."""
+    return [event for event in events if isinstance(event, event_type)]
 
 
 def _internal_error_line(error: InternalError) -> str:

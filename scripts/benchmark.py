@@ -23,7 +23,7 @@ import time
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TypeAlias, cast
 
 import matplotlib
 import psutil
@@ -46,6 +46,8 @@ _PROJECT_ROOT = _SCRIPT_DIR.parent
 _WORKER = _SCRIPT_DIR / "_benchmark_worker.py"
 _SCENARIOS = ("native", "attributed", "mutation")
 _COLORS = {False: "#6b7280", True: "#2563eb"}
+_RecordValue: TypeAlias = str | bool | int | float
+_Record: TypeAlias = dict[str, _RecordValue]
 
 
 def _parse_args() -> argparse.Namespace:
@@ -148,17 +150,17 @@ def _worker_environment(fixture: Path) -> dict[str, str]:
     return environment
 
 
-def _decode_line(line: str, command: Sequence[str]) -> dict[str, Any]:
+def _decode_line(line: str, command: Sequence[str]) -> _Record:
     try:
-        value = json.loads(line)
+        value: object = json.loads(line)
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"worker returned invalid JSON for {command!r}: {line!r}") from exc
     if not isinstance(value, dict):
         raise RuntimeError(f"worker returned a non-object for {command!r}")
-    return value
+    return cast("_Record", value)
 
 
-def _run_time(command: list[str], fixture: Path) -> dict[str, Any]:
+def _run_time(command: list[str], fixture: Path) -> _Record:
     completed = subprocess.run(
         command,
         check=True,
@@ -172,7 +174,7 @@ def _run_time(command: list[str], fixture: Path) -> dict[str, Any]:
     return _decode_line(lines[0], command)
 
 
-def _run_memory(command: list[str], fixture: Path) -> dict[str, Any]:
+def _run_memory(command: list[str], fixture: Path) -> _Record:
     process = subprocess.Popen(
         command,
         stdin=subprocess.PIPE,
@@ -223,8 +225,8 @@ def _sample(
     repeats: int,
     memory_repeats: int,
     seed: int,
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
+) -> list[_Record]:
+    rows: list[_Record] = []
     trials: list[tuple[str, int, bool, str, int]] = []
     for scenario in _SCENARIOS:
         for count in counts:
@@ -252,9 +254,7 @@ def _sample(
     return rows
 
 
-def _values(
-    rows: list[dict[str, Any]], scenario: str, metric: str, monitored: bool, count: int, field: str
-) -> list[float]:
+def _values(rows: list[_Record], scenario: str, metric: str, monitored: bool, count: int, field: str) -> list[float]:
     return [
         float(row[field])
         for row in rows
@@ -266,12 +266,12 @@ def _values(
 
 
 def _median_series(
-    rows: list[dict[str, Any]], counts: list[int], scenario: str, metric: str, monitored: bool, field: str
+    rows: list[_Record], counts: list[int], scenario: str, metric: str, monitored: bool, field: str
 ) -> list[float]:
     return [statistics.median(_values(rows, scenario, metric, monitored, count, field)) for count in counts]
 
 
-def _plot_imports(rows: list[dict[str, Any]], counts: list[int], output: Path) -> None:
+def _plot_imports(rows: list[_Record], counts: list[int], output: Path) -> None:
     figure, axes = plt.subplots(2, 2, figsize=(12, 8), constrained_layout=True)
     for column, scenario in enumerate(("native", "attributed")):
         axis = axes[0][column]
@@ -325,7 +325,7 @@ def _plot_imports(rows: list[dict[str, Any]], counts: list[int], output: Path) -
     plt.close(figure)
 
 
-def _plot_mutations(rows: list[dict[str, Any]], counts: list[int], output: Path) -> None:
+def _plot_mutations(rows: list[_Record], counts: list[int], output: Path) -> None:
     figure, axes = plt.subplots(1, 3, figsize=(15, 4.5), constrained_layout=True)
     control = _median_series(rows, counts, "mutation", "time", False, "elapsed_seconds")
     monitored = _median_series(rows, counts, "mutation", "time", True, "elapsed_seconds")
@@ -365,7 +365,7 @@ def _plot_mutations(rows: list[dict[str, Any]], counts: list[int], output: Path)
     plt.close(figure)
 
 
-def _write_summary(rows: list[dict[str, Any]], counts: list[int], target: PythonMetadata, output: Path) -> None:
+def _write_summary(rows: list[_Record], counts: list[int], target: PythonMetadata, output: Path) -> None:
     lines = [
         "# metapathology benchmark",
         "",

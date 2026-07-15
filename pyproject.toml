@@ -104,6 +104,7 @@ strictDictionaryInference = true
 strictSetInference = true
 deprecateTypingAliases = true
 reportMissingParameterType = "error"
+reportExplicitAny = "error"
 reportUnnecessaryComparison = "error"
 reportUnnecessaryContains = "error"
 

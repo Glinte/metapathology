@@ -12,11 +12,14 @@ import json
 import sys
 import time
 import tracemalloc
-from importlib.machinery import PathFinder
+from collections.abc import Sequence
+from importlib.machinery import ModuleSpec, PathFinder
 from pathlib import Path
-from typing import Any
+from types import ModuleType
 
 import metapathology
+
+_ResultValue = int | float | str
 
 
 class _DelegatingFinder:
@@ -25,7 +28,12 @@ class _DelegatingFinder:
     def __init__(self, package: str) -> None:
         self._package = package
 
-    def find_spec(self, fullname: str, path: Any = None, target: Any = None) -> Any:
+    def find_spec(
+        self,
+        fullname: str,
+        path: Sequence[str] | None = None,
+        target: ModuleType | None = None,
+    ) -> ModuleSpec | None:
         if fullname == self._package or fullname.startswith(f"{self._package}."):
             return PathFinder.find_spec(fullname, path, target)
         return None
@@ -35,7 +43,11 @@ class _NoOpFinder:
     """Settable finder used to exercise instrumented-list mutations."""
 
     @staticmethod
-    def find_spec(fullname: str, path: Any = None, target: Any = None) -> None:
+    def find_spec(
+        fullname: str,
+        path: Sequence[str] | None = None,
+        target: ModuleType | None = None,
+    ) -> None:
         return None
 
 
@@ -111,7 +123,7 @@ def _event_count(monitor: metapathology.Monitor | None) -> int:
     return 0 if monitor is None else len(monitor.events())
 
 
-def _time_trial(args: argparse.Namespace) -> dict[str, Any]:
+def _time_trial(args: argparse.Namespace) -> dict[str, _ResultValue]:
     monitor, names, mutation_finder, install_seconds = _prepare(args)
     started = time.perf_counter_ns()
     _run_workload(args, names, mutation_finder)
@@ -123,7 +135,7 @@ def _time_trial(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def _memory_trial(args: argparse.Namespace) -> dict[str, Any]:
+def _memory_trial(args: argparse.Namespace) -> dict[str, _ResultValue]:
     tracemalloc.start()
     gc.collect()
     before_install, _ = tracemalloc.get_traced_memory()
