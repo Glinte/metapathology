@@ -5,10 +5,7 @@ The usual runpy caveats apply: the target runs as ``__main__`` but with a
 slightly different ``__spec__`` than a direct invocation would have.
 """
 
-import os
-import runpy
 import sys
-import traceback
 
 import metapathology
 
@@ -60,6 +57,13 @@ def _run(target: str, target_args: list[str], *, is_module: bool) -> int:
     Returns:
         The exit code a direct invocation of the target would produce.
     """
+    # Help and argument errors never execute a target, so keep these relatively
+    # expensive modules off those paths. They still load before install(), not
+    # from inside any import hook or finder wrapper.
+    import os
+    import runpy
+    import traceback
+
     metapathology.install(report_at_exit=False)
     exit_code = 0
     try:

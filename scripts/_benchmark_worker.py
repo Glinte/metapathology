@@ -20,6 +20,10 @@ from types import ModuleType
 import metapathology
 
 _ResultValue = int | float | str
+# Keep implementation-module loading outside timed and traced regions, as it
+# was before the package began exposing its public API lazily. Startup cases in
+# benchmark.py measure that one-time cost separately.
+_install = metapathology.install
 
 
 class _DelegatingFinder:
@@ -99,7 +103,7 @@ def _prepare(
     install_seconds = 0.0
     if args.monitored:
         started = time.perf_counter()
-        monitor = metapathology.install(report_at_exit=False)
+        monitor = _install(report_at_exit=False)
         install_seconds = time.perf_counter() - started
     mutation_finder = None
     if args.scenario == "mutation":

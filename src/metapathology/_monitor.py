@@ -13,7 +13,6 @@ import sys
 import threading
 import traceback
 from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
-from typing import TYPE_CHECKING, Any, SupportsIndex, TextIO, cast, overload
 
 from metapathology import _report
 from metapathology._records import (
@@ -25,21 +24,39 @@ from metapathology._records import (
     type_name,
 )
 
+# Supported type checkers treat this conventional name as true without making
+# the runtime import typing solely for annotations and casts.
+TYPE_CHECKING = False
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
     from importlib.machinery import ModuleSpec
     from types import FrameType, ModuleType
+    from typing import Any, SupportsIndex, TextIO, overload
+    from typing import cast as _cast
 
     from _typeshed import SupportsRichComparison
     from _typeshed.importlib import MetaPathFinderProtocol
 
     _FindSpec = Callable[[str, Sequence[str] | None, ModuleType | None], ModuleSpec | None]
+else:
+
+    def _cast(_type: object, value: object) -> object:
+        """Return ``value`` unchanged; type checkers use ``typing.cast`` above."""
+        return value
+
 
 # Frames captured per event; the report trims further (and filters noise) at display time.
 _STACK_CAPTURE_LIMIT = 20
 _MISSING = object()
 _STANDARD_CLASS_FINDERS = (BuiltinImporter, FrozenImporter, PathFinder)
 _STANDARD_CLASS_FINDER_REASON = "standard CPython class finder; expected and deliberately left unchanged"
+
+
+class _ThreadState(threading.local):
+    """Per-thread re-entrancy state with a default for newly seen threads."""
+
+    active = False
 
 
 def _capture_stack(frame: "FrameType") -> traceback.StackSummary:
@@ -67,7 +84,7 @@ class Monitor:
         # Per-thread re-entrancy flag around every hook and wrapper. Nested
         # imports still run normally, but our instrumentation delegates without
         # trying to observe itself recursively.
-        self._local = threading.local()
+        self._local = _ThreadState()
         # One counter for all record types, so the report can interleave the
         # different event kinds chronologically.
         self._seq = 0
@@ -184,7 +201,7 @@ class Monitor:
         """
         if event != "import" or not self._enabled:
             return
-        if getattr(self._local, "active", False):
+        if self._local.active:
             return
         self._local.active = True
         try:
@@ -268,7 +285,7 @@ class Monitor:
         if not callable(original):
             self._skip_finder(finder_id, finder, "no callable find_spec")
             return
-        typed_original = cast("_FindSpec", original)
+        typed_original = _cast("_FindSpec", original)
         try:
             instance_dict = finder.__dict__
             previous = instance_dict.get("find_spec", _MISSING)
@@ -313,7 +330,7 @@ class Monitor:
             path: "Sequence[str] | None" = None,
             target: "ModuleType | None" = None,
         ) -> "ModuleSpec | None":
-            if getattr(self._local, "active", False):
+            if self._local.active:
                 return original(fullname, path, target)
             self._local.active = True
             spec = None
@@ -412,7 +429,7 @@ class Monitor:
             removed: Finders the mutation removed.
             frame: The mutator's caller, where the stack capture starts.
         """
-        if getattr(self._local, "active", False):
+        if self._local.active:
             return
         self._local.active = True
         try:
@@ -493,7 +510,7 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
         super().append(item)
         self._monitor._on_meta_path_mutation(self, "append", (item,), (), sys._getframe(1))
 
-    def insert(self, index: SupportsIndex, item: "MetaPathFinderProtocol") -> None:
+    def insert(self, index: "SupportsIndex", item: "MetaPathFinderProtocol") -> None:
         """Delegate to ``list.insert`` and record the addition."""
         super().insert(index, item)
         self._monitor._on_meta_path_mutation(self, "insert", (item,), (), sys._getframe(1))
@@ -509,7 +526,7 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
         super().remove(item)
         self._monitor._on_meta_path_mutation(self, "remove", (), (item,), sys._getframe(1))
 
-    def pop(self, index: SupportsIndex = -1) -> "MetaPathFinderProtocol":
+    def pop(self, index: "SupportsIndex" = -1) -> "MetaPathFinderProtocol":
         """Delegate to ``list.pop`` and record the removal.
 
         Returns:
@@ -543,7 +560,7 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
         self._monitor._on_meta_path_mutation(self, "sort", (), (), sys._getframe(1))
 
     # TODO(Python >= 3.11): Return typing.Self once Python 3.10 support is dropped.
-    def __imul__(self, value: SupportsIndex) -> "_InstrumentedMetaPath":
+    def __imul__(self, value: "SupportsIndex") -> "_InstrumentedMetaPath":
         """Record an in-place repeat, including additions or a complete wipe."""
         before = tuple(self)
         super().__imul__(value)
@@ -560,35 +577,37 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
     # ``deepcopy``'s public protocol specifies Any for the heterogeneous memo values.
     def __deepcopy__(
         self,
-        memo: dict[int, Any],  # pyright: ignore[reportExplicitAny]
+        memo: "dict[int, Any]",  # pyright: ignore[reportExplicitAny]
     ) -> list["MetaPathFinderProtocol"]:
         """Deep-copy finders without traversing the monitor's locks and state."""
         return copy.deepcopy(list(self), memo)
 
-    @overload
-    def __setitem__(self, index: SupportsIndex, value: "MetaPathFinderProtocol") -> None: ...
+    if TYPE_CHECKING:
 
-    @overload
-    def __setitem__(self, index: slice, value: "Iterable[MetaPathFinderProtocol]") -> None: ...
+        @overload
+        def __setitem__(self, index: SupportsIndex, value: MetaPathFinderProtocol) -> None: ...
+
+        @overload
+        def __setitem__(self, index: slice, value: Iterable[MetaPathFinderProtocol]) -> None: ...
 
     def __setitem__(
         self,
-        index: SupportsIndex | slice,
+        index: "SupportsIndex | slice",
         value: "MetaPathFinderProtocol | Iterable[MetaPathFinderProtocol]",
     ) -> None:
         """Record single-item or slice replacement (slice assignment is how many tools filter finders)."""
         if isinstance(index, slice):
-            added = tuple(cast("Iterable[MetaPathFinderProtocol]", value))
+            added = tuple(_cast("Iterable[MetaPathFinderProtocol]", value))
             removed = tuple(self[index])
             super().__setitem__(index, added)
         else:
-            item = cast("MetaPathFinderProtocol", value)
+            item = _cast("MetaPathFinderProtocol", value)
             added = (item,)
             removed = (self[index],)
             super().__setitem__(index, item)
         self._monitor._on_meta_path_mutation(self, "__setitem__", added, removed, sys._getframe(1))
 
-    def __delitem__(self, index: SupportsIndex | slice) -> None:
+    def __delitem__(self, index: "SupportsIndex | slice") -> None:
         """Delegate to ``list.__delitem__`` and record the removed finder(s)."""
         removed = tuple(self[index]) if isinstance(index, slice) else (self[index],)
         super().__delitem__(index)
@@ -641,7 +660,7 @@ def get_monitor() -> Monitor | None:
         return _monitor_singleton
 
 
-def report(file: TextIO | None = None) -> None:
+def report(file: "TextIO | None" = None) -> None:
     """Write the diagnostic report to ``file`` (default ``sys.stderr``).
 
     Raises:

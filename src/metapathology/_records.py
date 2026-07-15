@@ -5,9 +5,70 @@ extracted at capture time. Foreign objects are never repr()'d while an import
 may be in flight; all formatting happens at report time in ``_report``.
 """
 
-from dataclasses import dataclass
-from traceback import StackSummary
-from typing import TypeAlias
+# Static analyzers treat this conventional name as true; runtime record users
+# do not need traceback solely to resolve the StackSummary annotation.
+TYPE_CHECKING = False
+
+if TYPE_CHECKING:
+    from traceback import StackSummary
+    from typing import Generic, NoReturn, TypeVar, overload
+
+    _FieldT = TypeVar("_FieldT")
+
+
+if TYPE_CHECKING:
+
+    class _ReadOnlyField(Generic[_FieldT]):
+        def __init__(self, slot: str) -> None: ...
+
+        @overload
+        def __get__(self, instance: None, owner: type[object] | None = None) -> "_ReadOnlyField[_FieldT]": ...
+
+        @overload
+        def __get__(self, instance: object, owner: type[object] | None = None) -> _FieldT: ...
+
+        def __get__(
+            self, instance: object | None, owner: type[object] | None = None
+        ) -> "_ReadOnlyField[_FieldT] | _FieldT": ...
+
+        def __set__(self, instance: object, value: NoReturn) -> NoReturn: ...
+
+else:
+
+    class _ReadOnlyField:
+        """Expose a private slot without permitting assignment through its public name."""
+
+        __slots__ = ("_slot",)
+
+        def __init__(self, slot: str) -> None:
+            self._slot = slot
+
+        def __get__(self, instance: object | None, owner: type[object] | None = None) -> object:
+            if instance is None:
+                return self
+            return getattr(instance, self._slot)
+
+        def __set__(self, instance: object, value: object) -> None:
+            raise AttributeError(f"{type(instance).__name__!r} attribute {self._slot[1:]!r} is read-only")
+
+        @classmethod
+        def __class_getitem__(cls, item: object) -> type["_ReadOnlyField"]:
+            return cls
+
+
+class _Record:
+    """Shared repr and read-only public-field setup for captured event records."""
+
+    __slots__ = ()
+    _fields: tuple[str, ...] = ()
+
+    def __init_subclass__(cls) -> None:
+        for field in cls._fields:
+            setattr(cls, field, _ReadOnlyField(f"_{field}"))
+
+    def __repr__(self) -> str:
+        fields = ", ".join(f"{name}={getattr(self, name)!r}" for name in self._fields)
+        return f"{type(self).__name__}({fields})"
 
 
 def type_name(obj: object) -> str:
@@ -17,8 +78,7 @@ def type_name(obj: object) -> str:
     return type(obj).__name__
 
 
-@dataclass(frozen=True, slots=True)
-class MetaPathMutation:
+class MetaPathMutation(_Record):
     """A mutating method call observed on the instrumented ``sys.meta_path`` list.
 
     Attributes:
@@ -37,17 +97,39 @@ class MetaPathMutation:
             without source lines (they are resolved at report time).
     """
 
-    seq: int
-    op: str
-    added: tuple[str, ...]
-    removed: tuple[str, ...]
-    contents_after: tuple[str, ...]
-    thread_name: str
-    stack: StackSummary
+    __slots__ = ("_added", "_contents_after", "_op", "_removed", "_seq", "_stack", "_thread_name")
+    _fields = ("seq", "op", "added", "removed", "contents_after", "thread_name", "stack")
+    seq = _ReadOnlyField[int]("_seq")
+    op = _ReadOnlyField[str]("_op")
+    added = _ReadOnlyField[tuple[str, ...]]("_added")
+    removed = _ReadOnlyField[tuple[str, ...]]("_removed")
+    contents_after = _ReadOnlyField[tuple[str, ...]]("_contents_after")
+    thread_name = _ReadOnlyField[str]("_thread_name")
+    if TYPE_CHECKING:
+        stack = _ReadOnlyField[StackSummary]("_stack")
+    else:
+        stack = _ReadOnlyField("_stack")
+
+    def __init__(
+        self,
+        seq: int,
+        op: str,
+        added: tuple[str, ...],
+        removed: tuple[str, ...],
+        contents_after: tuple[str, ...],
+        thread_name: str,
+        stack: "StackSummary",
+    ) -> None:
+        self._seq = seq
+        self._op = op
+        self._added = added
+        self._removed = removed
+        self._contents_after = contents_after
+        self._thread_name = thread_name
+        self._stack = stack
 
 
-@dataclass(frozen=True, slots=True)
-class MetaPathReassignment:
+class MetaPathReassignment(_Record):
     """``sys.meta_path`` was replaced wholesale, detected via the ``import`` audit event.
 
     Detection granularity is the next import after the fact, so every field
@@ -68,16 +150,36 @@ class MetaPathReassignment:
             attribute assignment raises no event, so that stack is unknowable).
     """
 
-    seq: int
-    during_import: str
-    old_contents: tuple[str, ...]
-    new_contents: tuple[str, ...]
-    thread_name: str
-    stack: StackSummary
+    __slots__ = ("_during_import", "_new_contents", "_old_contents", "_seq", "_stack", "_thread_name")
+    _fields = ("seq", "during_import", "old_contents", "new_contents", "thread_name", "stack")
+    seq = _ReadOnlyField[int]("_seq")
+    during_import = _ReadOnlyField[str]("_during_import")
+    old_contents = _ReadOnlyField[tuple[str, ...]]("_old_contents")
+    new_contents = _ReadOnlyField[tuple[str, ...]]("_new_contents")
+    thread_name = _ReadOnlyField[str]("_thread_name")
+    if TYPE_CHECKING:
+        stack = _ReadOnlyField[StackSummary]("_stack")
+    else:
+        stack = _ReadOnlyField("_stack")
+
+    def __init__(
+        self,
+        seq: int,
+        during_import: str,
+        old_contents: tuple[str, ...],
+        new_contents: tuple[str, ...],
+        thread_name: str,
+        stack: "StackSummary",
+    ) -> None:
+        self._seq = seq
+        self._during_import = during_import
+        self._old_contents = old_contents
+        self._new_contents = new_contents
+        self._thread_name = thread_name
+        self._stack = stack
 
 
-@dataclass(frozen=True, slots=True)
-class FindSpecCall:
+class FindSpecCall(_Record):
     """One ``find_spec`` call on an instrumented meta-path finder.
 
     Attributes:
@@ -101,20 +203,67 @@ class FindSpecCall:
         thread_name: Name of the thread that ran the import.
     """
 
-    seq: int
-    fullname: str
-    finder_type_name: str
-    finder_id: int
-    found: bool
-    loader_type_name: str | None
-    origin: str | None
-    search_path: tuple[str, ...]
-    exception_type_name: str | None
-    thread_name: str
+    __slots__ = (
+        "_exception_type_name",
+        "_finder_id",
+        "_finder_type_name",
+        "_found",
+        "_fullname",
+        "_loader_type_name",
+        "_origin",
+        "_search_path",
+        "_seq",
+        "_thread_name",
+    )
+    _fields = (
+        "seq",
+        "fullname",
+        "finder_type_name",
+        "finder_id",
+        "found",
+        "loader_type_name",
+        "origin",
+        "search_path",
+        "exception_type_name",
+        "thread_name",
+    )
+    seq = _ReadOnlyField[int]("_seq")
+    fullname = _ReadOnlyField[str]("_fullname")
+    finder_type_name = _ReadOnlyField[str]("_finder_type_name")
+    finder_id = _ReadOnlyField[int]("_finder_id")
+    found = _ReadOnlyField[bool]("_found")
+    loader_type_name = _ReadOnlyField[str | None]("_loader_type_name")
+    origin = _ReadOnlyField[str | None]("_origin")
+    search_path = _ReadOnlyField[tuple[str, ...]]("_search_path")
+    exception_type_name = _ReadOnlyField[str | None]("_exception_type_name")
+    thread_name = _ReadOnlyField[str]("_thread_name")
+
+    def __init__(
+        self,
+        seq: int,
+        fullname: str,
+        finder_type_name: str,
+        finder_id: int,
+        found: bool,
+        loader_type_name: str | None,
+        origin: str | None,
+        search_path: tuple[str, ...],
+        exception_type_name: str | None,
+        thread_name: str,
+    ) -> None:
+        self._seq = seq
+        self._fullname = fullname
+        self._finder_type_name = finder_type_name
+        self._finder_id = finder_id
+        self._found = found
+        self._loader_type_name = loader_type_name
+        self._origin = origin
+        self._search_path = search_path
+        self._exception_type_name = exception_type_name
+        self._thread_name = thread_name
 
 
-@dataclass(frozen=True, slots=True)
-class InternalError:
+class InternalError(_Record):
     """An exception raised inside metapathology's own instrumentation.
 
     Recorded instead of raised: an exception escaping a hook would abort the
@@ -130,11 +279,19 @@ class InternalError:
             machinery can execute arbitrary code while an import is in flight.
     """
 
-    seq: int
-    where: str
-    exception_type_name: str
-    message: str | None = None
+    __slots__ = ("_exception_type_name", "_message", "_seq", "_where")
+    _fields = ("seq", "where", "exception_type_name", "message")
+    seq = _ReadOnlyField[int]("_seq")
+    where = _ReadOnlyField[str]("_where")
+    exception_type_name = _ReadOnlyField[str]("_exception_type_name")
+    message = _ReadOnlyField[str | None]("_message")
+
+    def __init__(self, seq: int, where: str, exception_type_name: str, message: str | None = None) -> None:
+        self._seq = seq
+        self._where = where
+        self._exception_type_name = exception_type_name
+        self._message = message
 
 
 # Everything the monitor records goes into one chronological log; ``seq`` orders records across types.
-MonitorEvent: TypeAlias = FindSpecCall | InternalError | MetaPathMutation | MetaPathReassignment
+MonitorEvent = FindSpecCall | InternalError | MetaPathMutation | MetaPathReassignment

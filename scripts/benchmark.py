@@ -45,7 +45,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _SCRIPT_DIR.parent
 _WORKER = _SCRIPT_DIR / "_benchmark_worker.py"
 _SCENARIOS = ("native", "attributed", "mutation")
-_STARTUP_CASES = ("process", "package_import", "direct_script", "monitored_script")
+_STARTUP_CASES = ("process", "package_import", "monitor_api_import", "direct_script", "monitored_script")
 _COLORS = {False: "#6b7280", True: "#2563eb"}
 _RecordValue: TypeAlias = str | bool | int | float
 _Record: TypeAlias = dict[str, _RecordValue]
@@ -217,6 +217,8 @@ def _startup_command(python: Path, fixture: Path, case: str) -> list[str]:
         return [*prefix, "-c", "pass"]
     if case == "package_import":
         return [*prefix, "-c", "import metapathology"]
+    if case == "monitor_api_import":
+        return [*prefix, "-c", "from metapathology import install"]
     target = str(fixture / "benchmark_target.py")
     if case == "direct_script":
         return [*prefix, target]
@@ -509,7 +511,7 @@ def main() -> int:
         )
     target = args.target
     document = {
-        "schema_version": 2,
+        "schema_version": 3,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "benchmark_driver_python": sys.version,
         "benchmark_driver_platform": platform.platform(),

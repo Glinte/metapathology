@@ -8,7 +8,6 @@ typically written from an atexit callback, so nothing here may raise.
 import os
 import sys
 from importlib.machinery import PathFinder
-from typing import TYPE_CHECKING, TextIO, TypeVar
 
 from metapathology._records import (
     FindSpecCall,
@@ -18,12 +17,19 @@ from metapathology._records import (
     type_name,
 )
 
+# Supported type checkers treat this conventional name as true without making
+# report generation import typing solely for annotations.
+TYPE_CHECKING = False
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from importlib.machinery import ModuleSpec
     from traceback import StackSummary
+    from typing import TextIO, TypeVar
 
     from metapathology._monitor import Monitor
+
+    _EventT = TypeVar("_EventT")
 
 # This package's own directory, normcased for comparison: used to drop our
 # frames from displayed stacks.
@@ -36,10 +42,9 @@ _STACK_DISPLAY_FRAMES = 5
 # Max claimed modules listed per finder in the attribution section.
 _MAX_LISTED_MODULES = 25
 _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
-_EventT = TypeVar("_EventT")
 
 
-def write_report(monitor: "Monitor", file: TextIO | None = None) -> None:
+def write_report(monitor: "Monitor", file: "TextIO | None" = None) -> None:
     """Render the report for ``monitor`` and write it to ``file`` (default ``sys.stderr``)."""
     out = sys.stderr if file is None else file
     out.write(render_report(monitor))
@@ -122,7 +127,7 @@ def _render_lines(monitor: "Monitor") -> list[str]:
     return lines
 
 
-def _events_of_type(events: "Iterable[object]", event_type: type[_EventT]) -> list[_EventT]:
+def _events_of_type(events: "Iterable[object]", event_type: "type[_EventT]") -> "list[_EventT]":
     """Return only events of ``event_type``, preserving that concrete type for callers."""
     return [event for event in events if isinstance(event, event_type)]
 

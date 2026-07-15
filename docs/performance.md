@@ -6,6 +6,12 @@ import and how much `sys.meta_path` changes during the capture window.
 
 ## Where the cost comes from
 
+Importing the top-level package does not load the monitor implementation until
+a public monitoring or record API is first accessed. CLI help and argument
+errors likewise avoid importing target-execution modules. A real monitored run
+still loads all dependencies needed by hooks and finder wrappers before
+`install()` enables observation; this fixed startup work is intentional.
+
 An uncached import always invokes the audit hook. When `sys.meta_path` has not
 been replaced, that path performs an enabled check, a thread-local re-entrancy
 check, and an identity comparison. Standard CPython class finders such as
@@ -19,6 +25,10 @@ with finder probes, not merely with successfully imported modules. A custom
 finder early in `sys.meta_path` may see one probe per uncached import; several
 instrumentable finders that decline the same import can produce several
 records.
+
+Event records use small read-only slotted classes rather than dataclasses.
+This keeps externally visible snapshots immutable while avoiding dataclass
+code-generation and value-comparison costs in import hot paths.
 
 List mutations are intentionally heavier. Each append, removal, replacement,
 or reorder captures a stack summary for attribution. Reassignments capture a
@@ -59,8 +69,9 @@ summary, and two PNG graphs:
 uv run --script scripts/benchmark.py
 ```
 
-The summary first reports fresh-process startup, package import, direct-script,
-and monitored-CLI timings. The import graph separates two cases:
+The summary first reports fresh-process startup, package import, deferred
+monitor-API import, direct-script, and monitored-CLI timings. The import graph
+separates two cases:
 
 - `native` uses only the controlled standard-finder path and measures the
   audit-hook/list-check overhead without retained finder-call records.

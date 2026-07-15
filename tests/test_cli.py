@@ -77,6 +77,26 @@ def test_help_links_to_usage_documentation(tmp_path: Path) -> None:
     assert "https://glinte.github.io/metapathology/usage/" in proc.stdout
 
 
+def test_help_defers_target_execution_imports(tmp_path: Path) -> None:
+    code = (
+        "import sys\n"
+        "from metapathology.__main__ import main\n"
+        "assert main(['--help']) == 0\n"
+        "deferred = ('runpy', 'traceback')\n"
+        "print('deferred:', [name for name in deferred if name in sys.modules])\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+        timeout=SUBPROCESS_TIMEOUT,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "deferred: []" in proc.stdout
+
+
 def test_installed_console_script_runs_cli(tmp_path: Path) -> None:
     proc = run_console_script("--help", cwd=tmp_path)
     assert proc.returncode == 0

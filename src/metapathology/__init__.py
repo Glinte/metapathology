@@ -11,19 +11,29 @@ cases where a wrapper is impossible (notebooks, conftest.py-only access).
 Documentation: https://glinte.github.io/metapathology/
 """
 
-from metapathology._monitor import Monitor, get_monitor, install, render_report, report, uninstall
-from metapathology._records import (
-    FindSpecCall,
-    InternalError,
-    MetaPathMutation,
-    MetaPathReassignment,
-    MonitorEvent,
-)
+# Static analyzers treat this conventional name as true; runtime skips the
+# imports until a public attribute is actually requested.
+TYPE_CHECKING = False
+
+if TYPE_CHECKING:
+    from metapathology._monitor import Monitor, get_monitor, install, render_report, report, uninstall
+    from metapathology._records import (
+        FindSpecCall,
+        InternalError,
+        MetaPathMutation,
+        MetaPathReassignment,
+        MonitorEvent,
+    )
 
 # Keep this in sync with ``project.version`` in pyproject.toml. The package
 # test enforces that invariant without making every CLI invocation import the
 # comparatively expensive ``importlib.metadata`` module.
 __version__ = "0.2.2"
+
+_MONITOR_EXPORTS = frozenset(("Monitor", "get_monitor", "install", "render_report", "report", "uninstall"))
+_RECORD_EXPORTS = frozenset(
+    ("FindSpecCall", "InternalError", "MetaPathMutation", "MetaPathReassignment", "MonitorEvent")
+)
 
 __all__ = [
     "FindSpecCall",
@@ -39,3 +49,21 @@ __all__ = [
     "report",
     "uninstall",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Load public monitoring APIs only when first accessed."""
+    if name in _MONITOR_EXPORTS:
+        import metapathology._monitor as module
+    elif name in _RECORD_EXPORTS:
+        import metapathology._records as module
+    else:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    """Include deferred public APIs in module introspection."""
+    return sorted(set(globals()) | set(__all__))

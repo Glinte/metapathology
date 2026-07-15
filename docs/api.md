@@ -62,11 +62,10 @@ the intended entry points.
 
 ## Event records
 
-All records are frozen, slotted [dataclasses][dataclasses]. Their shared `seq`
-field provides a single chronological order across record types.
-`MonitorEvent` is the union of the four record classes.
-
-[dataclasses]: https://docs.python.org/3/library/dataclasses.html
+All records are immutable, slotted classes with a standard field-based repr.
+They deliberately use identity equality and do not define positional pattern
+matching. Their shared `seq` field provides a single chronological order
+across record types. `MonitorEvent` is the union of the four record classes.
 
 ### `FindSpecCall`
 

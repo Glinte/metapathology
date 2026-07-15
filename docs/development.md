@@ -74,8 +74,8 @@ uv run --script scripts/benchmark.py --counts 50,250,1000 --repeats 7 --python p
 ```
 
 Fresh-process timings also cover bare interpreter startup, package import,
-direct script execution, and the monitored CLI wrapper. Timing and memory are
-collected in separate trials so `tracemalloc` does not
+deferred monitor-API import, direct script execution, and the monitored CLI
+wrapper. Timing and memory are collected in separate trials so `tracemalloc` does not
 distort the speed measurements. Workers use `python -S` and disable bytecode
 writes to exclude interpreter-specific `.pth` finders and cache-warming order
 effects. The `native` scenario therefore measures the controlled standard-
@@ -128,6 +128,11 @@ When the minimum supported Python becomes 3.11, restore the more precise
 standard-library [`typing.Self`][typing-self] annotation.
 
 [typing-self]: https://docs.python.org/3/library/typing.html#typing.Self
+
+Runtime modules assign `TYPE_CHECKING = False` directly instead of importing
+it from `typing`. Basedpyright and Pyrefly both recognize the conventional name
+as true during analysis. Keep type-only annotations quoted and type-only
+imports inside those blocks so runtime startup does not import `typing`.
 
 The development commands above are documented by [pytest][pytest],
 [Ruff][ruff], [basedpyright][basedpyright], [Pyrefly][pyrefly], and
