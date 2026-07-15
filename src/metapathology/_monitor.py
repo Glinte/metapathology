@@ -6,13 +6,13 @@ foreign objects are reduced to type names and ids at capture time.
 """
 
 import atexit
-import contextlib
 import copy
 import functools
 import operator
 import sys
 import threading
 import traceback
+import types
 from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 
 from metapathology import _report
@@ -309,9 +309,15 @@ class Monitor:
             return
         typed_original = _cast("_FindSpec", original)
         try:
-            instance_dict = finder.__dict__
+            # Deliberately bypass custom __getattribute__ only for __dict__:
+            # finder.__dict__ could import, raise, or re-enter us while merely
+            # preparing reversible cleanup. The find_spec lookup and write use
+            # normal getattr/setattr above and below, preserving descriptor and
+            # custom attribute semantics that affect actual finder calls.
+            instance_dict = object.__getattribute__(finder, "__dict__")
             previous = instance_dict.get("find_spec", _MISSING)
         except (AttributeError, TypeError):
+            instance_dict = None
             previous = _MISSING
         with self._record_lock:
             # The foreign attribute lookups above can block arbitrarily long
@@ -329,7 +335,7 @@ class Monitor:
             self._skip_finder(finder_id, finder, "find_spec not settable on the instance")
             return
         try:
-            landed = finder.__dict__.get("find_spec") is wrapper
+            landed = instance_dict is not None and instance_dict.get("find_spec") is wrapper
         except Exception:
             landed = False
         if not landed:
@@ -349,8 +355,8 @@ class Monitor:
                 self._patched[finder_id] = (finder, typed_original, previous)
         if not committed:
             # Lost the race with uninstall(): undo the shadow ourselves, outside
-            # _record_lock (foreign __dict__ access must never run under it).
-            # Idempotent against uninstall()'s own restore in either order.
+            # _record_lock. Idempotent against uninstall()'s own restore in
+            # either order.
             self._restore_find_spec(finder, previous)
 
     def _skip_finder(self, finder_id: int, finder: object, reason: str) -> None:
@@ -381,11 +387,17 @@ class Monitor:
             finder: The shadowed (or claimed) finder.
             previous: The prior instance-dict value, or ``_MISSING`` if absent.
         """
-        with contextlib.suppress(AttributeError, KeyError, TypeError):
+        try:
+            # Match installation's raw-dict access: cleanup must remove the
+            # exact shadow even if custom attribute dispatch is hostile or has
+            # changed since installation.
+            instance_dict = object.__getattribute__(finder, "__dict__")
             if previous is _MISSING:
-                del finder.__dict__["find_spec"]
+                del instance_dict["find_spec"]
             else:
-                finder.__dict__["find_spec"] = previous
+                instance_dict["find_spec"] = previous
+        except (AttributeError, KeyError, TypeError):
+            pass
 
     def _make_find_spec_wrapper(self, finder_type_name: str, finder_id: int, original: "_FindSpec") -> "_FindSpec":
         """Build the ``find_spec`` replacement that records each call and delegates to the original.
@@ -401,7 +413,16 @@ class Monitor:
             stored there are not bound, so it takes no ``self``.
         """
 
-        @functools.wraps(original)
+        # Exact Python functions and bound methods expose interpreter-owned
+        # metadata, so the usual wraps behavior is safe and preserves normal
+        # introspection. An arbitrary callable can implement every metadata
+        # attribute dynamically; for those, retain only the safely assigned
+        # __wrapped__ link used by inspect.unwrap/signature.
+        copy_metadata = isinstance(original, (types.FunctionType, types.MethodType))
+        assigned = functools.WRAPPER_ASSIGNMENTS if copy_metadata else ()
+        updated = functools.WRAPPER_UPDATES if copy_metadata else ()
+
+        @functools.wraps(original, assigned=assigned, updated=updated)
         def find_spec(
             fullname: str,
             path: "Sequence[str] | None" = None,

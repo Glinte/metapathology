@@ -73,9 +73,10 @@ class _Record:
 
 def type_name(obj: object) -> str:
     """Best-effort display name: ``__name__`` for class entries (e.g. ``PathFinder``), type name otherwise."""
-    if isinstance(obj, type):
-        return obj.__name__
-    return type(obj).__name__
+    cls = obj if isinstance(obj, type) else type(obj)
+    # Calling ``cls.__name__`` normally dispatches through a custom metaclass.
+    # Finder names are captured inside imports, so bypass foreign overrides.
+    return type.__getattribute__(cls, "__name__")
 
 
 class MetaPathMutation(_Record):

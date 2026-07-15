@@ -999,3 +999,105 @@ def test_sort_that_partially_mutates_before_raising_is_recorded(run_python: RunP
     proc = run_python(FAILED_SORT_MUTATION)
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout
+
+
+HOSTILE_CLASS_NAME = """
+import sys
+
+import metapathology
+
+class HostileMeta(type):
+    def __getattribute__(cls, name):
+        if name == "__name__":
+            raise SystemExit(91)
+        return super().__getattribute__(name)
+
+class HostileClassFinder(metaclass=HostileMeta):
+    @classmethod
+    def find_spec(cls, fullname, path=None, target=None):
+        return None
+
+sys.meta_path.insert(0, HostileClassFinder)
+monitor = metapathology.install(report_at_exit=False)
+assert monitor.enabled
+assert any(name == "HostileClassFinder" for name, _reason in monitor.skipped_finders())
+metapathology.uninstall()
+print("OK")
+"""
+
+
+def test_hostile_class_name_lookup_cannot_break_install(run_python: RunPython) -> None:
+    proc = run_python(HOSTILE_CLASS_NAME)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
+HOSTILE_CALLABLE_METADATA = """
+import sys
+
+import metapathology
+
+class HostileCallable:
+    def __call__(self, fullname, path=None, target=None):
+        return None
+
+    def __getattribute__(self, name):
+        if name in {"__module__", "__name__", "__qualname__", "__doc__", "__annotations__"}:
+            raise SystemExit(92)
+        return super().__getattribute__(name)
+
+class DummyFinder:
+    pass
+
+finder = DummyFinder()
+original = HostileCallable()
+finder.find_spec = original
+sys.meta_path.insert(0, finder)
+
+monitor = metapathology.install(report_at_exit=False)
+assert monitor.enabled
+assert finder.find_spec("probe") is None
+assert finder.find_spec.__wrapped__ is original
+metapathology.uninstall()
+assert isinstance(finder.find_spec, HostileCallable)
+print("OK")
+"""
+
+
+def test_callable_metadata_lookup_cannot_break_install(run_python: RunPython) -> None:
+    proc = run_python(HOSTILE_CALLABLE_METADATA)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
+WRAPPER_INTROSPECTION = """
+import inspect
+import sys
+
+import metapathology
+
+class DummyFinder:
+    def find_spec(self, fullname: str, path=None, target=None) -> None:
+        '''Finder documentation.'''
+        return None
+
+finder = DummyFinder()
+original = finder.find_spec
+sys.meta_path.insert(0, finder)
+metapathology.install(report_at_exit=False)
+
+wrapped = finder.find_spec
+unwrapped = inspect.unwrap(wrapped)
+assert unwrapped.__self__ is finder
+assert unwrapped.__func__ is DummyFinder.find_spec
+assert inspect.signature(wrapped) == inspect.signature(unwrapped)
+for attribute in ("__module__", "__name__", "__qualname__", "__doc__", "__annotations__"):
+    assert getattr(wrapped, attribute) == getattr(original, attribute), attribute
+print("OK")
+"""
+
+
+def test_finder_wrapper_preserves_unwrap_and_signature_introspection(run_python: RunPython) -> None:
+    proc = run_python(WRAPPER_INTROSPECTION)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
