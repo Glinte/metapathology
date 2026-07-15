@@ -730,9 +730,12 @@ class Monitor:
             for loader, previous in list(self._deep_loader_patches.values()):
                 self._restore_attribute(loader, "exec_module", previous)
             if self._deep_hook_wrappers:
-                originals = self._deep_hook_wrappers
-                restored = [originals.get(id(hook), (None, hook))[1] for hook in list(sys.path_hooks)]
-                sys.path_hooks = _cast("list[_PathHook]", restored)
+                try:
+                    originals = self._deep_hook_wrappers
+                    restored = [originals.get(id(hook), (None, hook))[1] for hook in list(sys.path_hooks)]
+                    sys.path_hooks = _cast("list[_PathHook]", restored)
+                except Exception as exc:
+                    self._record_internal_error("uninstall_deep_path_hooks", exc)
             self._deep_hook_wrappers.clear()
             self._deep_finder_patches.clear()
             self._deep_loader_patches.clear()
