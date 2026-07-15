@@ -72,6 +72,7 @@ default-groups = ["dev"]
 exclude-newer = "7 days"
 
 [tool.ruff]
+extend-exclude = ["reproductions"]
 line-length = 120
 target-version = "py310"
 

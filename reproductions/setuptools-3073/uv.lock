@@ -1,0 +1,50 @@
+version = 1
+revision = 3
+requires-python = "==3.10.*"
+
+[options]
+exclude-newer = "2022-02-16T16:00:00Z"
+
+[[package]]
+name = "metapathology"
+version = "0.3.0"
+source = { editable = "../../" }
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "basedpyright", specifier = ">=1.31.3" },
+    { name = "hypothesis", specifier = ">=6.146" },
+    { name = "prek", specifier = ">=0.2.20" },
+    { name = "pyrefly", specifier = ">=0.44.0" },
+    { name = "pytest", specifier = ">=8.3" },
+    { name = "pytest-cov", specifier = ">=6.3" },
+    { name = "pytest-timeout", specifier = ">=2.4" },
+    { name = "ruff", specifier = ">=0.12.11" },
+]
+docs = [{ name = "zensical", specifier = ">=0.0.47,<0.1" }]
+
+[[package]]
+name = "metapathology-setuptools-3073-repro"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "metapathology" },
+    { name = "setuptools" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "metapathology", editable = "../../" },
+    { name = "setuptools", specifier = "==60.7.0" },
+]
+
+[[package]]
+name = "setuptools"
+version = "60.7.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/29/dd/48d662bb93e5e51e72265ef612f869947d4ae4126328d7156824cd50d440/setuptools-60.7.0.tar.gz", hash = "sha256:b83cf328a4f6a987c95610e76b29a30778db05174eef71f771776c48f8f25d1b", size = 2358561, upload-time = "2022-02-02T10:32:03.732Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fa/cb/25e80b7edc9e2d0d49b3c05ee8992220978591290d88d71c595cf1e7d3ad/setuptools-60.7.0-py3-none-any.whl", hash = "sha256:f6871e8aba174d1e22f576c7a471d8460e226b8424b0f2e929a13330b8b83118", size = 1020564, upload-time = "2022-02-02T10:32:01.884Z" },
+]

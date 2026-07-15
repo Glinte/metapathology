@@ -1,0 +1,22 @@
+[build-system]
+requires = ["scikit-build-core==1.0.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "metapathology-scikit-build-core-1482-repro"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "metapathology",
+    "mqt-core-repro",
+]
+
+[tool.scikit-build]
+wheel.packages = ["python/mqt"]
+
+[tool.uv]
+exclude-newer = "2026-07-08"
+
+[tool.uv.sources]
+metapathology = { path = "../..", editable = true }
+mqt-core-repro = { path = "core-package" }

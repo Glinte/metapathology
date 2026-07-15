@@ -1,7 +1,7 @@
 # Historical import-hook reproductions
 
 Each directory contains a pinned `uv` environment and a PowerShell runner for
-a beartype import-hook issue. Run the scripts from the repository root; each
+a historical import-hook issue. Run the scripts from the repository root; each
 environment installs the current checkout as the `metapathology` command.
 
 | Issue | Interaction | Expected diagnosis |
@@ -9,8 +9,18 @@ environment installs the current checkout as the `metapathology` command.
 | [beartype#269](https://github.com/beartype/beartype/issues/269) | `runpy` changes a `-m` submodule's identity to `__main__` | Normal `PathFinder`; no finder contention |
 | [beartype#556](https://github.com/beartype/beartype/issues/556) | scikit-build-core editable redirect finder precedes claw's path hook | `ScikitBuildRedirectingFinder` `[bypass]` |
 | [beartype#638](https://github.com/beartype/beartype/issues/638) | Coverage dotted-module lookup, pytest assertion rewriting, and claw loader re-entrancy | Partial-state `ImportError` plus assertion-rewriter `[bypass]` findings |
+| [scikit-build-core#1482](https://github.com/scikit-build/scikit-build-core/issues/1482) | Editable redirect finder truncates a shared namespace package's path | `ScikitBuildRedirectingFinder` claims the namespace before `PathFinder` |
+| [pytest#12179](https://github.com/pytest-dev/pytest/issues/12179) | Boto installs a legacy meta-path importer that pytest calls via `find_spec` | Mutation attribution for `_SixMetaPathImporter` before collection fails |
+| [setuptools#3073](https://github.com/pypa/setuptools/issues/3073) | `DistutilsMetaFinder` recursively imports an older setuptools and leaves conflicting `sys.modules` state | Finder attribution around the re-entrant `distutils` import |
+| [discord.py#10017](https://github.com/Rapptz/discord.py/issues/10017) | Extension loading executes a second valid-spec module object instead of reusing `sys.modules` | Known blind spot: the duplicate execution is outside normal finder resolution but retains an ordinary-looking spec |
+| [pip#11812](https://github.com/pypa/pip/issues/11812) | An inherited editable finder claims a build backend before pip's `backend-path` | `_EditableFinder` claims the wrong backend and is reported as a path-hook bypass |
+| [distributed#7782](https://github.com/dask/distributed/issues/7782) | `PathFinder` finds a cwd namespace package before setuptools' appended editable finder | Initial finder order explains why `_EditableFinder` never receives the import |
 
 Beartype#599 is another confirmed finder-order bug involving PyInstaller's
 frozen importer. It is not included: the failure exists only inside a frozen
 executable, which cannot be placed under the `metapathology` Python command
 without replacing the import environment responsible for the bug.
+
+PyInstaller#9324 has the same limitation: its failure exists inside a frozen
+executable, so running the target under the metapathology interpreter would
+remove the frozen finder interaction being diagnosed.

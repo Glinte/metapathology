@@ -1,0 +1,15 @@
+[project]
+name = "metapathology-setuptools-3073-repro"
+version = "0.1.0"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "metapathology",
+    "setuptools==60.7.0",
+]
+
+[tool.uv]
+exclude-newer = "2022-02-16"
+package = false
+
+[tool.uv.sources]
+metapathology = { path = "../..", editable = true }

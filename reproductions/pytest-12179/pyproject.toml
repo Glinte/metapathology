@@ -1,0 +1,16 @@
+[project]
+name = "metapathology-pytest-12179-repro"
+version = "0.1.0"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "boto==2.49.0",
+    "metapathology",
+    "pytest==8.1.1",
+]
+
+[tool.uv]
+exclude-newer = "2026-07-08"
+package = false
+
+[tool.uv.sources]
+metapathology = { path = "../..", editable = true }

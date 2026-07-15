@@ -242,6 +242,11 @@ use a different kind of loader, the report notes that the normal
 - The temporary changes to finders, `sys.meta_path`, and `sys.path_hooks` are reversed by
   `uninstall()`. Python does not provide a way to remove an audit hook, so the
   installed callback remains as an inactive no-op after uninstalling.
+- A low-level loader can replace an existing `sys.modules` entry with a second
+  module object that retains a valid spec without starting a normal import.
+  That replacement is indistinguishable at report time from an ordinary
+  `PathFinder` load and is not currently flagged; discord.py#10017 is a
+  representative example in `reproductions/`.
 - This tool changes `sys.meta_path` while it is running. Use it for debugging,
   not as part of an application's normal runtime.
 - Importer-cache diffs are passive boundary observations, not a complete log

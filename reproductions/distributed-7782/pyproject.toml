@@ -1,0 +1,12 @@
+[project]
+name = "metapathology-distributed-7782-repro"
+version = "0.1.0"
+requires-python = ">=3.11,<3.12"
+dependencies = ["metapathology"]
+
+[tool.uv]
+exclude-newer = "2023-04-26"
+package = false
+
+[tool.uv.sources]
+metapathology = { path = "../..", editable = true }
