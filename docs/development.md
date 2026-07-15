@@ -85,6 +85,14 @@ finder-call record. Mutation samples perform repeated `pop`/`append` pairs and
 therefore include the monitor's intentional stack-capture cost. Trials are
 shuffled to balance system warm-up; `--seed` controls and records that order.
 
+Finder wrappers capture the finder's id and display name once rather than
+allocating them for every recorded probe. Search-path snapshots remain exact,
+but identity-equal immutable tuples share storage through a fixed eight-entry
+least-recently used cache. Identity comparison avoids invoking foreign equality
+code in the import hot path; bounded eviction prevents the cache itself from
+becoming another unbounded producer. Cache access uses the existing record
+lock, and `uninstall()` clears it without affecting retained event snapshots.
+
 ## Documentation
 
 Update the closest discovery surface in the same change as public behavior:

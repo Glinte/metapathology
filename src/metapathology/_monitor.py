@@ -48,6 +48,10 @@ else:
 
 # Frames captured per event; the report trims further (and filters noise) at display time.
 _STACK_CAPTURE_LIMIT = 20
+# Reuse common immutable path snapshots without retaining an unbounded intern
+# table. Eight entries cover the usual top-level path plus several package
+# paths; least-recently used eviction keeps both work and auxiliary memory constant.
+_SEARCH_PATH_CACHE_SIZE = 8
 _MISSING = object()
 _STANDARD_CLASS_FINDERS = (BuiltinImporter, FrozenImporter, PathFinder)
 _STANDARD_CLASS_FINDER_REASON = "standard CPython class finder; expected and deliberately left unchanged"
@@ -75,8 +79,8 @@ class Monitor:
     """Records import-machinery activity. Use the module-level :func:`install`."""
 
     def __init__(self) -> None:
-        # Guards _events/_seq/_patched/_skipped. Held only around plain-data
-        # reads/writes, never across foreign code.
+        # Guards _events/_seq/_patched/_skipped/_search_path_cache. Held only
+        # around plain-data reads/writes, never across foreign code.
         self._record_lock = threading.Lock()
         # Serializes install/uninstall/reinstall. Lock order: _reinstall_lock
         # may be held while taking _record_lock, never the other way around.
@@ -89,6 +93,7 @@ class Monitor:
         # different event kinds chronologically.
         self._seq = 0
         self._events: list[MonitorEvent] = []
+        self._search_path_cache: list[tuple[str, ...]] = []
         # Master switch: hooks stay registered after uninstall() (audit hooks
         # are irremovable) but become no-ops when this is False.
         self._enabled = False
@@ -183,6 +188,7 @@ class Monitor:
             with self._record_lock:
                 self._patched.clear()
                 self._skipped.clear()
+                self._search_path_cache.clear()
         if self._report_at_exit:
             self._report_at_exit = False
             atexit.unregister(self._report_atexit)
@@ -291,7 +297,7 @@ class Monitor:
             previous = instance_dict.get("find_spec", _MISSING)
         except (AttributeError, TypeError):
             previous = _MISSING
-        wrapper = self._make_find_spec_wrapper(finder, typed_original)
+        wrapper = self._make_find_spec_wrapper(type_name(finder), finder_id, typed_original)
         try:
             setattr(finder, "find_spec", wrapper)
         except Exception:
@@ -312,11 +318,13 @@ class Monitor:
             self._patched.pop(finder_id, None)
             self._skipped[finder_id] = (finder, reason)
 
-    def _make_find_spec_wrapper(self, finder: object, original: "_FindSpec") -> "_FindSpec":
+    def _make_find_spec_wrapper(self, finder_type_name: str, finder_id: int, original: "_FindSpec") -> "_FindSpec":
         """Build the ``find_spec`` replacement that records each call and delegates to the original.
 
         Args:
-            finder: The finder being shadowed, for attribution.
+            finder_type_name: Display name captured once while instrumenting
+                the finder.
+            finder_id: ``id()`` captured once while instrumenting the finder.
             original: The bound ``find_spec`` to delegate to.
 
         Returns:
@@ -343,7 +351,14 @@ class Monitor:
                     exception_type_name = type(exc).__name__
                     raise
                 finally:
-                    self._record_find_spec(finder, fullname, spec, search_path, exception_type_name)
+                    self._record_find_spec(
+                        finder_type_name,
+                        finder_id,
+                        fullname,
+                        spec,
+                        search_path,
+                        exception_type_name,
+                    )
             finally:
                 self._local.active = False
             return spec
@@ -359,9 +374,26 @@ class Monitor:
         except Exception:
             return ()
 
+    def _reuse_search_path(self, snapshot: tuple[str, ...]) -> tuple[str, ...]:
+        """Return a recent identity-equal snapshot; caller holds ``_record_lock``."""
+        for index, cached in enumerate(self._search_path_cache):
+            if len(cached) != len(snapshot):
+                continue
+            if any(left is not right for left, right in zip(cached, snapshot, strict=True)):
+                continue
+            # Keep frequently reused paths resident when package imports cycle
+            # among several distinct __path__ values.
+            self._search_path_cache.append(self._search_path_cache.pop(index))
+            return cached
+        self._search_path_cache.append(snapshot)
+        if len(self._search_path_cache) > _SEARCH_PATH_CACHE_SIZE:
+            del self._search_path_cache[0]
+        return snapshot
+
     def _record_find_spec(
         self,
-        finder: object,
+        finder_type_name: str,
+        finder_id: int,
         fullname: str,
         spec: "ModuleSpec | None",
         search_path: tuple[str, ...],
@@ -370,7 +402,8 @@ class Monitor:
         """Record one ``find_spec`` call, reducing the spec to primitives before taking the lock.
 
         Args:
-            finder: The finder that was called.
+            finder_type_name: Display name captured when the finder was instrumented.
+            finder_id: ``id()`` captured when the finder was instrumented.
             fullname: The module name that was probed.
             spec: Whatever ``find_spec`` returned; ``None`` means the finder passed.
             search_path: Effective import search path captured before the call.
@@ -386,11 +419,10 @@ class Monitor:
                 raw_origin = getattr(spec, "origin", None)
                 if isinstance(raw_origin, str):
                     origin = raw_origin
-            finder_type_name = type_name(finder)
-            finder_id = id(finder)
             found = spec is not None
             thread_name = threading.current_thread().name
             with self._record_lock:
+                search_path = self._reuse_search_path(search_path)
                 self._seq += 1
                 self._events.append(
                     FindSpecCall(

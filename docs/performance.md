@@ -105,7 +105,7 @@ The 400-operation points produced these cross-environment ranges:
 | Monitor installation | 0.020–0.043 ms | 0.033 ms |
 | 400 native imports, monitored/control time | 1.02–1.11x | 1.03x |
 | 400 attributed imports, monitored/control time | 1.00–1.19x | 1.13x |
-| Retained memory per attributed finder-call record | 203–240 bytes | 223 bytes |
+| Retained memory per attributed finder-call record, before snapshot sharing | 203–240 bytes | 223 bytes |
 | Monitored `pop`/`append` pair | 17–44 µs | 29 µs |
 | Retained memory per mutation record | 665–830 bytes | 747 bytes |
 
@@ -116,11 +116,26 @@ Mutation ratios are intentionally not summarized: a plain-list `pop`/`append`
 pair is so short that a relative multiplier exaggerates the practical cost;
 the absolute microseconds per pair are more useful.
 
-These figures describe the synthetic workload on shared hosted runners, not a
-performance guarantee. Real applications can probe several instrumentable
-finders per import, use longer search paths, or mutate `sys.meta_path` with
-deeper stacks. Re-run the benchmark in the target environment when sizing a
-long capture.
+The published matrix predates the current search-path snapshot sharing. A
+matched local Windows run on July 15, 2026, compared commit `0bdf4ae` with the
+current implementation using 400 attributed imports and three fresh-process
+memory samples per point:
+
+| CPython | Before | Current | Reduction |
+| --- | ---: | ---: | ---: |
+| 3.10 | 223 bytes/record | 146 bytes/record | 35% |
+| 3.14 | 243 bytes/record | 134 bytes/record | 45% |
+
+Each value is the median monitored-minus-control retained allocation divided
+by the 400 recorded finder calls. The comparison changes only record storage;
+the event count and captured fields are identical.
+
+These figures describe synthetic workloads, not a performance guarantee. The
+published matrix used shared hosted runners; the matched memory comparison
+used one local Windows machine. Real applications can probe several
+instrumentable finders per import, use longer search paths, or mutate
+`sys.meta_path` with deeper stacks. Re-run the benchmark in the target
+environment when sizing a long capture.
 
 ## Run the environment matrix
 

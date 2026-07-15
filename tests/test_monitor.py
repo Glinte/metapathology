@@ -145,6 +145,52 @@ def test_find_spec_calls_are_attributed_to_the_claiming_finder(run_python: RunPy
     assert "OK" in proc.stdout
 
 
+FIND_SPEC_METADATA_SNAPSHOTS = """
+import sys
+
+import metapathology
+from metapathology import FindSpecCall
+
+class DummyFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        return None
+
+finder = DummyFinder()
+sys.meta_path.insert(0, finder)
+monitor = metapathology.install(report_at_exit=False)
+
+shared_path = ["first", "second"]
+finder.find_spec("first_call", shared_path)
+finder.find_spec("second_call", shared_path)
+calls = [event for event in monitor.events() if isinstance(event, FindSpecCall)]
+assert calls[-2].search_path == ("first", "second")
+assert calls[-1].search_path == ("first", "second")
+assert calls[-2].finder_id == id(finder)
+assert calls[-1].finder_id == id(finder)
+assert calls[-2].finder_type_name == "DummyFinder"
+assert calls[-1].finder_type_name == "DummyFinder"
+
+shared_path.append("third")
+finder.find_spec("changed_path", shared_path)
+calls = [event for event in monitor.events() if isinstance(event, FindSpecCall)]
+assert calls[-3].search_path == ("first", "second")
+assert calls[-1].search_path == ("first", "second", "third")
+
+for index in range(10):
+    finder.find_spec(f"distinct_{index}", [f"path_{index}"])
+calls = [event for event in monitor.events() if isinstance(event, FindSpecCall)]
+assert [call.search_path for call in calls[-10:]] == [(f"path_{index}",) for index in range(10)]
+assert all(call.finder_id == id(finder) for call in calls)
+print("OK")
+"""
+
+
+def test_find_spec_records_preserve_metadata_and_path_snapshots(run_python: RunPython) -> None:
+    proc = run_python(FIND_SPEC_METADATA_SNAPSHOTS)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
 REASSIGNMENT = """
 import sys
 import metapathology
