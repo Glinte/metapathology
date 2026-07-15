@@ -48,6 +48,15 @@ def render_lines(document: ReportDocument) -> list[str]:
     lines = ["== metapathology report =="]
     lines.append("report guide: https://glinte.github.io/metapathology/report/")
     lines.append(f"monitor enabled: {document.monitor_enabled}")
+    bootstrap = document.early_site_bootstrap
+    if bootstrap is None:
+        lines.append("early site bootstrap: inactive")
+    else:
+        lines.append(f"early site bootstrap: {bootstrap.path}")
+        lines.append(f"bootstrap site-packages: {bootstrap.site_packages}")
+        lines.append(f"bootstrap activation: {bootstrap.activation_source}")
+        earlier = _names_line(bootstrap.earlier_pth_files) if bootstrap.earlier_pth_files else "(none)"
+        lines.append(f"earlier .pth files outside capture: {earlier}")
     lines.append(f"initial sys.meta_path: {_names_line(document.initial_meta_path)}")
     current_meta_path = ("<unavailable>",) if document.current_meta_path is None else document.current_meta_path
     lines.append(f"current sys.meta_path: {_names_line(current_meta_path)}")

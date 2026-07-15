@@ -105,6 +105,24 @@ class _ImporterCacheReportState:
         self.coalesced = coalesced
 
 
+class _EarlySiteBootstrapState:
+    """Plain provenance for an active early site bootstrap."""
+
+    __slots__ = ("activation_source", "earlier_pth_files", "path", "site_packages")
+
+    def __init__(
+        self,
+        path: str,
+        site_packages: str,
+        activation_source: str,
+        earlier_pth_files: tuple[str, ...],
+    ) -> None:
+        self.path = path
+        self.site_packages = site_packages
+        self.activation_source = activation_source
+        self.earlier_pth_files = earlier_pth_files
+
+
 class _ThreadState(threading.local):
     """Per-thread re-entrancy state with a default for newly seen threads."""
 
@@ -224,6 +242,9 @@ class Monitor:
         # passed to write_report() remain unchanged.
         self._report_destination: str | None = None
         self._report_format: Literal["text", "json"] = "text"
+        # Set by the generated .pth activation path. The first activation wins
+        # because a later site directory cannot move the evidence cutoff earlier.
+        self._early_site_bootstrap: _EarlySiteBootstrapState | None = None
         # The exact list object we last put into sys.meta_path. The audit hook
         # compares by identity: a mismatch means someone reassigned sys.meta_path.
         self._instrumented: _InstrumentedMetaPath | None = None
@@ -311,7 +332,13 @@ class Monitor:
 
     def _report_state(
         self,
-    ) -> tuple[int, list[MonitorEvent], list[tuple[object, str]], _ImporterCacheReportState]:
+    ) -> tuple[
+        int,
+        list[MonitorEvent],
+        list[tuple[object, str]],
+        _ImporterCacheReportState,
+        _EarlySiteBootstrapState | None,
+    ]:
         """Copy chronological evidence and skipped finders at one sequence cutoff."""
         self._observe_importer_cache("report")
         with self._record_lock:
@@ -325,7 +352,20 @@ class Monitor:
                 observations=self._importer_cache_observations,
                 coalesced=self._importer_cache_coalesced,
             )
-            return self._seq, list(self._events), list(self._skipped.values()), cache_state
+            return self._seq, list(self._events), list(self._skipped.values()), cache_state, self._early_site_bootstrap
+
+    def _set_early_site_bootstrap(
+        self,
+        path: str,
+        site_packages: str,
+        activation_source: str,
+        earlier_pth_files: tuple[str, ...],
+    ) -> None:
+        """Attach generated bootstrap provenance to this capture."""
+        state = _EarlySiteBootstrapState(path, site_packages, activation_source, earlier_pth_files)
+        with self._record_lock:
+            if self._early_site_bootstrap is None:
+                self._early_site_bootstrap = state
 
     def _begin_report_analysis(self) -> bool:
         """Keep report-time replays from recording activity after their evidence cutoff."""

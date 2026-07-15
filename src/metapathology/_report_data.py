@@ -45,7 +45,7 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 3
+_SCHEMA_MINOR = 4
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -127,6 +127,29 @@ class Finding(_Record):
         self._replay = replay
 
 
+class EarlySiteBootstrap(_Record):
+    """Report-safe provenance for generated early site activation."""
+
+    __slots__ = ("_activation_source", "_earlier_pth_files", "_path", "_site_packages")
+    _fields = ("path", "site_packages", "activation_source", "earlier_pth_files")
+    path = _ReadOnlyField[str]("_path")
+    site_packages = _ReadOnlyField[str]("_site_packages")
+    activation_source = _ReadOnlyField[str]("_activation_source")
+    earlier_pth_files = _ReadOnlyField[tuple[str, ...]]("_earlier_pth_files")
+
+    def __init__(
+        self,
+        path: str,
+        site_packages: str,
+        activation_source: str,
+        earlier_pth_files: tuple[str, ...],
+    ) -> None:
+        self._path = path
+        self._site_packages = site_packages
+        self._activation_source = activation_source
+        self._earlier_pth_files = earlier_pth_files
+
+
 class ReportDocument(_Record):
     """One sequence-cutoff snapshot shared by all report renderers."""
 
@@ -139,6 +162,7 @@ class ReportDocument(_Record):
         "_current_path_hooks",
         "_cutoff_seq",
         "_cwd",
+        "_early_site_bootstrap",
         "_events",
         "_findings",
         "_generated_at",
@@ -174,6 +198,7 @@ class ReportDocument(_Record):
         "importer_cache_coalesced",
         "modules_since_install",
         "events",
+        "early_site_bootstrap",
         "skipped_finders",
         "findings",
         "report_errors",
@@ -198,6 +223,7 @@ class ReportDocument(_Record):
     importer_cache_coalesced = _ReadOnlyField[int]("_importer_cache_coalesced")
     modules_since_install = _ReadOnlyField[tuple[str, ...] | None]("_modules_since_install")
     events = _ReadOnlyField[tuple[MonitorEvent, ...]]("_events")
+    early_site_bootstrap = _ReadOnlyField[EarlySiteBootstrap | None]("_early_site_bootstrap")
     skipped_finders = _ReadOnlyField[tuple[SkippedFinder, ...]]("_skipped_finders")
     findings = _ReadOnlyField[tuple[Finding, ...]]("_findings")
     report_errors = _ReadOnlyField[tuple[ReportError, ...]]("_report_errors")
@@ -225,6 +251,7 @@ class ReportDocument(_Record):
         importer_cache_coalesced: int,
         modules_since_install: tuple[str, ...] | None,
         events: tuple[MonitorEvent, ...],
+        early_site_bootstrap: EarlySiteBootstrap | None,
         skipped_finders: tuple[SkippedFinder, ...],
         findings: tuple[Finding, ...],
         report_errors: tuple[ReportError, ...],
@@ -249,6 +276,7 @@ class ReportDocument(_Record):
         self._importer_cache_coalesced = importer_cache_coalesced
         self._modules_since_install = modules_since_install
         self._events = events
+        self._early_site_bootstrap = early_site_bootstrap
         self._skipped_finders = skipped_finders
         self._findings = findings
         self._report_errors = report_errors
@@ -258,7 +286,7 @@ class ReportDocument(_Record):
 
 def capture_document(monitor: "Monitor") -> ReportDocument:
     """Copy evidence at one sequence cutoff before deriving any findings."""
-    cutoff_seq, events, skipped_raw, importer_cache = monitor._report_state()
+    cutoff_seq, events, skipped_raw, importer_cache, early_site_bootstrap_raw = monitor._report_state()
     report_errors: list[ReportError] = []
     current_meta_path = _current_meta_path_names(report_errors)
     current_path_hooks = _current_path_hooks(monitor, report_errors)
@@ -286,6 +314,16 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         argv.extend(value if isinstance(value, str) else f"<{type_name(value)}>" for value in list(sys.argv))
     except Exception as exc:
         report_errors.append(ReportError("process.argv", type_name(exc)))
+    early_site_bootstrap = (
+        None
+        if early_site_bootstrap_raw is None
+        else EarlySiteBootstrap(
+            early_site_bootstrap_raw.path,
+            early_site_bootstrap_raw.site_packages,
+            early_site_bootstrap_raw.activation_source,
+            early_site_bootstrap_raw.earlier_pth_files,
+        )
+    )
     return ReportDocument(
         generated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         cutoff_seq=cutoff_seq,
@@ -305,6 +343,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         importer_cache_coalesced=importer_cache.coalesced,
         modules_since_install=modules_since_install,
         events=tuple(events),
+        early_site_bootstrap=early_site_bootstrap,
         skipped_finders=skipped_finders,
         findings=findings,
         report_errors=tuple(report_errors),
@@ -445,6 +484,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
         "capture": {
             "baseline_module_count": document.baseline_module_count,
             "cutoff_seq": document.cutoff_seq,
+            "early_site_bootstrap": _json_early_site_bootstrap(document.early_site_bootstrap),
             "enabled": document.monitor_enabled,
             "mechanisms": [
                 _mechanism("meta_path_mutations", document.monitor_enabled, mutations, "best_effort"),
@@ -555,6 +595,18 @@ def _mechanism(name: str, enabled: bool, retained: int, completeness: str) -> di
         "name": name,
         "overflow_policy": "retain_all",
         "retained": retained,
+    }
+
+
+def _json_early_site_bootstrap(bootstrap: EarlySiteBootstrap | None) -> dict[str, object] | None:
+    """Serialize early activation provenance without consulting live state."""
+    if bootstrap is None:
+        return None
+    return {
+        "activation_source": bootstrap.activation_source,
+        "earlier_pth_files": list(bootstrap.earlier_pth_files),
+        "path": bootstrap.path,
+        "site_packages": bootstrap.site_packages,
     }
 
 
