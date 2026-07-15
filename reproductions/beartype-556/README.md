@@ -46,7 +46,7 @@ ScikitBuildRedirectingFinder (...): ... find_spec calls, 1 claimed
 -- suspicious findings (1) --
 [bypass] 'myproject' was claimed by ScikitBuildRedirectingFinder
     (loader _ScikitBuildLoaderWrapper, origin <reproduction>/src/myproject/__init__.py);
-    the standard sys.path machinery would use loader BeartypeSourceFileLoader
+    the current live PathFinder replay would use loader BeartypeSourceFileLoader
     (origin <reproduction>/src/myproject/__init__.py).
     sys.path_hooks-based tools were bypassed.
 -- internal errors (0) --

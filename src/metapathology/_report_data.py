@@ -46,7 +46,7 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 5
+_SCHEMA_MINOR = 6
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -82,8 +82,17 @@ class SkippedFinder(_Record):
 class ReplayResult(_Record):
     """PathFinder outcome that does not conflate failure with absence."""
 
-    __slots__ = ("_exception_type_name", "_loader_type_name", "_origin", "_status")
-    _fields = ("status", "loader_type_name", "origin", "exception_type_name")
+    __slots__ = (
+        "_evidence_level",
+        "_exception_type_name",
+        "_loader_type_name",
+        "_origin",
+        "_state_phase",
+        "_status",
+    )
+    _fields = ("evidence_level", "state_phase", "status", "loader_type_name", "origin", "exception_type_name")
+    evidence_level = _ReadOnlyField[str]("_evidence_level")
+    state_phase = _ReadOnlyField[str]("_state_phase")
     status = _ReadOnlyField[str]("_status")
     loader_type_name = _ReadOnlyField[str | None]("_loader_type_name")
     origin = _ReadOnlyField[str | None]("_origin")
@@ -96,6 +105,8 @@ class ReplayResult(_Record):
         origin: str | None = None,
         exception_type_name: str | None = None,
     ) -> None:
+        self._evidence_level = "live_replay"
+        self._state_phase = "report"
         self._status = status
         self._loader_type_name = loader_type_name
         self._origin = origin
@@ -767,9 +778,11 @@ def _json_finding(finding: Finding) -> dict[str, object]:
         }
     if finding.replay is not None:
         result["path_finder_replay"] = {
+            "evidence_level": finding.replay.evidence_level,
             "exception_type_name": finding.replay.exception_type_name,
             "loader_type_name": finding.replay.loader_type_name,
             "origin": finding.replay.origin,
+            "state_phase": finding.replay.state_phase,
             "status": finding.replay.status,
         }
     if finding.kind == "no_spec":

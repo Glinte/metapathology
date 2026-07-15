@@ -35,13 +35,13 @@ AssertionRewritingHook (...): ... find_spec calls, 4 claimed
 -- suspicious findings (6) --
 [bypass] 'pytest_cov' was claimed by AssertionRewritingHook
     (loader AssertionRewritingHook, origin <site-packages>/pytest_cov/__init__.py);
-    the standard sys.path machinery would use loader BeartypeSourceFileLoader
+    the current live PathFinder replay would use loader BeartypeSourceFileLoader
     (origin <site-packages>/pytest_cov/__init__.py).
     sys.path_hooks-based tools were bypassed.
 [bypass] 'pytest_cov.plugin' was claimed by AssertionRewritingHook (...);
-    the standard sys.path machinery would use loader BeartypeSourceFileLoader (...).
+    the current live PathFinder replay would use loader BeartypeSourceFileLoader (...).
 [bypass] 'pytest_cov.engine' was claimed by AssertionRewritingHook (...);
-    the standard sys.path machinery would use loader BeartypeSourceFileLoader (...).
+    the current live PathFinder replay would use loader BeartypeSourceFileLoader (...).
 -- internal errors (0) --
 ```
 

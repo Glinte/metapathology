@@ -7,6 +7,7 @@ from pathlib import Path
 RunPython = Callable[..., "subprocess.CompletedProcess[str]"]
 
 BYPASS = """
+import json
 import sys
 from importlib.machinery import SourceFileLoader
 from importlib.util import spec_from_file_location
@@ -33,6 +34,10 @@ module = __import__(target_name)
 assert module.VALUE == 7
 
 text = metapathology.render_report()
+document = json.loads(metapathology.render_report(format="json"))
+finding = next(item for item in document["findings"] if item["module"] == target_name)
+assert finding["path_finder_replay"]["evidence_level"] == "live_replay", finding
+assert finding["path_finder_replay"]["state_phase"] == "report", finding
 print(text)
 """
 

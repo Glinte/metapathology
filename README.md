@@ -154,18 +154,21 @@ not a global wall-clock order across threads. Detailed sections then show how
 finder precedence changed and group recorded `find_spec()` calls by finder.
 The suspicious-findings section uses these labels:
 
-- `[bypass]` means a custom finder claimed a source module, but a fresh
-  `PathFinder` lookup would choose a different loader or origin. Tools attached
-  through `sys.path_hooks` did not see the import that actually happened.
-- `[unfindable]` means a custom finder claimed a source module that a fresh
-  `PathFinder` lookup cannot find at all. This is a stronger form of bypass.
+- `[bypass]` means a custom finder claimed a source module, but a report-time
+  live `PathFinder` replay would choose a different loader or origin. Tools
+  attached through `sys.path_hooks` did not see the import that actually
+  happened.
+- `[unfindable]` means a custom finder claimed a source module that the current
+  live `PathFinder` replay cannot find at all. This is a stronger form of
+  bypass.
 - `[no-spec]` means a new `sys.modules` entry has neither a `__spec__` nor a
   recorded finder claim. It was probably created manually or loaded through
   an `exec_module()`-style path that is invisible to meta-path finders.
 
 These are diagnostic leads, not necessarily defects. Custom finders may bypass
-the standard path machinery intentionally, and the report replays the current
-`PathFinder` state rather than the exact state at import time. The
+the standard path machinery intentionally. The live replay uses the search
+path captured with the claim, but report-time filesystem and finder state; it
+does not reconstruct the exact state at import time. The
 [report guide](https://glinte.github.io/metapathology/report/) explains every
 section and finding category.
 
@@ -253,10 +256,11 @@ for the full protocol.
 The standard `BuiltinImporter`, `FrozenImporter`, and `PathFinder` entries are
 classes shared by CPython, so metapathology deliberately leaves them unwrapped.
 
-At exit, the report compares the recorded result with what
-`PathFinder.find_spec()` finds. If `PathFinder` cannot find the module or would
-use a different kind of loader, the report notes that the normal
-`sys.path_hooks` route was skipped.
+At exit, the report compares the recorded result with a current live
+`PathFinder.find_spec()` replay over the search path captured with the claim.
+If `PathFinder` cannot find the module or would use a different kind of loader,
+the report notes that the normal `sys.path_hooks` route was skipped. It also
+labels this comparison as report-time live replay evidence.
 
 ## Caveats
 

@@ -365,11 +365,11 @@ def _finding_line(finding: Finding) -> str:
     if finding.kind == "unfindable":
         return (
             f"[unfindable] '{finding.module}' (origin {claim.origin}) was claimed by {claim.finder_type_name}, but "
-            "the standard sys.path machinery cannot find it: sys.path_hooks-based tools never see this module."
+            "the current live PathFinder replay cannot find it: sys.path_hooks-based tools never see this module."
         )
     return (
         f"[bypass] '{finding.module}' was claimed by {claim.finder_type_name} "
-        f"(loader {claim.loader_type_name}, origin {claim.origin}); the standard sys.path machinery would use "
+        f"(loader {claim.loader_type_name}, origin {claim.origin}); the current live PathFinder replay would use "
         f"loader {replay.loader_type_name} (origin {replay.origin}). sys.path_hooks-based tools were bypassed."
     )
 

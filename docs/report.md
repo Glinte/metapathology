@@ -13,7 +13,7 @@ file output all use the same cutoff-based report document as the human
 renderer. The current experimental schema is identified by:
 
 ```json
-{"name": "metapathology.report", "major": 0, "minor": 5}
+{"name": "metapathology.report", "major": 0, "minor": 6}
 ```
 
 Its top-level sections are `tool`, `process`, `capture`, `snapshots`,
@@ -141,8 +141,8 @@ identities differ.
 
 These findings are leads, not verdicts:
 
-- `[bypass]` — a custom finder claimed a source module, while a current
-  [`PathFinder`][path-finder] replay selects a different loader or origin.
+- `[bypass]` — a custom finder claimed a source module, while a report-time
+  live [`PathFinder`][path-finder] replay selects a different loader or origin.
   Path-hook tools did not observe the actual import.
 - `[unfindable]` — a custom finder claimed a source module that the replay
   cannot find through the standard path machinery at all. This is the stronger
@@ -154,11 +154,14 @@ These findings are leads, not verdicts:
 [path-finder]: https://docs.python.org/3/library/importlib.html#importlib.machinery.PathFinder
 [module-spec]: https://docs.python.org/3/reference/import.html#import-related-module-attributes
 
-The replay uses the search path captured at import time, but it runs against
-the current filesystem and finder state. A package can therefore produce an
-intentional or time-sensitive difference. Extension modules, built-ins,
-synthetic origins, and modules that predate installation are not subjected to
-the source-module bypass check.
+The replay uses the search path captured with the original claim, but it runs
+against the report-time filesystem, path hooks, and importer cache. It is
+labeled `live_replay` in JSON and as a "current live PathFinder replay" in the
+text report. A package can therefore produce an intentional or time-sensitive
+difference.
+
+Extension modules, built-ins, synthetic origins, and modules that predate
+installation are not subjected to the source-module bypass check.
 
 ## Internal errors
 
