@@ -110,3 +110,21 @@ def test_closed_stderr_during_report_does_not_replace_target_exit_code(tmp_path:
 
     proc = run_cli(str(script), cwd=tmp_path)
     assert proc.returncode == 7
+
+
+def test_keyboard_interrupt_propagates_like_direct_python(tmp_path: Path) -> None:
+    script = tmp_path / "interrupts.py"
+    script.write_text("raise KeyboardInterrupt\n")
+
+    direct = subprocess.run(
+        [sys.executable, str(script)],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+        timeout=SUBPROCESS_TIMEOUT,
+    )
+    monitored = run_cli(str(script), cwd=tmp_path)
+
+    assert monitored.returncode == direct.returncode
+    assert "KeyboardInterrupt" in monitored.stderr

@@ -177,3 +177,32 @@ def test_cwd_change_after_import_does_not_create_false_bypass_finding(run_python
     proc = run_python(CWD_CHANGED_AFTER_IMPORT, str(new_cwd))
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout
+
+
+HOSTILE_MODULE_SPEC = """
+import sys
+
+import metapathology
+
+class HostileModule:
+    def __getattribute__(self, name):
+        if name == "__spec__":
+            raise SystemExit(94)
+        return super().__getattribute__(name)
+
+metapathology.install(report_at_exit=False)
+sys.modules["hostile_module"] = HostileModule()
+try:
+    metapathology.render_report()
+except SystemExit as exc:
+    assert exc.code == 94
+else:
+    raise AssertionError("SystemExit from a foreign module was swallowed")
+print("OK")
+"""
+
+
+def test_report_does_not_swallow_base_exception_from_foreign_module(run_python: RunPython) -> None:
+    proc = run_python(HOSTILE_MODULE_SPEC)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout

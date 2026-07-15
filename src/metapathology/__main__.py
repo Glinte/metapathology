@@ -79,7 +79,7 @@ def _run(target: str, target_args: list[str], *, is_module: bool) -> int:
             runpy.run_path(target, run_name="__main__")
     except SystemExit as exc:
         exit_code = _exit_code(exc)
-    except BaseException:
+    except Exception:
         traceback.print_exc()
         exit_code = 1
     finally:

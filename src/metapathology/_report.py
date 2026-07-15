@@ -1,8 +1,9 @@
 """Rendering of the diagnostic report.
 
 All stringification of foreign data (specs, loaders, stack frames) happens
-here, at report time, never while an import is in flight. The report is
-typically written from an atexit callback, so nothing here may raise.
+here, at report time, never while an import is in flight. Ordinary reporting
+errors are contained because reports usually run from an atexit callback;
+process-control ``BaseException`` subclasses are deliberately allowed through.
 """
 
 import os
@@ -53,12 +54,14 @@ def write_report(monitor: "Monitor", file: "TextIO | None" = None) -> None:
 def render_report(monitor: "Monitor") -> str:
     """Render the full diagnostic report as text.
 
-    Never raises; on internal failure the returned text says so instead.
+    Ordinary exceptions become a failure message in the report. Control-flow
+    exceptions outside ``Exception`` (such as ``KeyboardInterrupt`` and
+    ``SystemExit``) propagate unchanged.
     """
     try:
         return "\n".join(_render_lines(monitor)) + "\n"
     except Exception as exc:  # The report must never break the host program.
-        return f"== metapathology report ==\nreport generation failed: {type(exc).__name__}: {exc}\n"
+        return f"== metapathology report ==\nreport generation failed: {type_name(exc)}\n"
 
 
 def _render_lines(monitor: "Monitor") -> list[str]:

@@ -1101,3 +1101,43 @@ def test_finder_wrapper_preserves_unwrap_and_signature_introspection(run_python:
     proc = run_python(WRAPPER_INTROSPECTION)
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout
+
+
+HOSTILE_SPEC_METADATA = """
+import sys
+
+import metapathology
+
+install = metapathology.install
+
+class HostileSpec:
+    @property
+    def loader(self):
+        raise SystemExit(93)
+
+class DummyFinder:
+    def __init__(self, spec):
+        self.spec = spec
+
+    def find_spec(self, fullname, path=None, target=None):
+        return self.spec
+
+spec = HostileSpec()
+finder = DummyFinder(spec)
+sys.meta_path.insert(0, finder)
+monitor = install(report_at_exit=False)
+
+try:
+    finder.find_spec("probe")
+except SystemExit as exc:
+    assert exc.code == 93
+else:
+    raise AssertionError("SystemExit from foreign spec metadata was swallowed")
+print("OK")
+"""
+
+
+def test_base_exception_from_spec_metadata_is_not_swallowed(run_python: RunPython) -> None:
+    proc = run_python(HOSTILE_SPEC_METADATA)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
