@@ -70,14 +70,16 @@ def test_target_exception_reports_traceback_and_exits_nonzero(tmp_path: Path) ->
 def test_no_arguments_prints_usage_and_fails(tmp_path: Path) -> None:
     proc = run_cli(cwd=tmp_path)
     assert proc.returncode == 2
-    assert "usage:" in proc.stderr
-    assert "https://glinte.github.io/metapathology/usage/" in proc.stderr
+    assert proc.stderr.startswith("usage: python -m metapathology")
+    assert "error: the following arguments are required: TARGET" in proc.stderr
+    assert "Documentation: https://glinte.github.io/metapathology/usage/" in proc.stderr
 
 
 def test_help_links_to_usage_documentation(tmp_path: Path) -> None:
     proc = run_cli("--help", cwd=tmp_path)
     assert proc.returncode == 0
-    assert "https://glinte.github.io/metapathology/usage/" in proc.stdout
+    assert proc.stdout.startswith("usage: python -m metapathology")
+    assert "\nDocumentation:\n  https://glinte.github.io/metapathology/usage/\n" in proc.stdout
 
 
 def test_double_dash_allows_script_name_beginning_with_dash(tmp_path: Path) -> None:
@@ -125,7 +127,7 @@ def test_help_defers_target_execution_imports(tmp_path: Path) -> None:
 def test_installed_console_script_runs_cli(tmp_path: Path) -> None:
     proc = run_console_script("--help", cwd=tmp_path)
     assert proc.returncode == 0
-    assert "usage:" in proc.stdout
+    assert proc.stdout.startswith("usage: metapathology")
     assert "https://glinte.github.io/metapathology/usage/" in proc.stdout
 
 

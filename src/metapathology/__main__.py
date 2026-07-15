@@ -16,15 +16,18 @@ if TYPE_CHECKING:
     from typing import Literal, NoReturn
 
 _REPORT_FORMATS = ("text", "json")
+_DOCUMENTATION_URL = "https://glinte.github.io/metapathology/usage/"
+_MODULE_PROG = "python -m metapathology"
+_CONSOLE_PROG_NAMES = frozenset(("metapathology", "metapathology.exe", "metapathology-script.py"))
 
 
 class _ArgumentParser(argparse.ArgumentParser):
     """Keep discovery information visible when command-line parsing fails."""
 
     def error(self, message: str) -> "NoReturn":
-        """Print full help before terminating with argparse's error status."""
-        self.print_help(sys.stderr)
-        self.exit(2, f"{self.prog}: error: {message}\n")
+        """Keep failures concise while pointing users to detailed guidance."""
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\nDocumentation: {_DOCUMENTATION_URL}\n")
 
 
 class _Arguments(argparse.Namespace):
@@ -42,12 +45,15 @@ class _Arguments(argparse.Namespace):
 def _make_parser() -> argparse.ArgumentParser:
     """Build the command-line grammar without importing target execution code."""
     parser = _ArgumentParser(
-        prog="python -m metapathology",
+        prog=_program_name(sys.argv[0]),
         description="Run a script or module under the metapathology import-machinery monitor.",
         epilog=(
-            "Tool options must precede TARGET. Use -- to run a script whose name begins with a dash. "
-            "Documentation: https://glinte.github.io/metapathology/usage/"
+            "Tool options must precede TARGET.\n"
+            "Use -- to run a script whose name begins with a dash.\n\n"
+            "Documentation:\n"
+            f"  {_DOCUMENTATION_URL}"
         ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--report", dest="report_destination", metavar="PATH", help="write an automatic report file")
     parser.add_argument(
@@ -59,6 +65,12 @@ def _make_parser() -> argparse.ArgumentParser:
     parser.add_argument("target", metavar="TARGET", help="script path, or module name with -m")
     parser.add_argument("target_args", metavar="ARG", nargs=argparse.REMAINDER, help="arguments passed to TARGET")
     return parser
+
+
+def _program_name(argv0: str) -> str:
+    """Name the supported entry point used to start this process."""
+    basename = argv0.rsplit("/", 1)[-1].rsplit("\\", 1)[-1].lower()
+    return "metapathology" if basename in _CONSOLE_PROG_NAMES else _MODULE_PROG
 
 
 _PARSER = _make_parser()
