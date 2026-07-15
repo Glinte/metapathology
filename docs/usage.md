@@ -42,7 +42,10 @@ installation appears first on the shell's command search path.
 
 The target's integer `SystemExit` status is preserved. An unhandled exception
 prints its traceback and produces exit status 1. The diagnostic report is
-still written to standard error in both cases.
+still written to standard error in both cases. A nonexistent script path is a
+CLI error instead: it exits with status 2 before monitoring starts and does not
+produce a report. Module resolution remains monitored because it exercises the
+import machinery itself.
 
 ## Write a file report
 

@@ -24,10 +24,15 @@ _CONSOLE_PROG_NAMES = frozenset(("metapathology", "metapathology.exe", "metapath
 class _ArgumentParser(argparse.ArgumentParser):
     """Keep discovery information visible when command-line parsing fails."""
 
+    def _print_error(self, message: str) -> None:
+        """Write the common usage, error, and documentation sequence."""
+        self.print_usage(sys.stderr)
+        sys.stderr.write(f"{self.prog}: error: {message}\nDocumentation: {_DOCUMENTATION_URL}\n")
+
     def error(self, message: str) -> "NoReturn":
         """Keep failures concise while pointing users to detailed guidance."""
-        self.print_usage(sys.stderr)
-        self.exit(2, f"{self.prog}: error: {message}\nDocumentation: {_DOCUMENTATION_URL}\n")
+        self._print_error(message)
+        self.exit(2)
 
 
 class _Arguments(argparse.Namespace):
@@ -43,7 +48,7 @@ class _Arguments(argparse.Namespace):
         self.target_args: list[str] = []
 
 
-def _make_parser() -> argparse.ArgumentParser:
+def _make_parser() -> _ArgumentParser:
     """Build the command-line grammar without importing target execution code."""
     parser = _ArgumentParser(
         prog=_program_name(sys.argv[0]),
@@ -138,10 +143,16 @@ def _run(
     Returns:
         The exit code a direct invocation of the target would produce.
     """
-    # Help and argument errors never execute a target, so keep these relatively
-    # expensive modules off those paths. They still load before install(), not
-    # from inside any import hook or finder wrapper.
+    # Validate script launch errors before installing: no target code or import
+    # machinery ran, so a diagnostic report would describe only our bootstrap.
     import os
+
+    if not is_module and not os.path.exists(target):
+        _PARSER._print_error(f"script target does not exist: {target!r}")
+        return 2
+
+    # Keep target-execution dependencies off help and argument-error paths.
+    # They still load before install(), never inside a hook or finder wrapper.
     import runpy
     import traceback
     from contextlib import suppress

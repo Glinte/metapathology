@@ -54,6 +54,9 @@ equivalent:
 $ metapathology myscript.py --my-args
 ```
 
+A nonexistent script path is rejected as a CLI error before monitoring starts,
+so it produces neither a diagnostic report nor a report file.
+
 Prefer `python -m metapathology`: it guarantees the hooks land in the same
 interpreter and venv as the code under investigation.
 

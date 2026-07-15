@@ -115,6 +115,18 @@ def test_invalid_report_format_fails_before_running_target(tmp_path: Path) -> No
     assert not marker.exists()
 
 
+def test_missing_script_fails_without_report(tmp_path: Path) -> None:
+    destination = tmp_path / "report.json"
+
+    proc = run_cli("--report", str(destination), "missing.py", cwd=tmp_path)
+
+    assert proc.returncode == 2
+    assert "script target does not exist: 'missing.py'" in proc.stderr
+    assert "Traceback" not in proc.stderr
+    assert "== metapathology report ==" not in proc.stderr
+    assert list(tmp_path.glob("report.*.json")) == []
+
+
 def test_help_defers_target_execution_imports(tmp_path: Path) -> None:
     code = (
         "import sys\n"
