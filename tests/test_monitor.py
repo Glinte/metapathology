@@ -684,6 +684,82 @@ def test_reinstall_with_lazy_find_spec_attribute_does_not_deadlock(run_python: R
     assert "OK" in proc.stdout
 
 
+# install() shadows find_spec with setattr(), which lands in the slot, but
+# uninstall() restores through finder.__dict__, which a __slots__ instance
+# does not have; the suppressed AttributeError must not strand the wrapper.
+SLOTTED_FINDER_RESTORE = """
+import sys
+
+import metapathology
+from metapathology import FindSpecCall
+
+class SlottedFinder:
+    __slots__ = ("find_spec",)
+
+def original_find_spec(fullname, path=None, target=None):
+    return None
+
+finder = SlottedFinder()
+finder.find_spec = original_find_spec
+sys.meta_path.insert(0, finder)
+
+monitor = metapathology.install(report_at_exit=False)
+metapathology.uninstall()
+
+assert finder.find_spec is original_find_spec, finder.find_spec
+finder.find_spec("after_uninstall_probe")
+calls = [e for e in monitor.events() if isinstance(e, FindSpecCall) and e.fullname == "after_uninstall_probe"]
+assert not calls, calls  # a stranded wrapper keeps recording after uninstall
+print("OK")
+"""
+
+
+def test_uninstall_restores_slotted_finder_find_spec(run_python: RunPython) -> None:
+    proc = run_python(SLOTTED_FINDER_RESTORE)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
+# A data descriptor with a setter accepts install()'s setattr() without the
+# wrapper ever reaching the instance dict, so uninstall()'s __dict__-based
+# restore silently misses it.
+DESCRIPTOR_FINDER_RESTORE = """
+import sys
+
+import metapathology
+
+def original_find_spec(fullname, path=None, target=None):
+    return None
+
+class DescriptorFinder:
+    def __init__(self):
+        self._find_spec = original_find_spec
+
+    @property
+    def find_spec(self):
+        return self._find_spec
+
+    @find_spec.setter
+    def find_spec(self, value):
+        self._find_spec = value
+
+finder = DescriptorFinder()
+sys.meta_path.insert(0, finder)
+
+metapathology.install(report_at_exit=False)
+metapathology.uninstall()
+
+assert finder.find_spec is original_find_spec, finder.find_spec
+print("OK")
+"""
+
+
+def test_uninstall_restores_descriptor_backed_find_spec(run_python: RunPython) -> None:
+    proc = run_python(DESCRIPTOR_FINDER_RESTORE)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
 # install() documents report_at_exit as registering the atexit report, but the
 # idempotence early-return skips that block when the monitor is already
 # enabled, silently dropping the request.

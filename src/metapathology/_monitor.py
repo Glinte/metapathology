@@ -316,6 +316,21 @@ class Monitor:
         except Exception:
             self._skip_finder(finder_id, finder, "find_spec not settable on the instance")
             return
+        try:
+            landed = finder.__dict__.get("find_spec") is wrapper
+        except Exception:
+            landed = False
+        if not landed:
+            # setattr succeeded but wrote through a slot or data descriptor,
+            # not the instance dict, so uninstall()'s __dict__-based restore
+            # could never undo it. Write the original back through the same
+            # writable path and leave the finder unwrapped.
+            try:
+                setattr(finder, "find_spec", typed_original)
+            except Exception as exc:
+                self._record_internal_error("instrument_finder", exc)
+            self._skip_finder(finder_id, finder, "find_spec assignment bypasses the instance dict (slot or descriptor)")
+            return
         with self._record_lock:
             self._patched[finder_id] = (finder, typed_original, previous)
 
