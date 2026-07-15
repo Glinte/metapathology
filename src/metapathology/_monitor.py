@@ -612,10 +612,37 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
         self._monitor._on_meta_path_mutation(self, "insert", (item,), (), sys._getframe(1))
 
     def extend(self, items: "Iterable[MetaPathFinderProtocol]") -> None:
-        """Record an ``extend``, materializing ``items`` first so one-shot iterators can be both stored and logged."""
-        materialized = tuple(items)
-        super().extend(materialized)
-        self._monitor._on_meta_path_mutation(self, "extend", materialized, (), sys._getframe(1))
+        """Delegate to ``list.extend`` and record whatever was actually added.
+
+        ``items`` is passed through unmaterialized so an iterator that raises
+        mid-iteration keeps its already-yielded prefix, exactly matching plain
+        ``list`` semantics; the partial addition is still recorded before the
+        exception propagates.
+        """
+        self._extend_and_record("extend", items, sys._getframe(1))
+
+    def _extend_and_record(self, op: str, items: "Iterable[MetaPathFinderProtocol]", frame: "FrameType") -> None:
+        """Shared ``extend``/``__iadd__`` body: extend in place, then record what landed.
+
+        Args:
+            op: Recorded operation name, ``"extend"`` or ``"__iadd__"``.
+            items: Iterable of finders; may raise mid-iteration.
+            frame: The mutator's caller, where the stack capture starts.
+        """
+        # The post-call slice is best-effort: a concurrent thread could mutate
+        # the list in between, but the class is already best-effort against
+        # C-level mutation, and locking here would risk import deadlocks.
+        before = len(self)
+        completed = False
+        try:
+            super().extend(items)
+            completed = True
+        finally:
+            added = tuple(self[before:])
+            # A successful zero-item extend is still a recorded call; a raise
+            # that added nothing left the list unmutated and records nothing.
+            if completed or added:
+                self._monitor._on_meta_path_mutation(self, op, added, (), frame)
 
     def remove(self, item: "MetaPathFinderProtocol") -> None:
         """Delegate to ``list.remove`` and record the removal."""
@@ -711,10 +738,13 @@ class _InstrumentedMetaPath(list["MetaPathFinderProtocol"]):
 
     # TODO(Python >= 3.11): Return typing.Self once Python 3.10 support is dropped.
     def __iadd__(self, items: "Iterable[MetaPathFinderProtocol]") -> "_InstrumentedMetaPath":
-        """Record ``+=``, which reaches ``list`` at the C level and would otherwise bypass the ``extend`` override."""
-        materialized = tuple(items)
-        super().extend(materialized)
-        self._monitor._on_meta_path_mutation(self, "__iadd__", materialized, (), sys._getframe(1))
+        """Record ``+=``, which reaches ``list`` at the C level and would otherwise bypass the ``extend`` override.
+
+        Like :meth:`extend`, ``items`` is not materialized up front, so a
+        mid-iteration exception keeps (and records) the already-yielded prefix
+        just as a plain ``list`` would.
+        """
+        self._extend_and_record("__iadd__", items, sys._getframe(1))
         return self
 
 

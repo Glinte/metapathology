@@ -779,6 +779,53 @@ def test_install_can_enable_report_at_exit_after_first_install(run_python: RunPy
     assert "== metapathology report ==" in proc.stderr
 
 
+# list.extend() through an iterator that raises mid-iteration keeps the
+# already-yielded prefix; the instrumented list materializes the iterable
+# first and silently appends nothing, diverging from plain-list semantics.
+EXTEND_PARTIAL_ITERATION = """
+import sys
+
+import metapathology
+from metapathology import MetaPathMutation
+
+class DummyFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        return None
+
+def failing_iterator(item):
+    yield item
+    raise RuntimeError("boom")
+
+monitor = metapathology.install(report_at_exit=False)
+
+first = DummyFinder()
+before = list(sys.meta_path)
+try:
+    sys.meta_path.extend(failing_iterator(first))
+except RuntimeError:
+    pass
+assert list(sys.meta_path) == before + [first], (list(sys.meta_path), before)
+
+second = DummyFinder()
+before = list(sys.meta_path)
+try:
+    sys.meta_path += failing_iterator(second)
+except RuntimeError:
+    pass
+assert list(sys.meta_path) == before + [second], (list(sys.meta_path), before)
+
+added = [event.added for event in monitor.events() if isinstance(event, MetaPathMutation)]
+assert ("DummyFinder",) in added, added  # partial additions must still be recorded
+print("OK")
+"""
+
+
+def test_extend_with_failing_iterator_matches_plain_list_semantics(run_python: RunPython) -> None:
+    proc = run_python(EXTEND_PARTIAL_ITERATION)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
 # uninstall() can run to completion while a mutation thread is still inside
 # _instrument_finder for a newly added finder (the foreign find_spec attribute
 # lookup can block arbitrarily long); the late wrapper must not survive.
