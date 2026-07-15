@@ -80,6 +80,28 @@ def test_help_links_to_usage_documentation(tmp_path: Path) -> None:
     assert "https://glinte.github.io/metapathology/usage/" in proc.stdout
 
 
+def test_double_dash_allows_script_name_beginning_with_dash(tmp_path: Path) -> None:
+    script = tmp_path / "-prog.py"
+    script.write_text("print('target ran')\n")
+
+    proc = run_cli("--", script.name, cwd=tmp_path)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "target ran" in proc.stdout
+
+
+def test_invalid_report_format_fails_before_running_target(tmp_path: Path) -> None:
+    marker = tmp_path / "target-ran"
+    script = tmp_path / "prog.py"
+    script.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
+
+    proc = run_cli("--report-format", "yaml", str(script), cwd=tmp_path)
+
+    assert proc.returncode == 2
+    assert "invalid choice" in proc.stderr
+    assert not marker.exists()
+
+
 def test_help_defers_target_execution_imports(tmp_path: Path) -> None:
     code = (
         "import sys\n"

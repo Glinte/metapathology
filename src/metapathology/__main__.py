@@ -5,6 +5,7 @@ The usual runpy caveats apply: the target runs as ``__main__`` but with a
 slightly different ``__spec__`` than a direct invocation would have.
 """
 
+import argparse
 import sys
 
 import metapathology
@@ -12,20 +13,55 @@ import metapathology
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from typing import Literal
+    from typing import Literal, NoReturn
 
-_USAGE = """\
-usage: python -m metapathology [--report PATH] [--report-format {text,json}] <script.py> [args...]
-       python -m metapathology [--report PATH] [--report-format {text,json}] -m <module> [args...]
-       metapathology [--report PATH] [--report-format {text,json}] <script.py> [args...]
-       metapathology [--report PATH] [--report-format {text,json}] -m <module> [args...]
+_REPORT_FORMATS = ("text", "json")
 
-Runs the target under the metapathology import-machinery monitor. Reports go
-to stderr as text by default; file reports default to JSON. Tool options must
-precede the target. Use -- to run a script whose name begins with a dash.
 
-Documentation: https://glinte.github.io/metapathology/usage/
-"""
+class _ArgumentParser(argparse.ArgumentParser):
+    """Keep discovery information visible when command-line parsing fails."""
+
+    def error(self, message: str) -> "NoReturn":
+        """Print full help before terminating with argparse's error status."""
+        self.print_help(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\n")
+
+
+class _Arguments(argparse.Namespace):
+    """Typed destination populated by :class:`argparse.ArgumentParser`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.report_destination: str | None = None
+        self.report_format: Literal["text", "json"] | None = None
+        self.is_module = False
+        self.target = ""
+        self.target_args: list[str] = []
+
+
+def _make_parser() -> argparse.ArgumentParser:
+    """Build the command-line grammar without importing target execution code."""
+    parser = _ArgumentParser(
+        prog="python -m metapathology",
+        description="Run a script or module under the metapathology import-machinery monitor.",
+        epilog=(
+            "Tool options must precede TARGET. Use -- to run a script whose name begins with a dash. "
+            "Documentation: https://glinte.github.io/metapathology/usage/"
+        ),
+    )
+    parser.add_argument("--report", dest="report_destination", metavar="PATH", help="write an automatic report file")
+    parser.add_argument(
+        "--report-format",
+        choices=_REPORT_FORMATS,
+        help="select text or JSON output; defaults to text on stderr and JSON for files",
+    )
+    parser.add_argument("-m", dest="is_module", action="store_true", help="run TARGET as a module")
+    parser.add_argument("target", metavar="TARGET", help="script path, or module name with -m")
+    parser.add_argument("target_args", metavar="ARG", nargs=argparse.REMAINDER, help="arguments passed to TARGET")
+    return parser
+
+
+_PARSER = _make_parser()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,52 +73,25 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         The process exit code.
     """
-    args = list(sys.argv[1:] if argv is None else argv)
-    report_destination: str | None = None
-    report_format: Literal["text", "json"] | None = None
-    while args:
-        option = args[0]
-        if option == "--":
-            args.pop(0)
-            break
-        if option in ("-h", "--help"):
-            sys.stdout.write(_USAGE)
-            return 0
-        if option == "--report" or option == "--report-format":
-            if len(args) < 2:
-                sys.stderr.write(_USAGE)
-                return 2
-            value = args[1]
-            del args[:2]
-            if option == "--report":
-                report_destination = value
-            else:
-                report_format = _parse_report_format(value)
-                if report_format is None:
-                    sys.stderr.write(_USAGE)
-                    return 2
-            continue
-        break
-    if not args:
-        sys.stderr.write(_USAGE)
-        return 2
-    if args[0] == "-m":
-        if len(args) < 2:
-            sys.stderr.write(_USAGE)
-            return 2
+    parsed = _Arguments()
+    try:
+        _PARSER.parse_args(sys.argv[1:] if argv is None else argv, namespace=parsed)
+    except SystemExit as exc:
+        return _exit_code(exc)
+    if parsed.is_module:
         return _run(
-            args[1],
-            args[2:],
+            parsed.target,
+            parsed.target_args,
             is_module=True,
-            report_destination=report_destination,
-            report_format=report_format,
+            report_destination=parsed.report_destination,
+            report_format=parsed.report_format,
         )
     return _run(
-        args[0],
-        args[1:],
+        parsed.target,
+        parsed.target_args,
         is_module=False,
-        report_destination=report_destination,
-        report_format=report_format,
+        report_destination=parsed.report_destination,
+        report_format=parsed.report_format,
     )
 
 
@@ -141,15 +150,6 @@ def _run(
         with suppress(Exception):
             monitor._write_configured_report()
     return exit_code
-
-
-def _parse_report_format(value: str) -> "Literal['text', 'json'] | None":
-    """Narrow a CLI string to a supported report format."""
-    if value == "text":
-        return "text"
-    if value == "json":
-        return "json"
-    return None
 
 
 def _exit_code(exc: SystemExit) -> int:
