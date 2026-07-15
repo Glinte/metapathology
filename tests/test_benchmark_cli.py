@@ -1,5 +1,8 @@
 import argparse
+import json
+import os
 import runpy
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -17,6 +20,7 @@ resolve_python = cast("Callable[[str], Path]", _HELPERS["resolve_python"])
 validate_expected_python = cast(
     "Callable[[dict[str, object], tuple[int, int] | None], None]", _HELPERS["validate_expected_python"]
 )
+_WORKER_TIMEOUT_SECONDS = 25
 
 
 def test_parse_counts_sorts_and_deduplicates() -> None:
@@ -73,3 +77,53 @@ def test_expected_python_rejects_mismatched_interpreter() -> None:
     metadata = inspect_python(Path(sys.executable))
     with pytest.raises(ValueError, match="target interpreter is Python"):
         validate_expected_python(metadata, (99, 99))
+
+
+def test_import_workloads_cross_the_audit_boundary(tmp_path: Path) -> None:
+    package = "benchmark_audit_fixture"
+    package_dir = tmp_path / package
+    package_dir.mkdir()
+    (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    for index in range(2):
+        (package_dir / f"module_{index:05d}.py").write_text("VALUE = 1\n", encoding="utf-8")
+    worker = Path(__file__).parents[1] / "scripts" / "_benchmark_worker.py"
+    environment = os.environ.copy()
+    source = str(Path(__file__).parents[1] / "src")
+    existing_pythonpath = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = (
+        source if existing_pythonpath is None else os.pathsep.join((source, existing_pythonpath))
+    )
+
+    def run(scenario: str) -> int:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-S",
+                str(worker),
+                "--scenario",
+                scenario,
+                "--metric",
+                "time",
+                "--count",
+                "2",
+                "--package",
+                package,
+                "--fixture",
+                str(tmp_path),
+                "--monitored",
+            ],
+            check=False,
+            capture_output=True,
+            env=environment,
+            text=True,
+            timeout=_WORKER_TIMEOUT_SECONDS,
+        )
+        assert proc.returncode == 0, proc.stderr
+        result = cast("dict[str, object]", json.loads(proc.stdout))
+        event_count = result["event_count"]
+        assert isinstance(event_count, int)
+        return event_count
+
+    # The package itself adds one resolution in addition to the two modules.
+    assert run("native") == 3
+    assert run("attributed") == 6

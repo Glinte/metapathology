@@ -7,7 +7,6 @@ the process whose imports are being measured.
 
 import argparse
 import gc
-import importlib
 import json
 import sys
 import time
@@ -120,7 +119,9 @@ def _run_workload(args: argparse.Namespace, names: list[str], mutation_finder: _
             sys.meta_path.append(mutation_finder)
         return
     for name in names:
-        importlib.import_module(name)
+        # importlib.import_module() bypasses the builtin audit boundary that
+        # this workload is intended to measure.
+        __import__(name)
 
 
 def _event_count(monitor: metapathology.Monitor | None) -> int:

@@ -13,11 +13,14 @@ errors likewise avoid importing target-execution modules. A real monitored run
 still loads all dependencies needed by hooks and finder wrappers before
 `install()` enables observation; this fixed startup work is intentional.
 
-An uncached import always invokes the audit hook. When `sys.meta_path` has not
-been replaced, that path performs an enabled check, a thread-local re-entrancy
-check, and identity comparisons for the enabled instrumented lists. Standard CPython class finders such as
-`PathFinder` are deliberately not wrapped, so a normal import resolved entirely
-by those entries does not create a finder-call record.
+An uncached builtin import normally invokes the audit hook. Each observed
+resolution start copies the current `sys.meta_path` identity and finder type
+names and retains one slotted `ImportAuditStart`. It also performs a
+thread-local re-entrancy check and identity comparisons for the enabled
+instrumented lists. Standard CPython class finders such as `PathFinder` are
+deliberately not wrapped, so a normal import resolved entirely by those entries
+creates an audit-start record but no finder-call record. Lower-level importlib
+entry points such as `importlib.import_module()` can bypass this audit boundary.
 
 When importer-cache monitoring is enabled, that same audit path additionally
 reads only the cache dictionary's identity and length. It never performs a
@@ -83,16 +86,18 @@ The summary first reports fresh-process startup, package import, deferred
 monitor-API import, direct-script, and monitored-CLI timings. The import graph
 separates two cases:
 
-- `native` uses only the controlled standard-finder path and measures the
-  audit-hook/list-check overhead without retained finder-call records.
+- `native` uses only the controlled standard-finder path and measures one
+  retained audit-start record per synthetic builtin import, without
+  finder-call records.
 - `attributed` installs the same delegating instance finder in control and
-  monitored processes. The monitored process retains one finder-call record
-  per synthetic import, exposing per-record time and memory growth.
+  monitored processes. The monitored process retains an audit-start plus one
+  finder-call record per synthetic import.
 
 The mutation graph measures repeated `pop`/`append` pairs, including stack
 capture. Timing and memory trials are separate so `tracemalloc` does not alter
 the speed measurements. Workers disable `site` initialization and bytecode
-writes, and trial order is shuffled from a recorded seed to reduce cache and
+writes, use `__import__()` so the workload crosses the monitored audit
+boundary, and shuffle trial order from a recorded seed to reduce cache and
 warm-up bias.
 
 Each graph plots medians. `benchmark.json` contains every sample, the target
@@ -101,12 +106,14 @@ and peak traced allocations, and sampled peak RSS growth. Treat small timing
 differences as noise unless they persist across more repetitions and dedicated
 hardware.
 
-## Reference results
+## Pre-T3 reference results
 
 A [default environment-matrix run][reference-run] measured commit `56f0d5b`
 on GitHub-hosted Linux, Windows, and macOS runners with CPython 3.10 and 3.14.
 Each environment used five fresh-process timing samples and three memory
-samples per point.
+samples per point. This commit predates retained audit-start records, so these
+numbers are a historical v0.3 baseline and do not describe the current native
+scenario. Run the benchmark on the current revision when sizing T3 captures.
 
 The 5,000-operation points produced these cross-environment results:
 
@@ -119,9 +126,10 @@ The 5,000-operation points produced these cross-environment results:
 | Monitored `pop`/`append` pair | 16–42 µs | 30 µs |
 | Retained memory per mutation record | 672–836 bytes | 754 bytes |
 
-The native result is the best approximation of import overhead when only the
-standard class finders handle imports and no finder-call records are retained.
-The attributed result includes search-path snapshots and retained records.
+In that pre-T3 revision, the native result approximated imports without any
+retained per-import record, while the attributed result included search-path
+snapshots and finder-call records. Current runs retain audit starts in both
+scenarios.
 Mutation ratios are intentionally not summarized: a plain-list `pop`/`append`
 pair is so short that a relative multiplier exaggerates the practical cost;
 the absolute microseconds per pair are more useful.

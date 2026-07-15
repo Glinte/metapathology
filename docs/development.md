@@ -78,11 +78,15 @@ deferred monitor-API import, direct script execution, and the monitored CLI
 wrapper. Timing and memory are collected in separate trials so `tracemalloc` does not
 distort the speed measurements. Workers use `python -S` and disable bytecode
 writes to exclude interpreter-specific `.pth` finders and cache-warming order
-effects. The `native` scenario therefore measures the controlled standard-
-finder path; `attributed` installs the same delegating instance finder in both
-control and monitored processes so every synthetic import exercises a retained
-finder-call record. Mutation samples perform repeated `pop`/`append` pairs and
-therefore include the monitor's intentional stack-capture cost. Trials are
+effects. They use `__import__()` rather than `importlib.import_module()` so the
+workload crosses the builtin audit boundary. The `native` scenario therefore
+measures the controlled standard-finder path with one retained audit-start
+record per synthetic import;
+`attributed` installs the same delegating instance finder in both control and
+monitored processes so every synthetic import exercises both an audit-start
+and a retained finder-call record. Mutation samples perform repeated
+`pop`/`append` pairs and therefore include the monitor's intentional
+stack-capture cost. Trials are
 shuffled to balance system warm-up; `--seed` controls and records that order.
 
 Finder wrappers capture the finder's id and display name once rather than
