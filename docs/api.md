@@ -20,7 +20,7 @@ error. `report_format` accepts `"text"` or `"json"`; API values override
 `METAPATHOLOGY_REPORT_FORMAT`, and files default to JSON while standard error
 defaults to text.
 
-`monitor_path_hooks` controls T1 observation and defaults to true. A later
+`monitor_path_hooks` controls path-hook observation and defaults to true. A later
 true value enables it if initially disabled; false does not disable an active
 mechanism. Use `uninstall()` for cleanup.
 
@@ -59,7 +59,7 @@ format.
 
 Returns text or JSON, including its trailing newline. JSON currently uses the
 experimental `metapathology.report` schema version 0.2. Its shape may change
-throughout schema 0.x; schema 1.0 will be reviewed after roadmap T7.
+throughout schema 0.x; schema 1.0 will be reviewed once the evidence model stabilizes.
 Raises `RuntimeError` before the first installation and `ValueError` for an
 unknown format. Ordinary generation failures degrade to a valid failure
 report rather than propagating.
@@ -71,9 +71,9 @@ competing monitors is not supported because import state is process-global.
 
 - `enabled: bool` — whether observation is currently active.
 - `initial_meta_path: tuple[str, ...]` — finder display names at installation.
-- `path_hooks_enabled: bool` — whether T1 observation is currently active.
+- `path_hooks_enabled: bool` — whether path-hook observation is currently active.
 - `initial_path_hooks: tuple[ImportObjectRef, ...]` — identities and safe
-  type/name metadata captured when T1 was enabled.
+  type/name metadata captured when path-hook monitoring was enabled.
 - `baseline_modules: frozenset[str]` — `sys.modules` names at installation.
 - `events() -> list[MonitorEvent]` — capture-order snapshot of all records.
 - `skipped_finders() -> list[tuple[str, str]]` — finder display name and the

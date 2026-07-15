@@ -22,8 +22,8 @@ sequence number and receive an `event:<seq>` identifier. Findings contain
 structured claim and replay evidence rather than requiring consumers to parse
 the human wording.
 
-Schema 0.x is intentionally allowed to change as roadmap T2--T7 introduce
-their real snapshot, timeline, inventory, comparison, and finding models. A
+Schema 0.x is intentionally allowed to change as the remaining snapshot,
+timeline, inventory, comparison, and finding models are introduced. A
 schema 1.0 review is required before machine consumers treat the shape as
 stable. Capacity and completeness are reported per capture mechanism; the
 current producers retain all records and therefore grow with observed import
@@ -31,7 +31,7 @@ activity.
 
 ## Header
 
-The header shows whether the monitor and T1 path-hook mechanism are enabled,
+The header shows whether the monitor and path-hook mechanism are enabled,
 the initial and current `sys.meta_path` and `sys.path_hooks` snapshots, finders
 that could not be wrapped, and the number of modules added to `sys.modules`
 since installation.
