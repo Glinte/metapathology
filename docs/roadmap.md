@@ -43,6 +43,7 @@ T6 + T11 + T12 + T13 + T14 + T16 ───────────────�
 T3 + T7 + T11 + T13 + T14 + T16 ─────────────────────────> T15 causal synthesis <──┘
 T5 ──> T8 frozen bootstrap
 T1 + T2 + T5 + T7 + T8 + T15 ──> T9 beartype#599 fixture
+T1 + T2 + T5 ──> T17 opt-in early site bootstrap
 ```
 
 ## T1: Observe `sys.path_hooks` mutations (implemented)
@@ -701,9 +702,69 @@ attempt correlation depends on T13.
 - Failure to capture the aggregate `PathFinder` result degrades to a labeled
   inference rather than blocking T15 or weakening compatibility.
 
+## T17: Add an opt-in early site bootstrap
+
+**Weakness:** The normal CLI and library API begin after CPython finishes site
+initialization. Finders and path hooks installed by executable `.pth` lines
+therefore appear only in the initial snapshots; their mutations and cache
+effects cannot be attributed. This is the exact blind spot involved when an
+editable or freezer integration installs import machinery from a `.pth` file.
+
+**Recommendation:** Prototype a generated, environment-gated startup file for
+diagnostic environments. On CPython versions that execute `import` lines in
+`.pth` files, place a uniquely owned file early in one explicitly selected
+site-packages directory. Its one-line bootstrap should import metapathology
+and call `install()` only when a dedicated environment variable is enabled.
+Ordinary package installation must never create or activate this file.
+
+The generator must make the observation boundary honest:
+
+- `.pth` names are ordered only within one site-packages directory. A bootstrap
+  cannot observe files processed earlier in that directory or files in a site
+  directory CPython processed first.
+- `-S`, disabled user-site processing, isolated embedded configurations, and
+  some `._pth` configurations can prevent the bootstrap from running.
+- The activation variable and report configuration are inherited by child
+  processes using the same environment. This is useful subprocess coverage,
+  but must be explicit and produce PID-safe files through T5.
+- Executable `.pth` lines are deprecated in Python 3.15. The replacement
+  `.start` mechanism runs after `.pth` processing, so it can bootstrap ordinary
+  application monitoring but cannot recover `.pth` mutation attribution. Treat
+  this feature as version-gated and experimental rather than a permanent
+  architecture.
+
+Installation and removal should be symmetric commands. Record a generated
+ownership token and refuse to overwrite or remove a file whose contents do not
+match it. Reports should include the bootstrap path, selected site directory,
+activation source, and whether earlier `.pth` files remained outside the
+observable window.
+
+**Dependencies:** T1, T2, and T5. T3 improves correlation with the later import
+timeline but is not required for the bootstrap experiment.
+
+**Definition of done:**
+
+- A fresh-venv subprocess fixture proves that a later `.pth` mutation produces
+  path-hook and importer-cache evidence rather than appearing only in the
+  initial snapshots.
+- A deliberately earlier `.pth` file remains unattributed and is described as
+  pre-bootstrap state rather than silently claimed as observed.
+- With the activation variable absent, startup does not import metapathology,
+  install an audit hook, or write a report.
+- An activated child process writes a distinct PID-safe report without any
+  additional child-specific injection step.
+- Generation and removal are idempotent, never delete foreign files, and leave
+  the environment pristine after interrupted setup or cleanup.
+- Tests and documentation cover supported CPython versions, `-S`, directory
+  ordering limits, the Python 3.15 deprecation, and the absence of a future
+  `.start` equivalent for observing `.pth` execution.
+
 ## Explicit non-goals
 
-- Automatically inject into every subprocess through `.pth` files.
+- Install an ungated or persistent `.pth` bootstrap as part of ordinary package
+  installation.
+- Claim that an early bootstrap observes every `.pth` file or every site
+  directory involved in startup.
 - Claim exact historical state when only report-time replay is available.
 - Import or depend on freezer frameworks at metapathology runtime.
 - Replace foreign finders or loaders in default mode merely to improve
