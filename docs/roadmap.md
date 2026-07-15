@@ -476,7 +476,8 @@ infer namespace truncation from loader differences.
 
 **Weakness:** A finder can be present on `sys.meta_path` without implementing
 the modern `find_spec` protocol. CPython may still support a legacy
-`find_module` fallback, while third-party code that directly iterates
+`find_module` fallback (note: this is from 3.4 to 3.11, later versions have
+this removed), while third-party code that directly iterates
 `sys.meta_path` may call `find_spec` unconditionally. In pytest#12179, boto's
 vendored six appends `_SixMetaPathImporter`, pytest calls its nonexistent
 `find_spec`, and collection fails. Mutation attribution identifies who added
