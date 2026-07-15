@@ -103,6 +103,22 @@ def test_cli_can_disable_path_hook_monitoring_without_consuming_target_options(t
     assert "sys.path_hooks monitoring enabled: False" in proc.stderr
 
 
+def test_cli_can_disable_importer_cache_monitoring_without_consuming_target_options(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("import sys\nprint(sys.argv[1:])\n")
+
+    proc = run_cli(
+        "--no-importer-cache-monitoring",
+        str(script),
+        "--no-importer-cache-monitoring",
+        cwd=tmp_path,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "['--no-importer-cache-monitoring']" in proc.stdout
+    assert "sys.path_importer_cache monitoring enabled: False" in proc.stderr
+
+
 def test_invalid_report_format_fails_before_running_target(tmp_path: Path) -> None:
     marker = tmp_path / "target-ran"
     script = tmp_path / "prog.py"

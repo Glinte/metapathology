@@ -43,6 +43,7 @@ class _Arguments(argparse.Namespace):
         self.report_destination: str | None = None
         self.report_format: Literal["text", "json"] | None = None
         self.monitor_path_hooks = True
+        self.monitor_importer_cache = True
         self.is_module = False
         self.target = ""
         self.target_args: list[str] = []
@@ -72,6 +73,12 @@ def _make_parser() -> _ArgumentParser:
         dest="monitor_path_hooks",
         action="store_false",
         help="do not instrument or report sys.path_hooks mutations",
+    )
+    parser.add_argument(
+        "--no-importer-cache-monitoring",
+        dest="monitor_importer_cache",
+        action="store_false",
+        help="do not snapshot or report sys.path_importer_cache changes",
     )
     parser.add_argument("-m", dest="is_module", action="store_true", help="run TARGET as a module")
     parser.add_argument("target", metavar="TARGET", help="script path, or module name with -m")
@@ -110,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
             report_destination=parsed.report_destination,
             report_format=parsed.report_format,
             monitor_path_hooks=parsed.monitor_path_hooks,
+            monitor_importer_cache=parsed.monitor_importer_cache,
         )
     return _run(
         parsed.target,
@@ -118,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         report_destination=parsed.report_destination,
         report_format=parsed.report_format,
         monitor_path_hooks=parsed.monitor_path_hooks,
+        monitor_importer_cache=parsed.monitor_importer_cache,
     )
 
 
@@ -129,6 +138,7 @@ def _run(
     report_destination: str | None,
     report_format: "Literal['text', 'json'] | None",
     monitor_path_hooks: bool,
+    monitor_importer_cache: bool,
 ) -> int:
     """Install the monitor, run the target via runpy, and always write the report.
 
@@ -139,6 +149,8 @@ def _run(
         report_destination: Explicit automatic report path, or None.
         report_format: Explicit report format, or None for environment/default resolution.
         monitor_path_hooks: Whether to instrument ``sys.path_hooks``.
+        monitor_importer_cache: Whether to observe
+            ``sys.path_importer_cache``.
 
     Returns:
         The exit code a direct invocation of the target would produce.
@@ -162,6 +174,7 @@ def _run(
         report_destination=report_destination,
         report_format=report_format,
         monitor_path_hooks=monitor_path_hooks,
+        monitor_importer_cache=monitor_importer_cache,
     )
     exit_code = 0
     try:
