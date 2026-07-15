@@ -9,6 +9,7 @@ import atexit
 import copy
 import functools
 import operator
+import os
 import sys
 import threading
 import traceback
@@ -462,7 +463,17 @@ class Monitor:
         """Copy the effective finder path while the import is in progress."""
         source = sys.path if path is None else path
         try:
-            return tuple(entry for entry in source if isinstance(entry, str))
+            if path is not None:
+                return tuple(entry for entry in source if isinstance(entry, str))
+            snapshot: list[str] = []
+            for entry in source:
+                if not isinstance(entry, str):
+                    continue
+                # PathFinder resolves the special empty top-level entry to the
+                # cwd before consulting its importer cache. Preserve that
+                # import-time meaning if the process changes cwd before report.
+                snapshot.append(os.getcwd() if entry == "" else entry)
+            return tuple(snapshot)
         except Exception:
             return ()
 

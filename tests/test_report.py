@@ -141,3 +141,39 @@ def test_path_removal_after_import_does_not_create_bypass_finding(run_python: Ru
     proc = run_python(PATH_REMOVED_AFTER_IMPORT, str(module_dir))
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout
+
+
+CWD_CHANGED_AFTER_IMPORT = """
+import os
+import sys
+from importlib.machinery import PathFinder
+
+import metapathology
+
+class DelegatingFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        return PathFinder.find_spec(fullname, path, target)
+
+new_cwd = sys.argv[1]
+metapathology.install(report_at_exit=False)
+sys.meta_path.insert(0, DelegatingFinder())
+
+import cwd_sensitive_mod
+assert cwd_sensitive_mod.VALUE == 7
+os.chdir(new_cwd)
+
+text = metapathology.render_report()
+assert "[unfindable] 'cwd_sensitive_mod'" not in text, text
+assert "[bypass] 'cwd_sensitive_mod'" not in text, text
+print("OK")
+"""
+
+
+def test_cwd_change_after_import_does_not_create_false_bypass_finding(run_python: RunPython, tmp_path: Path) -> None:
+    (tmp_path / "cwd_sensitive_mod.py").write_text("VALUE = 7\n")
+    new_cwd = tmp_path / "elsewhere"
+    new_cwd.mkdir()
+
+    proc = run_python(CWD_CHANGED_AFTER_IMPORT, str(new_cwd))
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
