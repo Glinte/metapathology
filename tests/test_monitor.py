@@ -868,3 +868,36 @@ def test_uninstall_concurrent_with_mutation_leaves_no_wrapper(run_python: RunPyt
     proc = run_python(UNINSTALL_MUTATION_RACE)
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout
+
+
+# Characterization, not a bug: recovery from a reassignment can only
+# copy-and-swap, because a plain list cannot be instrumented in place. The
+# reassigner's own list object therefore goes stale once detection replaces it.
+REASSIGNED_LIST_GOES_STALE = """
+import sys
+
+import metapathology
+from metapathology import MetaPathReassignment
+
+class DummyFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        return None
+
+monitor = metapathology.install(report_at_exit=False)
+mine = list(sys.meta_path)
+sys.meta_path = mine
+
+import colorsys  # first uncached import: detection swaps in an instrumented copy
+
+assert sys.meta_path is not mine
+assert [e for e in monitor.events() if isinstance(e, MetaPathReassignment)]
+mine.append(DummyFinder())  # mutates the stale list, not the live sys.meta_path
+assert not any(isinstance(f, DummyFinder) for f in sys.meta_path)
+print("OK")
+"""
+
+
+def test_reassignment_recovery_replaces_the_foreign_list_with_a_copy(run_python: RunPython) -> None:
+    proc = run_python(REASSIGNED_LIST_GOES_STALE)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout

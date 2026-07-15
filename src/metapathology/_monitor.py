@@ -232,6 +232,12 @@ class Monitor:
     def _reinstall(self, args: tuple[object, ...]) -> None:
         """Wrap a foreign ``sys.meta_path`` in fresh instrumentation and record the reassignment.
 
+        This is a copy-and-swap: a plain list cannot be instrumented in place,
+        so the foreign list is left untouched and goes stale. A reassigner that
+        kept a reference to its own list and mutates it later no longer
+        affects the live ``sys.meta_path``; this is a known, unavoidable
+        perturbation (see docs/limitations.md).
+
         Args:
             args: The ``import`` audit event arguments, used to attribute the
                 detection to the import that was in flight.

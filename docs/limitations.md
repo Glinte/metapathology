@@ -52,7 +52,12 @@ deletion, `+=`, and `*=`. Mutations performed directly through CPython's
 Replacing `sys.meta_path` with another list also bypasses those overrides. The
 next uncached import detects that replacement and installs a new instrumented
 list, as described under [imports and `sys.meta_path`
-reassignment](concepts.md#imports-and-sysmeta_path-reassignment).
+reassignment](concepts.md#imports-and-sysmeta_path-reassignment). That
+recovery is a copy-and-swap: the replacement list assigned by the other code
+is left untouched and goes stale, so a caller that kept a reference to it and
+mutates it later no longer affects the live `sys.meta_path`. This is the one
+known case where monitoring changes the behavior of code that was otherwise
+working.
 
 `uninstall()` reverses the list and finder changes. Python cannot unregister
 an audit hook, so its callback remains as a cheap inactive no-op.

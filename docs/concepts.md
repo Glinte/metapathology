@@ -85,6 +85,13 @@ the different list object, records the old and new contents, and installs
 mutation recording around the new list. The reported stack belongs to that
 later import, not necessarily to the code that performed the assignment.
 
+Recovery is a copy-and-swap: a plain list cannot be instrumented in place, so
+metapathology puts a new instrumented list into `sys.meta_path` and leaves the
+assigned list untouched. Code that keeps a reference to the list it assigned
+and mutates that reference afterwards is editing a stale list the import
+system no longer consults; make further changes through `sys.meta_path`
+itself.
+
 [audit-hook]: https://docs.python.org/3/library/sys.html#sys.addaudithook
 [audit-events]: https://docs.python.org/3/library/audit_events.html#audit-events
 
