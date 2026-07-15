@@ -1,4 +1,4 @@
-"""Counterfactual replay evidence."""
+"""Counterfactual replay evidence and failure isolation."""
 
 import subprocess
 from collections.abc import Callable
@@ -104,5 +104,70 @@ def test_hook_reorder_and_cache_clear_change_live_replay_loader(
     (module_dir / "counterfactual_target.py").write_text("VALUE = 7\n")
 
     proc = run_python(CHANGED_LOADER, str(module_dir))
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+FAILED_REPLAY = r"""
+import json
+import os
+import sys
+from importlib.machinery import SourceFileLoader
+from importlib.util import spec_from_file_location
+
+import metapathology
+
+class DirectFinder:
+    def __init__(self, source):
+        self.source = source
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "failed_replay_target":
+            return spec_from_file_location(
+                fullname,
+                self.source,
+                loader=SourceFileLoader(fullname, self.source),
+            )
+        return None
+
+def failing_hook(path):
+    if os.path.normcase(os.path.abspath(path)) == normalized_module_dir:
+        raise RuntimeError("live replay failed")
+    raise ImportError
+
+module_dir, source = sys.argv[1:]
+normalized_module_dir = os.path.normcase(os.path.abspath(module_dir))
+sys.path.insert(0, module_dir)
+finder = DirectFinder(source)
+monitor = metapathology.install(report_at_exit=False)
+sys.meta_path.insert(0, finder)
+import failed_replay_target
+
+sys.path_hooks.insert(0, failing_hook)
+sys.path_importer_cache.pop(module_dir, None)
+document = json.loads(metapathology.render_report(format="json"))
+assert {
+    (error["where"], error["exception_type_name"])
+    for error in document["diagnostics"]["report_errors"]
+} >= {("path_finder_replay", "RuntimeError")}
+
+metapathology.uninstall()
+assert type(sys.meta_path) is list
+assert type(sys.path_hooks) is list
+assert "find_spec" not in finder.__dict__
+assert not monitor.enabled
+print("OK")
+"""
+
+
+def test_live_replay_failure_is_reported_without_blocking_cleanup(
+    run_python: RunPython,
+    tmp_path: Path,
+) -> None:
+    module_dir = tmp_path / "failed_replay"
+    module_dir.mkdir()
+    source = module_dir / "failed_replay_target.py"
+    source.write_text("VALUE = 7\n")
+
+    proc = run_python(FAILED_REPLAY, str(module_dir), str(source))
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "OK"
