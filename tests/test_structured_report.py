@@ -19,6 +19,7 @@ class ProbeFinder:
         return None
 
 metapathology.install(report_at_exit=False)
+sys.path_importer_cache["structured-cache-probe"] = None
 sys.meta_path = list(sys.meta_path)
 sys.path_hooks = list(sys.path_hooks)
 import reassignment_mod
@@ -30,7 +31,7 @@ import observed_mod
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 0, "minor": 2, "name": "metapathology.report"}
+assert document["schema"] == {"major": 0, "minor": 3, "name": "metapathology.report"}
 assert document["capture"]["cutoff_seq"] == max(event["seq"] for event in document["timeline"])
 assert document["snapshots"][0]["id"] == "snapshot:install"
 assert document["snapshots"][1]["id"] == "snapshot:report"
@@ -40,6 +41,7 @@ assert "meta_path_reassignment" in kinds, kinds
 assert "path_hooks_mutation" in kinds, kinds
 assert "path_hooks_reassignment" in kinds, kinds
 assert "find_spec_call" in kinds, kinds
+assert "importer_cache_diff" in kinds, kinds
 assert all(event["id"] == f"event:{event['seq']}" for event in document["timeline"])
 stack_event = next(event for event in document["timeline"] if event["kind"] == "meta_path_mutation")
 assert set(stack_event["stack"][0]) == {"filename", "function", "lineno"}
@@ -49,9 +51,13 @@ assert path_hook_event["added"][0]["object_id"].startswith("0x")
 snapshot_ids = {snapshot["id"] for snapshot in document["snapshots"]}
 assert "snapshot:path-hooks:install" in snapshot_ids
 assert "snapshot:path-hooks:report" in snapshot_ids
+assert "snapshot:importer-cache:install" in snapshot_ids
+assert "snapshot:importer-cache:report" in snapshot_ids
 mechanisms = {mechanism["name"]: mechanism for mechanism in document["capture"]["mechanisms"]}
 assert mechanisms["path_hooks_mutations"]["overflow_policy"] == "retain_all"
 assert mechanisms["path_hooks_mutations"]["retained"] >= 1
+assert mechanisms["importer_cache_snapshots"]["capacity"] == 2
+assert mechanisms["importer_cache_snapshots"]["overflow_policy"] == "replace_latest"
 no_spec = next(finding for finding in document["findings"] if finding["kind"] == "no_spec")
 assert no_spec["module"] == "ghost_mod"
 assert no_spec["evidence"] == {"finder_claim": "not_recorded", "module_spec": "missing"}
@@ -135,6 +141,10 @@ def test_report_document_uses_hand_written_slots(run_python: RunPython) -> None:
         "    generated_at='now', cutoff_seq=0, monitor_enabled=False,\n"
         "    baseline_module_count=0, initial_meta_path=(), current_meta_path=(),\n"
         "    path_hooks_enabled=False, initial_path_hooks=(), current_path_hooks=None,\n"
+        "    importer_cache_enabled=False, initial_importer_cache=(),\n"
+        "    initial_importer_cache_non_string_keys=0, current_importer_cache=None,\n"
+        "    current_importer_cache_non_string_keys=None, importer_cache_observations=0,\n"
+        "    importer_cache_coalesced=0,\n"
         "    modules_since_install=(), events=(), skipped_finders=(), findings=(),\n"
         "    report_errors=(), cwd=None, argv=(),\n"
         ")\n"

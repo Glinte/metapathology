@@ -2,7 +2,7 @@
 
 import pytest
 
-from metapathology import ImportObjectRef, InternalError
+from metapathology import ImporterCacheEntry, ImporterCacheReplacement, ImportObjectRef, InternalError
 
 
 def test_record_fields_are_read_only_and_slotted() -> None:
@@ -31,3 +31,16 @@ def test_import_object_reference_is_plain_read_only_identity_data() -> None:
     assert not hasattr(reference, "__dict__")
     with pytest.raises(AttributeError, match="read-only"):
         setattr(reference, "name", "changed")
+
+
+def test_importer_cache_values_distinguish_negative_entries_and_replacements() -> None:
+    finder = ImportObjectRef(object_id=42, type_name="FileFinder")
+    entry = ImporterCacheEntry(path="/example", finder=None)
+    replacement = ImporterCacheReplacement(path="/example", before=finder, after=None)
+
+    assert repr(entry) == "ImporterCacheEntry(path='/example', finder=None)"
+    assert replacement.before is finder
+    assert replacement.after is None
+    assert not hasattr(entry, "__dict__")
+    with pytest.raises(AttributeError, match="read-only"):
+        setattr(entry, "path", "/changed")

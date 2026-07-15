@@ -14,6 +14,9 @@ from importlib.machinery import PathFinder
 from metapathology import __version__
 from metapathology._records import (
     FindSpecCall,
+    ImporterCacheDiff,
+    ImporterCacheEntry,
+    ImporterCacheReplacement,
     ImportObjectRef,
     InternalError,
     MetaPathMutation,
@@ -42,7 +45,7 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 2
+_SCHEMA_MINOR = 3
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -130,6 +133,8 @@ class ReportDocument(_Record):
     __slots__ = (
         "_argv",
         "_baseline_module_count",
+        "_current_importer_cache",
+        "_current_importer_cache_non_string_keys",
         "_current_meta_path",
         "_current_path_hooks",
         "_cutoff_seq",
@@ -137,6 +142,11 @@ class ReportDocument(_Record):
         "_events",
         "_findings",
         "_generated_at",
+        "_importer_cache_coalesced",
+        "_importer_cache_enabled",
+        "_importer_cache_observations",
+        "_initial_importer_cache",
+        "_initial_importer_cache_non_string_keys",
         "_initial_meta_path",
         "_initial_path_hooks",
         "_modules_since_install",
@@ -155,6 +165,13 @@ class ReportDocument(_Record):
         "path_hooks_enabled",
         "initial_path_hooks",
         "current_path_hooks",
+        "importer_cache_enabled",
+        "initial_importer_cache",
+        "initial_importer_cache_non_string_keys",
+        "current_importer_cache",
+        "current_importer_cache_non_string_keys",
+        "importer_cache_observations",
+        "importer_cache_coalesced",
         "modules_since_install",
         "events",
         "skipped_finders",
@@ -172,6 +189,13 @@ class ReportDocument(_Record):
     path_hooks_enabled = _ReadOnlyField[bool]("_path_hooks_enabled")
     initial_path_hooks = _ReadOnlyField[tuple[ImportObjectRef, ...]]("_initial_path_hooks")
     current_path_hooks = _ReadOnlyField[tuple[ImportObjectRef, ...] | None]("_current_path_hooks")
+    importer_cache_enabled = _ReadOnlyField[bool]("_importer_cache_enabled")
+    initial_importer_cache = _ReadOnlyField[tuple[ImporterCacheEntry, ...]]("_initial_importer_cache")
+    initial_importer_cache_non_string_keys = _ReadOnlyField[int]("_initial_importer_cache_non_string_keys")
+    current_importer_cache = _ReadOnlyField[tuple[ImporterCacheEntry, ...] | None]("_current_importer_cache")
+    current_importer_cache_non_string_keys = _ReadOnlyField[int | None]("_current_importer_cache_non_string_keys")
+    importer_cache_observations = _ReadOnlyField[int]("_importer_cache_observations")
+    importer_cache_coalesced = _ReadOnlyField[int]("_importer_cache_coalesced")
     modules_since_install = _ReadOnlyField[tuple[str, ...] | None]("_modules_since_install")
     events = _ReadOnlyField[tuple[MonitorEvent, ...]]("_events")
     skipped_finders = _ReadOnlyField[tuple[SkippedFinder, ...]]("_skipped_finders")
@@ -192,6 +216,13 @@ class ReportDocument(_Record):
         path_hooks_enabled: bool,
         initial_path_hooks: tuple[ImportObjectRef, ...],
         current_path_hooks: tuple[ImportObjectRef, ...] | None,
+        importer_cache_enabled: bool,
+        initial_importer_cache: tuple[ImporterCacheEntry, ...],
+        initial_importer_cache_non_string_keys: int,
+        current_importer_cache: tuple[ImporterCacheEntry, ...] | None,
+        current_importer_cache_non_string_keys: int | None,
+        importer_cache_observations: int,
+        importer_cache_coalesced: int,
         modules_since_install: tuple[str, ...] | None,
         events: tuple[MonitorEvent, ...],
         skipped_finders: tuple[SkippedFinder, ...],
@@ -209,6 +240,13 @@ class ReportDocument(_Record):
         self._path_hooks_enabled = path_hooks_enabled
         self._initial_path_hooks = initial_path_hooks
         self._current_path_hooks = current_path_hooks
+        self._importer_cache_enabled = importer_cache_enabled
+        self._initial_importer_cache = initial_importer_cache
+        self._initial_importer_cache_non_string_keys = initial_importer_cache_non_string_keys
+        self._current_importer_cache = current_importer_cache
+        self._current_importer_cache_non_string_keys = current_importer_cache_non_string_keys
+        self._importer_cache_observations = importer_cache_observations
+        self._importer_cache_coalesced = importer_cache_coalesced
         self._modules_since_install = modules_since_install
         self._events = events
         self._skipped_finders = skipped_finders
@@ -220,7 +258,7 @@ class ReportDocument(_Record):
 
 def capture_document(monitor: "Monitor") -> ReportDocument:
     """Copy evidence at one sequence cutoff before deriving any findings."""
-    cutoff_seq, events, skipped_raw = monitor._report_state()
+    cutoff_seq, events, skipped_raw, importer_cache = monitor._report_state()
     report_errors: list[ReportError] = []
     current_meta_path = _current_meta_path_names(report_errors)
     current_path_hooks = _current_path_hooks(monitor, report_errors)
@@ -258,6 +296,13 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         path_hooks_enabled=monitor.path_hooks_enabled,
         initial_path_hooks=monitor.initial_path_hooks,
         current_path_hooks=current_path_hooks,
+        importer_cache_enabled=importer_cache.enabled,
+        initial_importer_cache=importer_cache.initial_entries,
+        initial_importer_cache_non_string_keys=importer_cache.initial_non_string_keys,
+        current_importer_cache=importer_cache.latest_entries,
+        current_importer_cache_non_string_keys=importer_cache.latest_non_string_keys,
+        importer_cache_observations=importer_cache.observations,
+        importer_cache_coalesced=importer_cache.coalesced,
         modules_since_install=modules_since_install,
         events=tuple(events),
         skipped_finders=skipped_finders,
@@ -380,6 +425,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
     reassignments = sum(isinstance(event, MetaPathReassignment) for event in document.events)
     path_hook_mutations = sum(isinstance(event, PathHooksMutation) for event in document.events)
     path_hook_reassignments = sum(isinstance(event, PathHooksReassignment) for event in document.events)
+    importer_cache_diffs = sum(isinstance(event, ImporterCacheDiff) for event in document.events)
     calls = sum(isinstance(event, FindSpecCall) for event in document.events)
     version = sys.version_info
     return {
@@ -411,6 +457,23 @@ def json_document(document: ReportDocument) -> dict[str, object]:
                     path_hook_reassignments,
                     "import_boundaries",
                 ),
+                {
+                    "capacity": 2,
+                    "coalesced": document.importer_cache_coalesced,
+                    "completeness": "passive_boundaries",
+                    "dropped": 0,
+                    "enabled": document.importer_cache_enabled,
+                    "name": "importer_cache_snapshots",
+                    "observations": document.importer_cache_observations,
+                    "overflow_policy": "replace_latest",
+                    "retained": min(document.importer_cache_observations, 2),
+                },
+                _mechanism(
+                    "importer_cache_diffs",
+                    document.importer_cache_enabled,
+                    importer_cache_diffs,
+                    "passive_boundaries",
+                ),
             ],
             "modules_since_install": None
             if document.modules_since_install is None
@@ -441,6 +504,22 @@ def json_document(document: ReportDocument) -> dict[str, object]:
                 else [_json_import_object(reference) for reference in document.current_path_hooks],
                 "id": "snapshot:path-hooks:report",
                 "kind": "path_hooks",
+                "phase": "report",
+            },
+            {
+                "entries": [_json_importer_cache_entry(entry) for entry in document.initial_importer_cache],
+                "id": "snapshot:importer-cache:install",
+                "kind": "importer_cache",
+                "non_string_keys": document.initial_importer_cache_non_string_keys,
+                "phase": "install",
+            },
+            {
+                "entries": None
+                if document.current_importer_cache is None
+                else [_json_importer_cache_entry(entry) for entry in document.current_importer_cache],
+                "id": "snapshot:importer-cache:report",
+                "kind": "importer_cache",
+                "non_string_keys": document.current_importer_cache_non_string_keys,
                 "phase": "report",
             },
         ],
@@ -494,6 +573,19 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
                 "loader_type_name": event.loader_type_name,
                 "origin": event.origin,
                 "search_path": list(event.search_path),
+                "thread_name": event.thread_name,
+            }
+        )
+    elif isinstance(event, ImporterCacheDiff):
+        result.update(
+            {
+                "added": [_json_importer_cache_entry(entry) for entry in event.added],
+                "kind": "importer_cache_diff",
+                "non_string_keys_after": event.non_string_keys_after,
+                "non_string_keys_before": event.non_string_keys_before,
+                "observation": event.observation,
+                "removed": [_json_importer_cache_entry(entry) for entry in event.removed],
+                "replaced": [_json_importer_cache_replacement(item) for item in event.replaced],
                 "thread_name": event.thread_name,
             }
         )
@@ -561,6 +653,23 @@ def _json_import_object(reference: ImportObjectRef) -> dict[str, object]:
         "name": reference.name,
         "object_id": f"0x{reference.object_id:x}",
         "type_name": reference.type_name,
+    }
+
+
+def _json_importer_cache_entry(entry: ImporterCacheEntry) -> dict[str, object]:
+    """Serialize one path and its cached finder or negative marker."""
+    return {
+        "finder": None if entry.finder is None else _json_import_object(entry.finder),
+        "path": entry.path,
+    }
+
+
+def _json_importer_cache_replacement(replacement: ImporterCacheReplacement) -> dict[str, object]:
+    """Serialize one cached-finder replacement."""
+    return {
+        "after": None if replacement.after is None else _json_import_object(replacement.after),
+        "before": None if replacement.before is None else _json_import_object(replacement.before),
+        "path": replacement.path,
     }
 
 

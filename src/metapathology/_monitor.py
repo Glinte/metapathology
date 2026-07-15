@@ -20,6 +20,9 @@ from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 from metapathology import _report
 from metapathology._records import (
     FindSpecCall,
+    ImporterCacheDiff,
+    ImporterCacheEntry,
+    ImporterCacheReplacement,
     ImportObjectRef,
     InternalError,
     MetaPathMutation,
@@ -69,6 +72,39 @@ _REPORT_DESTINATION_ENV = "METAPATHOLOGY_REPORT"
 _REPORT_FORMAT_ENV = "METAPATHOLOGY_REPORT_FORMAT"
 
 
+class _ImporterCacheReportState:
+    """Plain cache evidence copied with the monitor's report cutoff."""
+
+    __slots__ = (
+        "coalesced",
+        "enabled",
+        "initial_entries",
+        "initial_non_string_keys",
+        "latest_entries",
+        "latest_non_string_keys",
+        "observations",
+    )
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        initial_entries: tuple[ImporterCacheEntry, ...],
+        initial_non_string_keys: int,
+        latest_entries: tuple[ImporterCacheEntry, ...] | None,
+        latest_non_string_keys: int | None,
+        observations: int,
+        coalesced: int,
+    ) -> None:
+        self.enabled = enabled
+        self.initial_entries = initial_entries
+        self.initial_non_string_keys = initial_non_string_keys
+        self.latest_entries = latest_entries
+        self.latest_non_string_keys = latest_non_string_keys
+        self.observations = observations
+        self.coalesced = coalesced
+
+
 class _ThreadState(threading.local):
     """Per-thread re-entrancy state with a default for newly seen threads."""
 
@@ -95,6 +131,66 @@ def _import_object_ref(obj: object) -> ImportObjectRef:
         if isinstance(raw_name, str):
             name = raw_name
     return ImportObjectRef(object_id=id(obj), type_name=type_name(obj), name=name)
+
+
+def _cache_values_match(left: ImportObjectRef | None, right: ImportObjectRef | None) -> bool:
+    """Compare captured cache values without relying on record identity equality."""
+    if left is None or right is None:
+        return left is right
+    return left.object_id == right.object_id and left.type_name == right.type_name and left.name == right.name
+
+
+def _diff_importer_cache(
+    before: dict[str, ImportObjectRef | None],
+    after: dict[str, ImportObjectRef | None],
+) -> tuple[
+    tuple[ImporterCacheEntry, ...],
+    tuple[ImporterCacheEntry, ...],
+    tuple[ImporterCacheReplacement, ...],
+]:
+    """Return deterministic additions, removals, and replacements."""
+    before_paths = set(before)
+    after_paths = set(after)
+    added = tuple(ImporterCacheEntry(path, after[path]) for path in sorted(after_paths - before_paths))
+    removed = tuple(ImporterCacheEntry(path, before[path]) for path in sorted(before_paths - after_paths))
+    replaced = tuple(
+        ImporterCacheReplacement(path, before[path], after[path])
+        for path in sorted(before_paths & after_paths)
+        if not _cache_values_match(before[path], after[path])
+    )
+    return added, removed, replaced
+
+
+def _cache_entries(snapshot: dict[str, ImportObjectRef | None]) -> tuple[ImporterCacheEntry, ...]:
+    """Project a cache snapshot into deterministic public entry records."""
+    return tuple(ImporterCacheEntry(path, snapshot[path]) for path in sorted(snapshot))
+
+
+def _snapshot_importer_cache() -> tuple[
+    dict[str, ImportObjectRef | None],
+    int,
+    dict[int, object],
+    tuple[int, int],
+]:
+    """Copy string-keyed cache state once without stringifying foreign objects."""
+    cache = sys.path_importer_cache
+    raw_items = list(cache.items())
+    entries: dict[str, ImportObjectRef | None] = {}
+    finders: dict[int, object] = {}
+    non_string_keys = 0
+    for path, finder in raw_items:
+        # A str subclass can override hashing and equality. Only exact strings
+        # are safe keys for later plain-data diffing and sorting.
+        if type(path) is not str:
+            non_string_keys += 1
+            continue
+        if finder is None:
+            entries[path] = None
+            continue
+        reference = _import_object_ref(finder)
+        entries[path] = reference
+        finders[reference.object_id] = finder
+    return entries, non_string_keys, finders, (id(cache), len(cache))
 
 
 class Monitor:
@@ -137,6 +233,20 @@ class Monitor:
         self._instrumented_path_hooks: _InstrumentedPathHooks | None = None
         self._initial_path_hooks: tuple[ImportObjectRef, ...] = ()
         self._observed_path_hooks: dict[int, object] = {}
+        # T2 retains one install snapshot and one rolling comparison snapshot.
+        # Full observations are coalesced when one is already in progress;
+        # diff events themselves remain exhaustive and unbounded.
+        self._importer_cache_enabled = False
+        self._initial_importer_cache: tuple[ImporterCacheEntry, ...] = ()
+        self._initial_importer_cache_non_string_keys = 0
+        self._latest_importer_cache: dict[str, ImportObjectRef | None] | None = None
+        self._latest_importer_cache_non_string_keys: int | None = None
+        self._importer_cache_fingerprint: tuple[int, int] | None = None
+        self._importer_cache_dirty = False
+        self._importer_cache_observation_active = False
+        self._importer_cache_observations = 0
+        self._importer_cache_coalesced = 0
+        self._observed_cache_finders: dict[int, object] = {}
         # Both dicts key by id(finder) and hold strong finder references, keeping ids
         # unique for the process lifetime.
         # id -> (finder, callable find_spec, previous instance-dict value). A
@@ -170,6 +280,16 @@ class Monitor:
         """Safe hook identities captured when path-hook monitoring was enabled."""
         return self._initial_path_hooks
 
+    @property
+    def importer_cache_enabled(self) -> bool:
+        """Whether passive ``sys.path_importer_cache`` monitoring is active."""
+        return self._enabled and self._importer_cache_enabled
+
+    @property
+    def initial_importer_cache(self) -> tuple[ImporterCacheEntry, ...]:
+        """String-keyed importer-cache entries captured when T2 was enabled."""
+        return self._initial_importer_cache
+
     def _current_path_hook_refs(self) -> tuple[ImportObjectRef, ...]:
         """Copy current path-hook identities for report capture."""
         return tuple(_import_object_ref(hook) for hook in list(sys.path_hooks))
@@ -189,10 +309,23 @@ class Monitor:
         with self._record_lock:
             return [(type_name(finder), reason) for finder, reason in self._skipped.values()]
 
-    def _report_state(self) -> tuple[int, list[MonitorEvent], list[tuple[object, str]]]:
+    def _report_state(
+        self,
+    ) -> tuple[int, list[MonitorEvent], list[tuple[object, str]], _ImporterCacheReportState]:
         """Copy chronological evidence and skipped finders at one sequence cutoff."""
+        self._observe_importer_cache("report")
         with self._record_lock:
-            return self._seq, list(self._events), list(self._skipped.values())
+            latest = self._latest_importer_cache
+            cache_state = _ImporterCacheReportState(
+                enabled=self._enabled and self._importer_cache_enabled,
+                initial_entries=self._initial_importer_cache,
+                initial_non_string_keys=self._initial_importer_cache_non_string_keys,
+                latest_entries=None if latest is None else _cache_entries(latest),
+                latest_non_string_keys=self._latest_importer_cache_non_string_keys,
+                observations=self._importer_cache_observations,
+                coalesced=self._importer_cache_coalesced,
+            )
+            return self._seq, list(self._events), list(self._skipped.values()), cache_state
 
     def _begin_report_analysis(self) -> bool:
         """Keep report-time replays from recording activity after their evidence cutoff."""
@@ -211,6 +344,7 @@ class Monitor:
         report_destination: "str | PathLike[str] | None" = None,
         report_format: "Literal['text', 'json'] | None" = None,
         monitor_path_hooks: bool = True,
+        monitor_importer_cache: bool = True,
     ) -> None:
         """Instrument ``sys.meta_path`` and register the import audit hook (idempotent).
 
@@ -228,6 +362,9 @@ class Monitor:
             monitor_path_hooks: Instrument and observe ``sys.path_hooks``.
                 A later true value enables the mechanism; false never disables
                 an already-active mechanism.
+            monitor_importer_cache: Passively observe
+                ``sys.path_importer_cache``. A later true value enables the
+                mechanism; false never disables an already-active mechanism.
         """
         with self._reinstall_lock:
             was_enabled = self._enabled
@@ -263,6 +400,8 @@ class Monitor:
                     self._audit_installed = True
             if monitor_path_hooks and not self._path_hooks_enabled:
                 self._enable_path_hooks()
+            if monitor_importer_cache and not self._importer_cache_enabled:
+                self._enable_importer_cache()
         if report_at_exit and not self._report_at_exit:
             self._report_at_exit = True
             atexit.register(self._report_atexit)
@@ -315,11 +454,17 @@ class Monitor:
         self._path_hooks_enabled = True
         sys.path_hooks = instrumented
 
+    def _enable_importer_cache(self) -> None:
+        """Capture the T2 baseline without replacing the interpreter cache."""
+        self._importer_cache_enabled = True
+        self._observe_importer_cache("install", initial=True)
+
     def uninstall(self) -> None:
         """Restore plain import lists and unshadow all finders (idempotent)."""
         with self._reinstall_lock:
             if not self._enabled:
                 return
+            self._observe_importer_cache("uninstall")
             self._enabled = False
             current = sys.meta_path
             if isinstance(current, _InstrumentedMetaPath):
@@ -339,6 +484,9 @@ class Monitor:
                 self._skipped.clear()
                 self._search_path_cache.clear()
                 self._observed_path_hooks.clear()
+                self._observed_cache_finders.clear()
+                self._importer_cache_enabled = False
+                self._importer_cache_observation_active = False
         if self._report_at_exit:
             self._report_at_exit = False
             atexit.unregister(self._report_atexit)
@@ -361,6 +509,7 @@ class Monitor:
             return
         self._local.active = True
         try:
+            self._check_importer_cache_fingerprint()
             meta_path_current = sys.meta_path is self._instrumented
             path_hooks_current = not self._path_hooks_enabled or sys.path_hooks is self._instrumented_path_hooks
             if meta_path_current and path_hooks_current:
@@ -371,6 +520,77 @@ class Monitor:
             self._record_internal_error("audit_hook", exc)
         finally:
             self._local.active = False
+
+    def _check_importer_cache_fingerprint(self) -> None:
+        """Mark T2 dirty using only dictionary identity and length."""
+        if not self._importer_cache_enabled:
+            return
+        cache = sys.path_importer_cache
+        current = (id(cache), len(cache))
+        with self._record_lock:
+            if current != self._importer_cache_fingerprint:
+                self._importer_cache_fingerprint = current
+                self._importer_cache_dirty = True
+
+    def _observe_importer_cache(self, observation: str, *, initial: bool = False) -> None:
+        """Take one passive full snapshot and append a diff when it changed."""
+        with self._record_lock:
+            if not self._enabled or not self._importer_cache_enabled:
+                return
+            if self._importer_cache_observation_active:
+                self._importer_cache_coalesced += 1
+                self._importer_cache_dirty = True
+                return
+            self._importer_cache_observation_active = True
+            # Audit events or another boundary during the copy set this back
+            # to true, preserving the need for a later observation.
+            self._importer_cache_dirty = False
+        try:
+            previously_active = self._local.active
+            self._local.active = True
+            try:
+                snapshot, non_string_keys, finders, fingerprint = _snapshot_importer_cache()
+            finally:
+                self._local.active = previously_active
+        except Exception as exc:
+            with self._record_lock:
+                self._importer_cache_observation_active = False
+                self._importer_cache_dirty = True
+            self._record_internal_error("importer_cache_snapshot", exc)
+            return
+
+        thread_name = threading.current_thread().name
+        with self._record_lock:
+            self._importer_cache_observation_active = False
+            if not self._enabled or not self._importer_cache_enabled:
+                return
+            before = self._latest_importer_cache
+            before_non_string = self._latest_importer_cache_non_string_keys
+            self._latest_importer_cache = snapshot
+            self._latest_importer_cache_non_string_keys = non_string_keys
+            self._importer_cache_fingerprint = fingerprint
+            self._importer_cache_observations += 1
+            self._observed_cache_finders.update(finders)
+            if initial or before is None:
+                self._initial_importer_cache = _cache_entries(snapshot)
+                self._initial_importer_cache_non_string_keys = non_string_keys
+                return
+            added, removed, replaced = _diff_importer_cache(before, snapshot)
+            if not added and not removed and not replaced and before_non_string == non_string_keys:
+                return
+            self._seq += 1
+            self._events.append(
+                ImporterCacheDiff(
+                    seq=self._seq,
+                    observation=observation,
+                    added=added,
+                    removed=removed,
+                    replaced=replaced,
+                    non_string_keys_before=0 if before_non_string is None else before_non_string,
+                    non_string_keys_after=non_string_keys,
+                    thread_name=thread_name,
+                )
+            )
 
     def _recover_reassignments(self, args: tuple[object, ...]) -> None:
         """Wrap directly replaced import lists and record detection evidence.
@@ -785,7 +1005,7 @@ class Monitor:
             return
         self._local.active = True
         try:
-            if not self._enabled or not self._path_hooks_enabled:
+            if not self._enabled or not self._path_hooks_enabled or mutated is not self._instrumented_path_hooks:
                 return
             added_refs = tuple(_import_object_ref(hook) for hook in added)
             removed_refs = tuple(_import_object_ref(hook) for hook in removed)
@@ -812,8 +1032,23 @@ class Monitor:
                         stack=stack,
                     )
                 )
+            self._observe_importer_cache("after_path_hooks_mutation")
         except Exception as exc:
             self._record_internal_error("path_hooks_mutation", exc)
+        finally:
+            self._local.active = False
+
+    def _on_path_hooks_before_mutation(self, mutated: "_InstrumentedPathHooks") -> None:
+        """Observe T2 immediately before a live path-hook list operation."""
+        if self._local.active:
+            return
+        self._local.active = True
+        try:
+            if not self._enabled or not self._path_hooks_enabled or mutated is not self._instrumented_path_hooks:
+                return
+            self._observe_importer_cache("before_path_hooks_mutation")
+        except Exception as exc:
+            self._record_internal_error("importer_cache_before_path_hooks_mutation", exc)
         finally:
             self._local.active = False
 
@@ -871,11 +1106,13 @@ class _InstrumentedImportList(list["_ImportListItemT"]):
 
     def append(self, item: "_ImportListItemT") -> None:
         """Delegate to ``list.append`` and record the addition."""
+        self._before_mutation(sys._getframe(1))
         super().append(item)
         self._notify("append", (item,), (), sys._getframe(1))
 
     def insert(self, index: "SupportsIndex", item: "_ImportListItemT") -> None:
         """Delegate to ``list.insert`` and record the addition."""
+        self._before_mutation(sys._getframe(1))
         super().insert(index, item)
         self._notify("insert", (item,), (), sys._getframe(1))
 
@@ -900,6 +1137,7 @@ class _InstrumentedImportList(list["_ImportListItemT"]):
         # The post-call slice is best-effort: a concurrent thread could mutate
         # the list in between, but the class is already best-effort against
         # C-level mutation, and locking here would risk import deadlocks.
+        self._before_mutation(frame)
         before = len(self)
         completed = False
         try:
@@ -914,6 +1152,7 @@ class _InstrumentedImportList(list["_ImportListItemT"]):
 
     def remove(self, item: "_ImportListItemT") -> None:
         """Delegate to ``list.remove`` and record the removal."""
+        self._before_mutation(sys._getframe(1))
         super().remove(item)
         self._notify("remove", (), (item,), sys._getframe(1))
 
@@ -923,18 +1162,21 @@ class _InstrumentedImportList(list["_ImportListItemT"]):
         Returns:
             The removed finder, as ``list.pop`` would.
         """
+        self._before_mutation(sys._getframe(1))
         item = super().pop(index)
         self._notify("pop", (), (item,), sys._getframe(1))
         return item
 
     def clear(self) -> None:
         """Record the removal of the entire contents, then delegate to ``list.clear``."""
+        self._before_mutation(sys._getframe(1))
         removed = tuple(self)
         super().clear()
         self._notify("clear", (), removed, sys._getframe(1))
 
     def reverse(self) -> None:
         """Record an order-only mutation; finder precedence changes even though membership does not."""
+        self._before_mutation(sys._getframe(1))
         super().reverse()
         self._notify("reverse", (), (), sys._getframe(1))
 
@@ -945,6 +1187,7 @@ class _InstrumentedImportList(list["_ImportListItemT"]):
         reverse: bool = False,
     ) -> None:
         """Record an order change made with ``list.sort``."""
+        self._before_mutation(sys._getframe(1))
         before = tuple(self)
         completed = False
         # Runtime list.sort accepts None; the two type checkers model its
@@ -963,6 +1206,7 @@ class _InstrumentedImportList(list["_ImportListItemT"]):
     # TODO(Python >= 3.11): Return typing.Self once Python 3.10 support is dropped.
     def __imul__(self, value: "SupportsIndex") -> "_InstrumentedImportList[_ImportListItemT]":
         """Record an in-place repeat, including additions or a complete wipe."""
+        self._before_mutation(sys._getframe(1))
         before = tuple(self)
         super().__imul__(value)
         after = tuple(self)
@@ -997,6 +1241,7 @@ class _InstrumentedImportList(list["_ImportListItemT"]):
         value: "_ImportListItemT | Iterable[_ImportListItemT]",
     ) -> None:
         """Record single-item or slice replacement (slice assignment is how many tools filter finders)."""
+        self._before_mutation(sys._getframe(1))
         if isinstance(index, slice):
             # We inspect the old value before mutating. Normalize custom index
             # objects once so their __index__ methods are not called again by
@@ -1021,6 +1266,7 @@ class _InstrumentedImportList(list["_ImportListItemT"]):
 
     def __delitem__(self, index: "SupportsIndex | slice") -> None:
         """Delegate to ``list.__delitem__`` and record the removed finder(s)."""
+        self._before_mutation(sys._getframe(1))
         # Capturing the removed value and then deleting would otherwise invoke
         # a stateful __index__ twice and could observe/delete different items.
         if isinstance(index, slice):
@@ -1056,6 +1302,9 @@ class _InstrumentedImportList(list["_ImportListItemT"]):
         """Dispatch one completed mutation to the concrete import-list monitor."""
         raise NotImplementedError
 
+    def _before_mutation(self, frame: "FrameType") -> None:
+        """Dispatch a pre-mutation observation when the concrete list needs one."""
+
 
 class _InstrumentedMetaPath(_InstrumentedImportList["_MetaPathEntry"]):
     """Drop-in ``sys.meta_path`` replacement with finder instrumentation."""
@@ -1076,6 +1325,9 @@ class _InstrumentedPathHooks(_InstrumentedImportList["_PathHook"]):
     """Drop-in ``sys.path_hooks`` replacement that never wraps hook factories."""
 
     __slots__ = ()
+
+    def _before_mutation(self, frame: "FrameType") -> None:
+        self._monitor._on_path_hooks_before_mutation(self)
 
     def _notify(
         self,
@@ -1099,6 +1351,7 @@ def install(
     report_destination: "str | PathLike[str] | None" = None,
     report_format: "Literal['text', 'json'] | None" = None,
     monitor_path_hooks: bool = True,
+    monitor_importer_cache: bool = True,
 ) -> Monitor:
     """Install the import-machinery monitor (idempotent) and return it.
 
@@ -1113,6 +1366,9 @@ def install(
             the default when neither the API nor environment configures it.
         monitor_path_hooks: Observe ``sys.path_hooks`` mutations and direct
             reassignment. A later true value enables this mechanism.
+        monitor_importer_cache: Passively observe
+            ``sys.path_importer_cache``. A later true value enables this
+            mechanism.
     """
     global _monitor_singleton
     with _singleton_lock:
@@ -1124,6 +1380,7 @@ def install(
         report_destination=report_destination,
         report_format=report_format,
         monitor_path_hooks=monitor_path_hooks,
+        monitor_importer_cache=monitor_importer_cache,
     )
     return monitor
 

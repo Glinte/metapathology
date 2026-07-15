@@ -94,6 +94,95 @@ class ImportObjectRef(_Record):
         self._name = name
 
 
+class ImporterCacheEntry(_Record):
+    """One string-keyed ``sys.path_importer_cache`` entry.
+
+    ``finder=None`` represents a negative cache entry, not an absent path.
+    """
+
+    __slots__ = ("_finder", "_path")
+    _fields = ("path", "finder")
+    path = _ReadOnlyField[str]("_path")
+    finder = _ReadOnlyField[ImportObjectRef | None]("_finder")
+
+    def __init__(self, path: str, finder: ImportObjectRef | None) -> None:
+        self._path = path
+        self._finder = finder
+
+
+class ImporterCacheReplacement(_Record):
+    """One cache path whose finder identity or negative status changed."""
+
+    __slots__ = ("_after", "_before", "_path")
+    _fields = ("path", "before", "after")
+    path = _ReadOnlyField[str]("_path")
+    before = _ReadOnlyField[ImportObjectRef | None]("_before")
+    after = _ReadOnlyField[ImportObjectRef | None]("_after")
+
+    def __init__(
+        self,
+        path: str,
+        before: ImportObjectRef | None,
+        after: ImportObjectRef | None,
+    ) -> None:
+        self._path = path
+        self._before = before
+        self._after = after
+
+
+class ImporterCacheDiff(_Record):
+    """Changes found between two passive importer-cache observations."""
+
+    __slots__ = (
+        "_added",
+        "_non_string_keys_after",
+        "_non_string_keys_before",
+        "_observation",
+        "_removed",
+        "_replaced",
+        "_seq",
+        "_thread_name",
+    )
+    _fields = (
+        "seq",
+        "observation",
+        "added",
+        "removed",
+        "replaced",
+        "non_string_keys_before",
+        "non_string_keys_after",
+        "thread_name",
+    )
+    seq = _ReadOnlyField[int]("_seq")
+    observation = _ReadOnlyField[str]("_observation")
+    added = _ReadOnlyField[tuple[ImporterCacheEntry, ...]]("_added")
+    removed = _ReadOnlyField[tuple[ImporterCacheEntry, ...]]("_removed")
+    replaced = _ReadOnlyField[tuple[ImporterCacheReplacement, ...]]("_replaced")
+    non_string_keys_before = _ReadOnlyField[int]("_non_string_keys_before")
+    non_string_keys_after = _ReadOnlyField[int]("_non_string_keys_after")
+    thread_name = _ReadOnlyField[str]("_thread_name")
+
+    def __init__(
+        self,
+        seq: int,
+        observation: str,
+        added: tuple[ImporterCacheEntry, ...],
+        removed: tuple[ImporterCacheEntry, ...],
+        replaced: tuple[ImporterCacheReplacement, ...],
+        non_string_keys_before: int,
+        non_string_keys_after: int,
+        thread_name: str,
+    ) -> None:
+        self._seq = seq
+        self._observation = observation
+        self._added = added
+        self._removed = removed
+        self._replaced = replaced
+        self._non_string_keys_before = non_string_keys_before
+        self._non_string_keys_after = non_string_keys_after
+        self._thread_name = thread_name
+
+
 class MetaPathMutation(_Record):
     """A mutating method call observed on the instrumented ``sys.meta_path`` list.
 
@@ -378,5 +467,11 @@ class InternalError(_Record):
 
 # Everything the monitor records goes into one chronological log; ``seq`` orders records across types.
 MonitorEvent = (
-    FindSpecCall | InternalError | MetaPathMutation | MetaPathReassignment | PathHooksMutation | PathHooksReassignment
+    FindSpecCall
+    | ImporterCacheDiff
+    | InternalError
+    | MetaPathMutation
+    | MetaPathReassignment
+    | PathHooksMutation
+    | PathHooksReassignment
 )

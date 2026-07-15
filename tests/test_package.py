@@ -10,6 +10,9 @@ _EXPECTED_PUBLIC_API = frozenset(
     {
         "FindSpecCall",
         "ImportObjectRef",
+        "ImporterCacheDiff",
+        "ImporterCacheEntry",
+        "ImporterCacheReplacement",
         "InternalError",
         "MetaPathMutation",
         "MetaPathReassignment",

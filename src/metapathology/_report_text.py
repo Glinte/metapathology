@@ -4,6 +4,8 @@ import os
 
 from metapathology._records import (
     FindSpecCall,
+    ImporterCacheDiff,
+    ImporterCacheEntry,
     ImportObjectRef,
     InternalError,
     MetaPathMutation,
@@ -30,6 +32,7 @@ _PACKAGE_DIR = os.path.normcase(os.path.dirname(os.path.abspath(__file__)))
 _STACK_DISPLAY_FRAMES = 5
 # Max claimed modules listed per finder in the attribution section.
 _MAX_LISTED_MODULES = 25
+_MAX_CACHE_CHANGES_PER_DIFF = 25
 
 
 def render_lines(document: ReportDocument) -> list[str]:
@@ -38,6 +41,7 @@ def render_lines(document: ReportDocument) -> list[str]:
     reassignments = _events_of_type(document.events, MetaPathReassignment)
     path_hook_mutations = _events_of_type(document.events, PathHooksMutation)
     path_hook_reassignments = _events_of_type(document.events, PathHooksReassignment)
+    importer_cache_diffs = _events_of_type(document.events, ImporterCacheDiff)
     calls = _events_of_type(document.events, FindSpecCall)
     errors = _events_of_type(document.events, InternalError)
 
@@ -51,6 +55,18 @@ def render_lines(document: ReportDocument) -> list[str]:
     lines.append(f"initial sys.path_hooks: {_refs_line(document.initial_path_hooks)}")
     current_path_hooks = () if document.current_path_hooks is None else document.current_path_hooks
     lines.append(f"current sys.path_hooks: {_refs_line(current_path_hooks)}")
+    lines.append(f"sys.path_importer_cache monitoring enabled: {document.importer_cache_enabled}")
+    lines.append(
+        "initial sys.path_importer_cache: "
+        f"{len(document.initial_importer_cache)} string keys, "
+        f"{document.initial_importer_cache_non_string_keys} non-string keys omitted"
+    )
+    current_cache_count = 0 if document.current_importer_cache is None else len(document.current_importer_cache)
+    lines.append(
+        "current sys.path_importer_cache: "
+        f"{current_cache_count} string keys, "
+        f"{document.current_importer_cache_non_string_keys or 0} non-string keys omitted"
+    )
     standard_skipped = [item for item in document.skipped_finders if item.expected]
     other_skipped = [item for item in document.skipped_finders if not item.expected]
     if standard_skipped:
@@ -96,6 +112,13 @@ def render_lines(document: ReportDocument) -> list[str]:
         lines.append("(none)")
     for reassignment in path_hook_reassignments:
         lines.extend(_path_hooks_reassignment_lines(reassignment))
+
+    lines.append("")
+    lines.append(f"-- sys.path_importer_cache changes ({len(importer_cache_diffs)}) --")
+    if not importer_cache_diffs:
+        lines.append("(none)")
+    for diff in importer_cache_diffs:
+        lines.extend(_importer_cache_diff_lines(diff))
 
     lines.append("")
     lines.append("-- finder attribution (instrumented finders only) --")
@@ -196,6 +219,36 @@ def _path_hooks_reassignment_lines(reassignment: PathHooksReassignment) -> list[
     lines.append(f"    after:  {_refs_line(reassignment.new_contents)}")
     lines.append("    instrumentation reinstalled; stack shows the triggering import, not the reassignment itself:")
     lines.extend(_stack_lines(reassignment.stack))
+    return lines
+
+
+def _cache_entry_line(entry: ImporterCacheEntry) -> str:
+    """Format one captured cache value without inspecting the live finder."""
+    finder = _cache_finder_name(entry.finder)
+    return f"{entry.path!r} -> {finder}"
+
+
+def _cache_finder_name(finder: ImportObjectRef | None) -> str:
+    """Format a captured cache finder or its negative marker."""
+    return "negative (None)" if finder is None else _ref_name(finder)
+
+
+def _importer_cache_diff_lines(diff: ImporterCacheDiff) -> list[str]:
+    """Format one bounded human projection of an exhaustive cache diff."""
+    lines = [f"#{diff.seq} {diff.observation} [thread {diff.thread_name}]"]
+    changes: list[str] = []
+    changes.extend(f"    + {_cache_entry_line(entry)}" for entry in diff.added)
+    changes.extend(f"    - {_cache_entry_line(entry)}" for entry in diff.removed)
+    changes.extend(
+        f"    ~ {replacement.path!r}: "
+        f"{_cache_finder_name(replacement.before)} -> {_cache_finder_name(replacement.after)}"
+        for replacement in diff.replaced
+    )
+    lines.extend(changes[:_MAX_CACHE_CHANGES_PER_DIFF])
+    if len(changes) > _MAX_CACHE_CHANGES_PER_DIFF:
+        lines.append(f"    ... and {len(changes) - _MAX_CACHE_CHANGES_PER_DIFF} more changes")
+    if diff.non_string_keys_before != diff.non_string_keys_after:
+        lines.append(f"    non-string keys omitted: {diff.non_string_keys_before} -> {diff.non_string_keys_after}")
     return lines
 
 
