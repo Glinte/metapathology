@@ -777,3 +777,47 @@ def test_install_can_enable_report_at_exit_after_first_install(run_python: RunPy
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout
     assert "== metapathology report ==" in proc.stderr
+
+
+# uninstall() can run to completion while a mutation thread is still inside
+# _instrument_finder for a newly added finder (the foreign find_spec attribute
+# lookup can block arbitrarily long); the late wrapper must not survive.
+UNINSTALL_MUTATION_RACE = """
+import sys
+import threading
+
+import metapathology
+
+def original_find_spec(fullname, path=None, target=None):
+    return None
+
+in_lookup = threading.Event()
+uninstall_done = threading.Event()
+
+class SlowAttributeFinder:
+    def __getattr__(self, name):
+        if name == "find_spec":
+            in_lookup.set()
+            assert uninstall_done.wait(timeout=10)
+            return original_find_spec
+        raise AttributeError(name)
+
+metapathology.install(report_at_exit=False)
+finder = SlowAttributeFinder()
+
+appender = threading.Thread(target=sys.meta_path.append, args=(finder,))
+appender.start()
+assert in_lookup.wait(timeout=10)
+metapathology.uninstall()
+uninstall_done.set()
+appender.join(timeout=10)
+
+assert finder.find_spec is original_find_spec, finder.__dict__.get("find_spec")
+print("OK")
+"""
+
+
+def test_uninstall_concurrent_with_mutation_leaves_no_wrapper(run_python: RunPython) -> None:
+    proc = run_python(UNINSTALL_MUTATION_RACE)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout

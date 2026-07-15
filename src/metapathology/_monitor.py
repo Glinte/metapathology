@@ -193,11 +193,7 @@ class Monitor:
                 sys.meta_path = list(current)
             self._instrumented = None
             for finder, _original, previous in list(self._patched.values()):
-                with contextlib.suppress(AttributeError, KeyError, TypeError):
-                    if previous is _MISSING:
-                        del finder.__dict__["find_spec"]
-                    else:
-                        finder.__dict__["find_spec"] = previous
+                self._restore_find_spec(finder, previous)
             with self._record_lock:
                 self._patched.clear()
                 self._skipped.clear()
@@ -310,6 +306,15 @@ class Monitor:
             previous = instance_dict.get("find_spec", _MISSING)
         except (AttributeError, TypeError):
             previous = _MISSING
+        with self._record_lock:
+            # The foreign attribute lookups above can block arbitrarily long
+            # (imports, __getattr__); a vanished claim means uninstall() ran
+            # meanwhile, so stop before touching the finder. Otherwise refresh
+            # the claim with the real pre-shadowing value so a concurrent
+            # uninstall() restores the same state our own undo would.
+            if not self._enabled or finder_id not in self._patched:
+                return
+            self._patched[finder_id] = (finder, None, previous)
         wrapper = self._make_find_spec_wrapper(type_name(finder), finder_id, typed_original)
         try:
             setattr(finder, "find_spec", wrapper)
@@ -332,7 +337,14 @@ class Monitor:
             self._skip_finder(finder_id, finder, "find_spec assignment bypasses the instance dict (slot or descriptor)")
             return
         with self._record_lock:
-            self._patched[finder_id] = (finder, typed_original, previous)
+            committed = self._enabled and finder_id in self._patched
+            if committed:
+                self._patched[finder_id] = (finder, typed_original, previous)
+        if not committed:
+            # Lost the race with uninstall(): undo the shadow ourselves, outside
+            # _record_lock (foreign __dict__ access must never run under it).
+            # Idempotent against uninstall()'s own restore in either order.
+            self._restore_find_spec(finder, previous)
 
     def _skip_finder(self, finder_id: int, finder: object, reason: str) -> None:
         """Mark a finder as uninstrumentable, releasing any claim taken by ``_instrument_finder``.
@@ -344,7 +356,29 @@ class Monitor:
         """
         with self._record_lock:
             self._patched.pop(finder_id, None)
-            self._skipped[finder_id] = (finder, reason)
+            # After uninstall() cleared _skipped, a late skip must not
+            # repopulate it; just release the claim.
+            if self._enabled:
+                self._skipped[finder_id] = (finder, reason)
+
+    @staticmethod
+    def _restore_find_spec(finder: object, previous: object) -> None:
+        """Reset a finder's instance-dict ``find_spec`` to its pre-shadowing value.
+
+        Idempotent: ``uninstall()`` and a racing ``_instrument_finder`` may both
+        call this for the same finder, in either order, converging on the same
+        end state. Tolerates the entry already being gone (or the finder having
+        no ``__dict__`` at all, as with in-progress claims).
+
+        Args:
+            finder: The shadowed (or claimed) finder.
+            previous: The prior instance-dict value, or ``_MISSING`` if absent.
+        """
+        with contextlib.suppress(AttributeError, KeyError, TypeError):
+            if previous is _MISSING:
+                del finder.__dict__["find_spec"]
+            else:
+                finder.__dict__["find_spec"] = previous
 
     def _make_find_spec_wrapper(self, finder_type_name: str, finder_id: int, original: "_FindSpec") -> "_FindSpec":
         """Build the ``find_spec`` replacement that records each call and delegates to the original.
@@ -366,7 +400,9 @@ class Monitor:
             path: "Sequence[str] | None" = None,
             target: "ModuleType | None" = None,
         ) -> "ModuleSpec | None":
-            if self._local.active:
+            # The _enabled check makes any wrapper that briefly outlives
+            # uninstall() (instrumentation racing uninstall) delegate silently.
+            if self._local.active or not self._enabled:
                 return original(fullname, path, target)
             self._local.active = True
             spec = None
