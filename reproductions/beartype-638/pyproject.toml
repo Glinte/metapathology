@@ -1,0 +1,22 @@
+[project]
+name = "metapathology-beartype-638-repro"
+version = "0.1.0"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "beartype==0.22.9",
+    "coverage==7.13.5",
+    "metapathology",
+    "py-key-value-aio==0.4.4",
+    "pytest==9.0.3",
+    "pytest-cov==7.0.0",
+]
+
+[tool.uv]
+exclude-newer = "2026-04-30"
+package = false
+
+[tool.uv.sources]
+metapathology = { path = "../..", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["scikit-build-core==1.0.1", "wheel"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "metapathology-beartype-556-repro"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "beartype==0.22.9",
+    "metapathology",
+]
+
+[project.scripts]
+myproject = "myproject:main"
+
+[tool.scikit-build]
+wheel.packages = ["src/myproject"]
+
+[tool.uv]
+exclude-newer = "2026-07-08"
+
+[tool.uv.sources]
+metapathology = { path = "../..", editable = true }

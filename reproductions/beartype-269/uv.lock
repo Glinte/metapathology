@@ -1,0 +1,50 @@
+version = 1
+revision = 3
+requires-python = "==3.11.*"
+
+[options]
+exclude-newer = "2023-07-27T16:00:00Z"
+
+[[package]]
+name = "beartype"
+version = "0.15.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d2/6c/fecfe9c7d7b903a52b732b8f33968a067cad8209848ae8037c4d0ed53055/beartype-0.15.0.tar.gz", hash = "sha256:2af6a8d8a7267ccf7d271e1a3bd908afbc025d2a09aa51123567d7d7b37438df", size = 1002709, upload-time = "2023-07-22T05:25:44.074Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6f/e7/9220de010e015fdfb7ce22e7d9a846bfcd6e5d686c4fc555fa76a22846ba/beartype-0.15.0-py3-none-any.whl", hash = "sha256:52cd2edea72fdd84e4e7f8011a9e3007bf0125c3d6d7219e937b9d8868169177", size = 777565, upload-time = "2023-07-22T05:25:41.659Z" },
+]
+
+[[package]]
+name = "metapathology"
+version = "0.2.2"
+source = { editable = "../../" }
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "basedpyright", specifier = ">=1.31.3" },
+    { name = "hypothesis", specifier = ">=6.146" },
+    { name = "prek", specifier = ">=0.2.20" },
+    { name = "pyrefly", specifier = ">=0.44.0" },
+    { name = "pytest", specifier = ">=8.3" },
+    { name = "pytest-cov", specifier = ">=6.3" },
+    { name = "pytest-timeout", specifier = ">=2.4" },
+    { name = "ruff", specifier = ">=0.12.11" },
+]
+docs = [{ name = "zensical", specifier = ">=0.0.47,<0.1" }]
+
+[[package]]
+name = "metapathology-beartype-269-repro"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "beartype" },
+    { name = "metapathology" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "beartype", specifier = "==0.15.0" },
+    { name = "metapathology", editable = "../../" },
+]
