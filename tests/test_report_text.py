@@ -105,6 +105,9 @@ def test_standard_unwrapped_finders_are_explained(run_python: RunPython) -> None
     assert "BuiltinImporter: class entry" not in proc.stdout
     assert "FrozenImporter: class entry" not in proc.stdout
     assert "PathFinder: class entry" not in proc.stdout
+    assert "sys.path_hooks monitoring enabled: True" in proc.stdout
+    assert "-- sys.path_hooks mutations (0) --" in proc.stdout
+    assert "-- sys.path_hooks reassignments (0) --" in proc.stdout
 
 
 PATH_REMOVED_AFTER_IMPORT = """

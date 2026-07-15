@@ -14,10 +14,13 @@ from importlib.machinery import PathFinder
 from metapathology import __version__
 from metapathology._records import (
     FindSpecCall,
+    ImportObjectRef,
     InternalError,
     MetaPathMutation,
     MetaPathReassignment,
     MonitorEvent,
+    PathHooksMutation,
+    PathHooksReassignment,
     _ReadOnlyField,
     _Record,
     type_name,
@@ -36,10 +39,10 @@ if TYPE_CHECKING:
 _SOURCE_SUFFIXES = (".py", ".pyc")
 _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # The JSON contract remains experimental until the observation mechanisms in
-# roadmap T1--T7 have supplied their real event and evidence shapes.
+# roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 1
+_SCHEMA_MINOR = 2
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -128,14 +131,17 @@ class ReportDocument(_Record):
         "_argv",
         "_baseline_module_count",
         "_current_meta_path",
+        "_current_path_hooks",
         "_cutoff_seq",
         "_cwd",
         "_events",
         "_findings",
         "_generated_at",
         "_initial_meta_path",
+        "_initial_path_hooks",
         "_modules_since_install",
         "_monitor_enabled",
+        "_path_hooks_enabled",
         "_report_errors",
         "_skipped_finders",
     )
@@ -146,6 +152,9 @@ class ReportDocument(_Record):
         "baseline_module_count",
         "initial_meta_path",
         "current_meta_path",
+        "path_hooks_enabled",
+        "initial_path_hooks",
+        "current_path_hooks",
         "modules_since_install",
         "events",
         "skipped_finders",
@@ -160,6 +169,9 @@ class ReportDocument(_Record):
     baseline_module_count = _ReadOnlyField[int]("_baseline_module_count")
     initial_meta_path = _ReadOnlyField[tuple[str, ...]]("_initial_meta_path")
     current_meta_path = _ReadOnlyField[tuple[str, ...] | None]("_current_meta_path")
+    path_hooks_enabled = _ReadOnlyField[bool]("_path_hooks_enabled")
+    initial_path_hooks = _ReadOnlyField[tuple[ImportObjectRef, ...]]("_initial_path_hooks")
+    current_path_hooks = _ReadOnlyField[tuple[ImportObjectRef, ...] | None]("_current_path_hooks")
     modules_since_install = _ReadOnlyField[tuple[str, ...] | None]("_modules_since_install")
     events = _ReadOnlyField[tuple[MonitorEvent, ...]]("_events")
     skipped_finders = _ReadOnlyField[tuple[SkippedFinder, ...]]("_skipped_finders")
@@ -177,6 +189,9 @@ class ReportDocument(_Record):
         baseline_module_count: int,
         initial_meta_path: tuple[str, ...],
         current_meta_path: tuple[str, ...] | None,
+        path_hooks_enabled: bool,
+        initial_path_hooks: tuple[ImportObjectRef, ...],
+        current_path_hooks: tuple[ImportObjectRef, ...] | None,
         modules_since_install: tuple[str, ...] | None,
         events: tuple[MonitorEvent, ...],
         skipped_finders: tuple[SkippedFinder, ...],
@@ -191,6 +206,9 @@ class ReportDocument(_Record):
         self._baseline_module_count = baseline_module_count
         self._initial_meta_path = initial_meta_path
         self._current_meta_path = current_meta_path
+        self._path_hooks_enabled = path_hooks_enabled
+        self._initial_path_hooks = initial_path_hooks
+        self._current_path_hooks = current_path_hooks
         self._modules_since_install = modules_since_install
         self._events = events
         self._skipped_finders = skipped_finders
@@ -205,6 +223,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
     cutoff_seq, events, skipped_raw = monitor._report_state()
     report_errors: list[ReportError] = []
     current_meta_path = _current_meta_path_names(report_errors)
+    current_path_hooks = _current_path_hooks(monitor, report_errors)
     modules_since_install = _modules_since_install(monitor, report_errors)
     skipped_finders = tuple(
         SkippedFinder(
@@ -236,6 +255,9 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         baseline_module_count=len(monitor.baseline_modules),
         initial_meta_path=monitor.initial_meta_path,
         current_meta_path=current_meta_path,
+        path_hooks_enabled=monitor.path_hooks_enabled,
+        initial_path_hooks=monitor.initial_path_hooks,
+        current_path_hooks=current_path_hooks,
         modules_since_install=modules_since_install,
         events=tuple(events),
         skipped_finders=skipped_finders,
@@ -252,6 +274,17 @@ def _current_meta_path_names(report_errors: list[ReportError]) -> tuple[str, ...
         return tuple(type_name(finder) for finder in list(sys.meta_path))
     except Exception as exc:
         report_errors.append(ReportError("snapshot.meta_path", type_name(exc)))
+        return None
+
+
+def _current_path_hooks(monitor: "Monitor", report_errors: list[ReportError]) -> tuple[ImportObjectRef, ...] | None:
+    """Copy current path-hook identities when T1 is active."""
+    if not monitor.path_hooks_enabled:
+        return None
+    try:
+        return monitor._current_path_hook_refs()
+    except Exception as exc:
+        report_errors.append(ReportError("snapshot.path_hooks", type_name(exc)))
         return None
 
 
@@ -345,6 +378,8 @@ def json_document(document: ReportDocument) -> dict[str, object]:
     """Project one report document onto the experimental JSON schema."""
     mutations = sum(isinstance(event, MetaPathMutation) for event in document.events)
     reassignments = sum(isinstance(event, MetaPathReassignment) for event in document.events)
+    path_hook_mutations = sum(isinstance(event, PathHooksMutation) for event in document.events)
+    path_hook_reassignments = sum(isinstance(event, PathHooksReassignment) for event in document.events)
     calls = sum(isinstance(event, FindSpecCall) for event in document.events)
     version = sys.version_info
     return {
@@ -369,6 +404,13 @@ def json_document(document: ReportDocument) -> dict[str, object]:
                 _mechanism("meta_path_mutations", document.monitor_enabled, mutations, "best_effort"),
                 _mechanism("meta_path_reassignments", document.monitor_enabled, reassignments, "import_boundaries"),
                 _mechanism("finder_attribution", document.monitor_enabled, calls, "instrumented_finders"),
+                _mechanism("path_hooks_mutations", document.path_hooks_enabled, path_hook_mutations, "best_effort"),
+                _mechanism(
+                    "path_hooks_reassignments",
+                    document.path_hooks_enabled,
+                    path_hook_reassignments,
+                    "import_boundaries",
+                ),
             ],
             "modules_since_install": None
             if document.modules_since_install is None
@@ -385,6 +427,20 @@ def json_document(document: ReportDocument) -> dict[str, object]:
                 "entries": None if document.current_meta_path is None else list(document.current_meta_path),
                 "id": "snapshot:report",
                 "kind": "meta_path",
+                "phase": "report",
+            },
+            {
+                "entries": [_json_import_object(reference) for reference in document.initial_path_hooks],
+                "id": "snapshot:path-hooks:install",
+                "kind": "path_hooks",
+                "phase": "install",
+            },
+            {
+                "entries": None
+                if document.current_path_hooks is None
+                else [_json_import_object(reference) for reference in document.current_path_hooks],
+                "id": "snapshot:path-hooks:report",
+                "kind": "path_hooks",
                 "phase": "report",
             },
         ],
@@ -464,6 +520,29 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
                 "thread_name": event.thread_name,
             }
         )
+    elif isinstance(event, PathHooksMutation):
+        result.update(
+            {
+                "added": [_json_import_object(reference) for reference in event.added],
+                "contents_after": [_json_import_object(reference) for reference in event.contents_after],
+                "kind": "path_hooks_mutation",
+                "op": event.op,
+                "removed": [_json_import_object(reference) for reference in event.removed],
+                "stack": [_json_frame(frame) for frame in event.stack],
+                "thread_name": event.thread_name,
+            }
+        )
+    elif isinstance(event, PathHooksReassignment):
+        result.update(
+            {
+                "during_import": event.during_import,
+                "kind": "path_hooks_reassignment",
+                "new_contents": [_json_import_object(reference) for reference in event.new_contents],
+                "old_contents": [_json_import_object(reference) for reference in event.old_contents],
+                "stack": [_json_frame(frame) for frame in event.stack],
+                "thread_name": event.thread_name,
+            }
+        )
     else:
         result.update(
             {
@@ -474,6 +553,15 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
             }
         )
     return result
+
+
+def _json_import_object(reference: ImportObjectRef) -> dict[str, object]:
+    """Serialize safe import-object identity metadata."""
+    return {
+        "name": reference.name,
+        "object_id": f"0x{reference.object_id:x}",
+        "type_name": reference.type_name,
+    }
 
 
 def _json_frame(frame: "FrameSummary") -> dict[str, object]:

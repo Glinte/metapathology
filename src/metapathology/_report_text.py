@@ -2,7 +2,15 @@
 
 import os
 
-from metapathology._records import FindSpecCall, InternalError, MetaPathMutation, MetaPathReassignment
+from metapathology._records import (
+    FindSpecCall,
+    ImportObjectRef,
+    InternalError,
+    MetaPathMutation,
+    MetaPathReassignment,
+    PathHooksMutation,
+    PathHooksReassignment,
+)
 from metapathology._report_data import Finding, ReportDocument
 
 TYPE_CHECKING = False
@@ -28,6 +36,8 @@ def render_lines(document: ReportDocument) -> list[str]:
     """Build the report body as a list of lines; the caller adds the trailing newline."""
     mutations = _events_of_type(document.events, MetaPathMutation)
     reassignments = _events_of_type(document.events, MetaPathReassignment)
+    path_hook_mutations = _events_of_type(document.events, PathHooksMutation)
+    path_hook_reassignments = _events_of_type(document.events, PathHooksReassignment)
     calls = _events_of_type(document.events, FindSpecCall)
     errors = _events_of_type(document.events, InternalError)
 
@@ -37,6 +47,10 @@ def render_lines(document: ReportDocument) -> list[str]:
     lines.append(f"initial sys.meta_path: {_names_line(document.initial_meta_path)}")
     current_meta_path = ("<unavailable>",) if document.current_meta_path is None else document.current_meta_path
     lines.append(f"current sys.meta_path: {_names_line(current_meta_path)}")
+    lines.append(f"sys.path_hooks monitoring enabled: {document.path_hooks_enabled}")
+    lines.append(f"initial sys.path_hooks: {_refs_line(document.initial_path_hooks)}")
+    current_path_hooks = () if document.current_path_hooks is None else document.current_path_hooks
+    lines.append(f"current sys.path_hooks: {_refs_line(current_path_hooks)}")
     standard_skipped = [item for item in document.skipped_finders if item.expected]
     other_skipped = [item for item in document.skipped_finders if not item.expected]
     if standard_skipped:
@@ -68,6 +82,20 @@ def render_lines(document: ReportDocument) -> list[str]:
         lines.append("(none)")
     for reassignment in reassignments:
         lines.extend(_reassignment_lines(reassignment))
+
+    lines.append("")
+    lines.append(f"-- sys.path_hooks mutations ({len(path_hook_mutations)}) --")
+    if not path_hook_mutations:
+        lines.append("(none)")
+    for mutation in path_hook_mutations:
+        lines.extend(_path_hooks_mutation_lines(mutation))
+
+    lines.append("")
+    lines.append(f"-- sys.path_hooks reassignments ({len(path_hook_reassignments)}) --")
+    if not path_hook_reassignments:
+        lines.append("(none)")
+    for reassignment in path_hook_reassignments:
+        lines.extend(_path_hooks_reassignment_lines(reassignment))
 
     lines.append("")
     lines.append("-- finder attribution (instrumented finders only) --")
@@ -106,6 +134,17 @@ def _names_line(names: tuple[str, ...]) -> str:
     return "[" + ", ".join(names) + "]"
 
 
+def _ref_name(reference: ImportObjectRef) -> str:
+    """Format captured identity metadata without inspecting the original object."""
+    label = reference.type_name if reference.name is None else f"{reference.name} ({reference.type_name})"
+    return f"{label} id 0x{reference.object_id:x}"
+
+
+def _refs_line(references: tuple[ImportObjectRef, ...]) -> str:
+    """Format a path-hook snapshot."""
+    return "[" + ", ".join(_ref_name(reference) for reference in references) + "]"
+
+
 def _mutation_lines(mutation: MetaPathMutation) -> list[str]:
     """Format one mutation record: op, delta, resulting contents, and user stack."""
     delta_parts: list[str] = []
@@ -128,6 +167,33 @@ def _reassignment_lines(reassignment: MetaPathReassignment) -> list[str]:
     ]
     lines.append(f"    before: {_names_line(reassignment.old_contents)}")
     lines.append(f"    after:  {_names_line(reassignment.new_contents)}")
+    lines.append("    instrumentation reinstalled; stack shows the triggering import, not the reassignment itself:")
+    lines.extend(_stack_lines(reassignment.stack))
+    return lines
+
+
+def _path_hooks_mutation_lines(mutation: PathHooksMutation) -> list[str]:
+    """Format one path-hook mutation from captured plain references."""
+    delta_parts: list[str] = []
+    if mutation.added:
+        delta_parts.append("+" + _refs_line(mutation.added))
+    if mutation.removed:
+        delta_parts.append("-" + _refs_line(mutation.removed))
+    delta = " ".join(delta_parts) if delta_parts else "(order change)"
+    lines = [f"#{mutation.seq} {mutation.op} {delta} [thread {mutation.thread_name}]"]
+    lines.append(f"    path_hooks after: {_refs_line(mutation.contents_after)}")
+    lines.extend(_stack_lines(mutation.stack))
+    return lines
+
+
+def _path_hooks_reassignment_lines(reassignment: PathHooksReassignment) -> list[str]:
+    """Format one path-hooks reassignment detected at an import boundary."""
+    lines = [
+        f"#{reassignment.seq} sys.path_hooks REASSIGNED, detected during import of "
+        f"'{reassignment.during_import}' [thread {reassignment.thread_name}]"
+    ]
+    lines.append(f"    before: {_refs_line(reassignment.old_contents)}")
+    lines.append(f"    after:  {_refs_line(reassignment.new_contents)}")
     lines.append("    instrumentation reinstalled; stack shows the triggering import, not the reassignment itself:")
     lines.extend(_stack_lines(reassignment.stack))
     return lines
