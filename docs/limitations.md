@@ -30,8 +30,9 @@ its audit coverage; some resulting modules can only be recognized post hoc as
 [spec-from-file]: https://docs.python.org/3/library/importlib.html#importlib.util.spec_from_file_location
 [exec-module]: https://docs.python.org/3/library/importlib.html#importlib.abc.Loader.exec_module
 
-A wholesale `sys.meta_path` replacement is discovered at the next import. Its
-exact assignment stack and exact assignment-time contents are unavailable.
+Wholesale `sys.meta_path` and `sys.path_hooks` replacements are discovered at
+the next import. Their exact assignment stacks and assignment-time contents
+are unavailable.
 
 ## Replay is diagnostic
 
@@ -42,24 +43,26 @@ a bug. Only `.py` and `.pyc` origins with a usable loader baseline are checked.
 
 ## Runtime perturbation and cleanup
 
-The monitor temporarily installs a `list` subclass and shadows instance
+The monitor temporarily installs `list` subclasses for `sys.meta_path` and,
+by default, `sys.path_hooks`, and shadows instance
 `find_spec` methods where safe. It does not replace finders with proxies,
 return specs, or load modules. The list records `append`, `insert`, `extend`,
 `remove`, `pop`, `clear`, `reverse`, `sort`, item and slice assignment or
 deletion, `+=`, and `*=`. Mutations performed directly through CPython's
 `PyList_*` C API do not call these Python overrides and cannot be recorded.
 
-Replacing `sys.meta_path` with another list also bypasses those overrides. The
+Replacing either monitored list also bypasses those overrides. The
 next uncached import detects that replacement and installs a new instrumented
 list, as described under [imports and `sys.meta_path`
-reassignment](concepts.md#imports-and-sysmeta_path-reassignment). That
+reassignment](concepts.md#imports-and-import-list-reassignment). That
 recovery is a copy-and-swap: the replacement list assigned by the other code
 is left untouched and goes stale, so a caller that kept a reference to it and
-mutates it later no longer affects the live `sys.meta_path`. This is the one
-known case where monitoring changes the behavior of code that was otherwise
-working.
+mutates it later no longer affects the corresponding live `sys` attribute.
+This is the known case where monitoring changes the behavior of code that was
+otherwise working. Path-hook monitoring can be disabled independently.
 
-`uninstall()` reverses the list and finder changes. Python cannot unregister
+`uninstall()` restores plain lists preserving the live objects and ordering,
+and reverses finder changes. Python cannot unregister
 an audit hook, so its callback remains as a cheap inactive no-op.
 
 Use this tool during diagnosis rather than as permanent application
@@ -72,7 +75,7 @@ error to keep the report exhaustive. Memory use grows with import activity for
 as long as monitoring remains enabled. There is no event limit and no silent
 dropped-record policy.
 
-Mutation and reassignment records are more expensive because they retain stack
+Meta-path and path-hooks mutation and reassignment records are more expensive because they retain stack
 summaries. In a long-running or import-heavy process, install immediately
 before the behavior of interest, then call `write_report()` and `uninstall()` after
 capturing it. See [speed and memory use](performance.md) for the cost model and

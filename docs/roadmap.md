@@ -22,20 +22,20 @@ T1 + T2 + T5 + T7 + T8 ───────────────────
 T1 + T2 + T3 + T4 ───────────────────────────> T10 deep diagnostics
 ```
 
-## T1: Observe `sys.path_hooks` mutations
+## T1: Observe `sys.path_hooks` mutations (implemented)
 
 **Weakness:** Metapathology can show that `PathFinder` would have selected a
 different loader, but it cannot show when or why the path-hook ordering changed.
 This omits the central operation in beartype#599: beartype prepends a source
 loader factory ahead of a frozen importer.
 
-**Recommendation:** Add an independently toggleable path-hook monitor. Start
-with immediate snapshots and mutation stack traces for all list operations,
+**Implementation:** The default-on, independently toggleable path-hook monitor
+captures immediate snapshots and mutation stack traces for all list operations,
 using the same reversibility, re-entrancy, and lock rules as the meta-path
 list. Record only hook identity and type/name at mutation time; never call
 foreign `repr()` or `str()`.
 
-Do not wrap hook factories in the default mode. Function and closure hooks
+It does not wrap hook factories. Function and closure hooks
 generally cannot be instrumented by safe instance-dict shadowing (most real
 hooks are `FileFinder.path_hook(...)` closures with no instance dict), and
 replacing them with delegates can break identity-sensitive code.
@@ -163,8 +163,8 @@ otherwise it is inserted before the file extension (`report.json` becomes
 unchanged. The CLI, public API, and
 `METAPATHOLOGY_REPORT` configuration all reach the same atomic file writer.
 
-The initial schema is 0.1 rather than a prematurely stable 1.0. T1--T7 may
-extend or reshape schema 0.x as their actual evidence models are implemented;
+The initial schema was 0.1 and T1 extended it to 0.2 rather than prematurely
+stabilizing 1.0. T2--T7 may extend or reshape schema 0.x as their actual evidence models are implemented;
 perform a schema 1.0 review after T7 and before T9 pins semantic assertions.
 Human and JSON renderers must continue to consume the same report document.
 

@@ -2,7 +2,7 @@
 
 `metapathology` is a diagnostic tool rather than permanent application
 instrumentation. Its overhead depends primarily on which finder handles an
-import and how much `sys.meta_path` changes during the capture window.
+import and how much `sys.meta_path` or `sys.path_hooks` changes during the capture window.
 
 ## Where the cost comes from
 
@@ -14,7 +14,7 @@ still loads all dependencies needed by hooks and finder wrappers before
 
 An uncached import always invokes the audit hook. When `sys.meta_path` has not
 been replaced, that path performs an enabled check, a thread-local re-entrancy
-check, and an identity comparison. Standard CPython class finders such as
+check, and identity comparisons for the enabled instrumented lists. Standard CPython class finders such as
 `PathFinder` are deliberately not wrapped, so a normal import resolved entirely
 by those entries does not create a finder-call record.
 
@@ -33,7 +33,7 @@ code-generation and value-comparison costs in import hot paths.
 List mutations are intentionally heavier. Each append, removal, replacement,
 or reorder captures a stack summary for attribution. Reassignments capture a
 stack when the next import detects them. These records consume more time and
-memory than finder-call records, but `sys.meta_path` mutations are normally
+memory than finder-call records, but import-list mutations are normally
 rare compared with imports.
 
 The monitor keeps every event so the final report is exhaustive. Retained

@@ -13,7 +13,7 @@ file output all use the same cutoff-based report document as the human
 renderer. The current experimental schema is identified by:
 
 ```json
-{"name": "metapathology.report", "major": 0, "minor": 1}
+{"name": "metapathology.report", "major": 0, "minor": 2}
 ```
 
 Its top-level sections are `tool`, `process`, `capture`, `snapshots`,
@@ -22,7 +22,7 @@ sequence number and receive an `event:<seq>` identifier. Findings contain
 structured claim and replay evidence rather than requiring consumers to parse
 the human wording.
 
-Schema 0.x is intentionally allowed to change as roadmap T1--T7 introduce
+Schema 0.x is intentionally allowed to change as roadmap T2--T7 introduce
 their real snapshot, timeline, inventory, comparison, and finding models. A
 schema 1.0 review is required before machine consumers treat the shape as
 stable. Capacity and completeness are reported per capture mechanism; the
@@ -31,9 +31,10 @@ activity.
 
 ## Header
 
-The header shows whether the monitor is enabled, the initial and current
-`sys.meta_path`, finders that could not be wrapped, and the number of modules
-added to `sys.modules` since installation.
+The header shows whether the monitor and T1 path-hook mechanism are enabled,
+the initial and current `sys.meta_path` and `sys.path_hooks` snapshots, finders
+that could not be wrapped, and the number of modules added to `sys.modules`
+since installation.
 
 `BuiltinImporter`, `FrozenImporter`, and `PathFinder` normally appear as
 "standard CPython finders left unwrapped (expected)." They handle built-in,
@@ -71,6 +72,20 @@ Reassignment is detected on the next import, so the displayed stack belongs to
 that triggering import, not necessarily to the code that assigned the list.
 The report shows the abandoned and replacement contents and notes that
 instrumentation was reinstalled.
+
+## `sys.path_hooks` mutations
+
+These records parallel meta-path mutations but identify each hook by object
+ID, safe type name, and a callable name when it can be read without foreign
+attribute dispatch. Metapathology never wraps or calls a hook factory. The
+resulting snapshot shows hook precedence after each operation.
+
+## `sys.path_hooks` reassignments
+
+Direct replacement is detected at the next uncached import by the existing
+audit hook. The report therefore shows the triggering import stack rather
+than the unknowable assignment stack. Recovery installs an instrumented copy;
+the list object originally assigned becomes stale.
 
 ## Finder attribution
 

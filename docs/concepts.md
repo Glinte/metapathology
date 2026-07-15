@@ -71,15 +71,16 @@ documentation][path-based-finder] describes the complete protocol.
 Metapathology uses three mechanisms because Python exposes different parts of
 the import process in different places.
 
-### Imports and `sys.meta_path` reassignment
+### Imports and import-list reassignment
 
 A CPython [`sys.addaudithook()`][audit-hook] callback observes the documented
 [`import` audit event][audit-events]. The event says that an uncached import is
 starting; it does not say which finder will claim the module.
 
-Most changes to `sys.meta_path` mutate the existing list and are recorded
+Most changes to `sys.meta_path` or `sys.path_hooks` mutate the existing list and are recorded
 immediately as described below. Direct assignment, such as
-`sys.meta_path = new_list`, discards that list and cannot be intercepted at
+`sys.meta_path = new_list` or `sys.path_hooks = new_list`, discards the
+instrumented list and cannot be intercepted at
 the assignment itself. On the next import audit event, metapathology notices
 the different list object, records the old and new contents, and installs
 mutation recording around the new list. The reported stack belongs to that
@@ -89,8 +90,8 @@ Recovery is a copy-and-swap: a plain list cannot be instrumented in place, so
 metapathology puts a new instrumented list into `sys.meta_path` and leaves the
 assigned list untouched. Code that keeps a reference to the list it assigned
 and mutates that reference afterwards is editing a stale list the import
-system no longer consults; make further changes through `sys.meta_path`
-itself.
+system no longer consults; make further changes through the live `sys`
+attribute itself.
 
 [audit-hook]: https://docs.python.org/3/library/sys.html#sys.addaudithook
 [audit-events]: https://docs.python.org/3/library/audit_events.html#audit-events
@@ -109,6 +110,14 @@ It remains a real `list` rather than a proxy, so code that iterates, slices, or
 checks `isinstance(sys.meta_path, list)` continues to work. The exact supported
 operations and known blind spots are listed under [runtime perturbation and
 cleanup](limitations.md#runtime-perturbation-and-cleanup).
+
+### Changes to the `sys.path_hooks` list
+
+The default T1 mechanism installs a separate list subclass with the same
+mutation semantics and records safe hook identity/type/name snapshots. It
+does not wrap or call hook factories, so identity and membership checks keep
+seeing the original hook objects. Use `monitor_path_hooks=False` when even the
+temporary list replacement is undesirable.
 
 ### Finder calls
 

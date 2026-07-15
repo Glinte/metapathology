@@ -9,7 +9,7 @@ truth for the supported public API.
 
 ## Lifecycle and reporting
 
-### `install(*, report_at_exit=True, report_destination=None, report_format=None) -> Monitor`
+### `install(*, report_at_exit=True, report_destination=None, report_format=None, monitor_path_hooks=True) -> Monitor`
 
 Installs the process-wide monitor and returns it. Repeated calls return and
 enable the same monitor. Only activity after installation can be observed.
@@ -19,6 +19,10 @@ otherwise `METAPATHOLOGY_REPORT` is consulted before defaulting to standard
 error. `report_format` accepts `"text"` or `"json"`; API values override
 `METAPATHOLOGY_REPORT_FORMAT`, and files default to JSON while standard error
 defaults to text.
+
+`monitor_path_hooks` controls T1 observation and defaults to true. A later
+true value enables it if initially disabled; false does not disable an active
+mechanism. Use `uninstall()` for cleanup.
 
 Automatic reports always include the current process ID in their filename. For
 process 1234, `report.json` becomes `report.1234.json`. When the configured path
@@ -31,7 +35,8 @@ not replace the target's exit status.
 
 ### `uninstall() -> None`
 
-Disables monitoring, restores a plain `sys.meta_path`, removes shadows from
+Disables monitoring, restores plain `sys.meta_path` and `sys.path_hooks`
+lists, removes shadows from
 instrumented finders, and unregisters the exit callback. Repeated calls are
 safe. The CPython audit callback cannot be removed and remains as an inactive
 no-op.
@@ -53,8 +58,8 @@ format.
 ### `render_report(*, format="text") -> str`
 
 Returns text or JSON, including its trailing newline. JSON currently uses the
-experimental `metapathology.report` schema version 0.1. Its shape may change
-throughout schema 0.x; schema 1.0 will be reviewed after roadmap T1--T7.
+experimental `metapathology.report` schema version 0.2. Its shape may change
+throughout schema 0.x; schema 1.0 will be reviewed after roadmap T7.
 Raises `RuntimeError` before the first installation and `ValueError` for an
 unknown format. Ordinary generation failures degrade to a valid failure
 report rather than propagating.
@@ -66,6 +71,9 @@ competing monitors is not supported because import state is process-global.
 
 - `enabled: bool` — whether observation is currently active.
 - `initial_meta_path: tuple[str, ...]` — finder display names at installation.
+- `path_hooks_enabled: bool` — whether T1 observation is currently active.
+- `initial_path_hooks: tuple[ImportObjectRef, ...]` — identities and safe
+  type/name metadata captured when T1 was enabled.
 - `baseline_modules: frozenset[str]` — `sys.modules` names at installation.
 - `events() -> list[MonitorEvent]` — capture-order snapshot of all records.
 - `skipped_finders() -> list[tuple[str, str]]` — finder display name and the
@@ -82,7 +90,12 @@ the intended entry points.
 All records are immutable, slotted classes with a standard field-based repr.
 They deliberately use identity equality and do not define positional pattern
 matching. Their shared `seq` field provides a single chronological order
-across record types. `MonitorEvent` is the union of the four record classes.
+across record types. `MonitorEvent` is the union of the six event classes.
+
+### `ImportObjectRef`
+
+Carries an import object's numeric identity, safe type name, and optional
+callable name. It never retains or stringifies the foreign object.
 
 ### `FindSpecCall`
 
@@ -100,6 +113,16 @@ contents, thread name, and captured stack.
 Records the import during which replacement was detected, old and new finder
 display names, triggering thread, and detection stack. The fields describe
 detection time rather than the unknowable assignment moment.
+
+### `PathHooksMutation`
+
+Records the operation, added and removed `ImportObjectRef` values, resulting
+hook order, thread, and mutation stack. Monitoring never calls the hooks.
+
+### `PathHooksReassignment`
+
+Records old and new hook references plus the import, thread, and stack at the
+next import audit event that detected direct replacement.
 
 ### `InternalError`
 

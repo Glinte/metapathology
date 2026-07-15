@@ -51,6 +51,7 @@ Put metapathology options before the script or `-m` target:
 ```console
 python -m metapathology --report diagnostics.json path/to/script.py
 python -m metapathology --report diagnostics.txt --report-format text -m package.module
+python -m metapathology --no-path-hook-monitoring path/to/script.py
 ```
 
 Automatic file destinations are process-safe. `{pid}` is replaced when it is
@@ -58,6 +59,10 @@ present; otherwise the PID is inserted before the final suffix. For example,
 `diagnostics.json` becomes `diagnostics.1234.json`. The parent directory must
 already exist. Each process writes one selected format, without a collector,
 background worker, or retry loop.
+
+Path-hook monitoring is enabled by default. The disable option leaves the
+exact `sys.path_hooks` list object untouched; options after the target are
+passed through to the target rather than parsed by metapathology.
 
 For frozen or embedded bootstrap code, configure the same behavior before
 calling `install()`:
@@ -102,8 +107,8 @@ finally:
     metapathology.uninstall()
 ```
 
-Uninstallation is also idempotent. It restores a plain `sys.meta_path`, removes
-finder method shadows, and unregisters the exit callback. Recorded events
+Uninstallation is also idempotent. It restores plain `sys.meta_path` and
+`sys.path_hooks` lists, removes finder method shadows, and unregisters the exit callback. Recorded events
 remain available from `monitor.events()`.
 
 ## Integrate with another diagnostic

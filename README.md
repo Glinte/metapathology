@@ -19,7 +19,7 @@
 reports:
 
 - which finder located each imported module;
-- where code changed `sys.meta_path`, with a stack trace; and
+- where code changed `sys.meta_path` or `sys.path_hooks`, with a stack trace; and
 - which modules were found without going through the usual `sys.path` and
   `sys.path_hooks` search.
 
@@ -42,6 +42,7 @@ Primary: run your program under observation, no code changes needed —
 $ python -m metapathology myscript.py --my-args
 $ python -m metapathology -m pytest tests/
 $ python -m metapathology --report diagnostic.json myscript.py
+$ python -m metapathology --no-path-hook-monitoring myscript.py
 ```
 
 A text report is printed to standard error by default. `--report PATH` writes
@@ -92,7 +93,8 @@ finally:
     metapathology.uninstall()
 ```
 
-`uninstall()` is idempotent. It restores a plain `sys.meta_path`, removes the
+`uninstall()` is idempotent. It restores plain `sys.meta_path` and
+`sys.path_hooks` lists, removes the
 wrappers from finders, and unregisters the exit report. The CPython audit hook
 cannot be removed, so it remains installed as an inactive no-op. Recorded
 events remain available after uninstalling.
@@ -106,9 +108,9 @@ For integration with another diagnostic or test harness:
 - `metapathology.get_monitor()` returns the process-wide monitor, or `None`
   before the first call to `install()`; and
 - `monitor.events()` returns a capture-order snapshot of the structured
-  `FindSpecCall`, `MetaPathMutation`, `MetaPathReassignment`, and
-  `InternalError` records. Mutating the returned list does not alter the
-  monitor.
+  `FindSpecCall`, meta-path, path-hooks, and `InternalError` records. Path-hook
+  records use `ImportObjectRef` values containing captured identity and safe
+  type/name metadata. Mutating the returned list does not alter the monitor.
 
 Calling `write_report()` or `render_report()` before `install()` raises
 `RuntimeError`. There are no runtime dependencies. See the complete
@@ -144,8 +146,8 @@ internal error so the final report is exhaustive. Its memory use therefore
 grows with import activity for as long as monitoring remains enabled; there is
 currently no event limit or silent dropping policy. For a long-running or
 import-heavy process, call `write_report()` and `uninstall()` once the behavior of
-interest has been captured. Stack traces are stored for `sys.meta_path`
-changes, which makes mutation records more expensive than finder-call records.
+interest has been captured. Stack traces are stored for `sys.meta_path` and
+`sys.path_hooks` changes, which makes mutation records more expensive than finder-call records.
 At the 400-import point in the reference benchmark matrix, monitoring added a
 median 3% to the standard-finder workload and 13% when retaining one attributed
 finder record per import; those records retained about 223 bytes each. Imports
@@ -196,12 +198,16 @@ for the full protocol.
    callback for CPython's [`import` audit event](https://docs.python.org/3/library/audit_events.html#audit-events).
    This event says that an uncached import is starting; it does not say which
    finder will succeed. It also lets the monitor recover if less-common code
-   assigns an entirely new list to `sys.meta_path`.
+   assigns an entirely new list to `sys.meta_path` or `sys.path_hooks`.
 2. It temporarily replaces `sys.meta_path` with a compatible `list` subclass.
    This records the usual changes as they happen: additions, removals,
    replacements, clearing, and reordering, with a stack trace showing where
    each change came from. Newly added finders are prepared for call recording.
-3. It wraps each finder's existing `find_spec()` method. The wrapper records
+3. It temporarily replaces `sys.path_hooks` with a compatible `list`
+   subclass and records the same list operations without wrapping or calling
+   hook factories. Pass `monitor_path_hooks=False`, or use
+   `--no-path-hook-monitoring`, to leave this list untouched.
+4. It wraps each finder's existing `find_spec()` method. The wrapper records
    whether the finder returned `None` or a module spec, then returns the same
    result. It does not supply a spec of its own or load a module.
 
@@ -217,11 +223,10 @@ use a different kind of loader, the report notes that the normal
 
 - CPython only (relies on the `import` audit event and import-system
   internals).
-- Monitoring begins when `metapathology` is installed. Finders added earlier
-  by `.pth` files are shown in the initial `sys.meta_path` list, but there can
-  be no stack trace for when they were added because that happened during
-  Python startup.
-- The temporary changes to finders and `sys.meta_path` are reversed by
+- Monitoring begins when `metapathology` is installed. Finders and hooks added
+  earlier by `.pth` files appear in the initial snapshots, but there can be no
+  stack trace for changes made during Python startup.
+- The temporary changes to finders, `sys.meta_path`, and `sys.path_hooks` are reversed by
   `uninstall()`. Python does not provide a way to remove an audit hook, so the
   installed callback remains as an inactive no-op after uninstalling.
 - This tool changes `sys.meta_path` while it is running. Use it for debugging,
