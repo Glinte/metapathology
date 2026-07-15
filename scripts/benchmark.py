@@ -7,7 +7,7 @@
 #   "psutil>=6",
 # ]
 # ///
-"""Benchmark metapathology import and mutation overhead and draw graphs."""
+"""Benchmark metapathology startup, import, mutation, and memory overhead."""
 
 import argparse
 import json
@@ -45,6 +45,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _SCRIPT_DIR.parent
 _WORKER = _SCRIPT_DIR / "_benchmark_worker.py"
 _SCENARIOS = ("native", "attributed", "mutation")
+_STARTUP_CASES = ("process", "package_import", "direct_script", "monitored_script")
 _COLORS = {False: "#6b7280", True: "#2563eb"}
 _RecordValue: TypeAlias = str | bool | int | float
 _Record: TypeAlias = dict[str, _RecordValue]
@@ -99,15 +100,7 @@ def _make_fixture(root: Path, package: str, maximum: int) -> None:
     for index in range(maximum):
         source = f'"""Synthetic module {index}."""\nVALUE: int = {index}\n'
         (package_dir / f"module_{index:05d}.py").write_text(source, encoding="utf-8")
-    # Import the checkout through PYTHONPATH even when the selected interpreter
-    # has not installed the project. metapathology reads its distribution
-    # version at import time, so the isolated fixture supplies only that metadata.
-    metadata_dir = root / "metapathology-0.0.dev0.dist-info"
-    metadata_dir.mkdir()
-    metadata_dir.joinpath("METADATA").write_text(
-        "Metadata-Version: 2.1\nName: metapathology\nVersion: 0.0.dev0\n",
-        encoding="utf-8",
-    )
+    (root / "benchmark_target.py").write_text('"""Minimal CLI startup target."""\n', encoding="utf-8")
 
 
 def _worker_command(
@@ -217,6 +210,43 @@ def _run_memory(command: list[str], fixture: Path) -> _Record:
     return result
 
 
+def _startup_command(python: Path, fixture: Path, case: str) -> list[str]:
+    """Build one fresh-process command for a startup or CLI timing case."""
+    prefix = [str(python), "-S"]
+    if case == "process":
+        return [*prefix, "-c", "pass"]
+    if case == "package_import":
+        return [*prefix, "-c", "import metapathology"]
+    target = str(fixture / "benchmark_target.py")
+    if case == "direct_script":
+        return [*prefix, target]
+    if case == "monitored_script":
+        return [*prefix, "-m", "metapathology", target]
+    raise ValueError(f"unknown startup benchmark case: {case}")
+
+
+def _sample_startup(python: Path, fixture: Path, repeats: int, seed: int) -> list[_Record]:
+    """Measure package and CLI startup in shuffled fresh interpreter processes."""
+    trials = [(case, repeat) for case in _STARTUP_CASES for repeat in range(repeats)]
+    random.Random(seed).shuffle(trials)
+    rows: list[_Record] = []
+    environment = _worker_environment(fixture)
+    for number, (case, repeat) in enumerate(trials, start=1):
+        command = _startup_command(python, fixture, case)
+        started = time.perf_counter_ns()
+        subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=environment,
+        )
+        elapsed_seconds = (time.perf_counter_ns() - started) / 1_000_000_000
+        rows.append({"case": case, "repeat": repeat, "elapsed_seconds": elapsed_seconds})
+        print(f"[startup {number:3}/{len(trials)}] {case}", flush=True)
+    return rows
+
+
 def _sample(
     python: Path,
     fixture: Path,
@@ -269,6 +299,11 @@ def _median_series(
     rows: list[_Record], counts: list[int], scenario: str, metric: str, monitored: bool, field: str
 ) -> list[float]:
     return [statistics.median(_values(rows, scenario, metric, monitored, count, field)) for count in counts]
+
+
+def _startup_median(rows: list[_Record], case: str) -> float:
+    """Return the median elapsed seconds for one startup case."""
+    return statistics.median(float(row["elapsed_seconds"]) for row in rows if row["case"] == case)
 
 
 def _plot_imports(rows: list[_Record], counts: list[int], output: Path) -> None:
@@ -365,7 +400,9 @@ def _plot_mutations(rows: list[_Record], counts: list[int], output: Path) -> Non
     plt.close(figure)
 
 
-def _write_summary(rows: list[_Record], counts: list[int], target: PythonMetadata, output: Path) -> None:
+def _write_summary(
+    rows: list[_Record], startup_rows: list[_Record], counts: list[int], target: PythonMetadata, output: Path
+) -> None:
     lines = [
         "# metapathology benchmark",
         "",
@@ -378,6 +415,23 @@ def _write_summary(rows: list[_Record], counts: list[int], target: PythonMetadat
     lines.extend(
         (
             f"Median monitor installation time: **{statistics.median(install_times) * 1_000:.3f} ms**.",
+            "",
+            "## Startup and CLI workload",
+            "",
+            "| Case | Median wall time (ms) |",
+            "| --- | ---: |",
+        )
+    )
+    lines.extend(
+        f"| {case.replace('_', ' ')} | {_startup_median(startup_rows, case) * 1_000:.3f} |" for case in _STARTUP_CASES
+    )
+    import_overhead = _startup_median(startup_rows, "package_import") - _startup_median(startup_rows, "process")
+    cli_overhead = _startup_median(startup_rows, "monitored_script") - _startup_median(startup_rows, "direct_script")
+    lines.extend(
+        (
+            "",
+            f"Package import overhead above process startup: **{import_overhead * 1_000:.3f} ms**.",
+            f"CLI wrapper overhead above direct script execution: **{cli_overhead * 1_000:.3f} ms**.",
             "",
             "## Import workload",
             "",
@@ -443,6 +497,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="metapathology-benchmark-") as temporary:
         fixture = Path(temporary)
         _make_fixture(fixture, package, max(args.counts))
+        startup_rows = _sample_startup(args.python, fixture, args.repeats, args.seed)
         rows = _sample(
             args.python,
             fixture,
@@ -454,7 +509,7 @@ def main() -> int:
         )
     target = args.target
     document = {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "benchmark_driver_python": sys.version,
         "benchmark_driver_platform": platform.platform(),
@@ -466,6 +521,7 @@ def main() -> int:
             "memory_repeats": args.memory_repeats,
             "seed": args.seed,
         },
+        "startup_rows": startup_rows,
         "rows": rows,
     }
     data_path = output / "benchmark.json"
@@ -475,7 +531,7 @@ def main() -> int:
     summary_path = output / "summary.md"
     _plot_imports(rows, args.counts, import_graph)
     _plot_mutations(rows, args.counts, mutation_graph)
-    _write_summary(rows, args.counts, target, summary_path)
+    _write_summary(rows, startup_rows, args.counts, target, summary_path)
     print(f"raw data:       {data_path}")
     print(f"summary:        {summary_path}")
     print(f"import graph:   {import_graph}")

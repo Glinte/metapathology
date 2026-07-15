@@ -1,4 +1,4 @@
-"""Isolated benchmark worker for ``scripts/benchmark.py``.
+"""Isolated worker for ``scripts/benchmark.py``.
 
 This file intentionally has no inline dependencies. The parent may run it with
 any supported CPython interpreter without installing benchmark libraries into

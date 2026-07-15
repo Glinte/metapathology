@@ -57,7 +57,8 @@ compatibility contract. Otherwise prefer semantic assertions.
 
 ## Performance benchmarks
 
-Run the import-throughput and memory benchmark from the repository root:
+Run the startup, import-throughput, mutation, and memory benchmark from the
+repository root:
 
 ```console
 uv run --script scripts/benchmark.py
@@ -72,7 +73,9 @@ the workload and interpreter, for example:
 uv run --script scripts/benchmark.py --counts 50,250,1000 --repeats 7 --python python3.12
 ```
 
-Timing and memory are collected in separate trials so `tracemalloc` does not
+Fresh-process timings also cover bare interpreter startup, package import,
+direct script execution, and the monitored CLI wrapper. Timing and memory are
+collected in separate trials so `tracemalloc` does not
 distort the speed measurements. Workers use `python -S` and disable bytecode
 writes to exclude interpreter-specific `.pth` finders and cache-warming order
 effects. The `native` scenario therefore measures the controlled standard-
@@ -112,6 +115,11 @@ Development dependencies need a recorded justification. Runtime dependencies
 are not permitted. Temporary compatibility code must include a `TODO` with a
 specific removal trigger such as a supported Python version, dependency
 version, or date.
+
+When releasing, update both `project.version` in `pyproject.toml` and
+`metapathology.__version__`. The package test requires them to match. Keeping
+the small duplication avoids importing `importlib.metadata` during every
+package import and CLI invocation.
 
 The private `_InstrumentedMetaPath.__iadd__` and `__imul__` annotations
 deliberately return the concrete class while Python 3.10 remains supported.

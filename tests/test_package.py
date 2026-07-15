@@ -1,6 +1,10 @@
+import subprocess
+from collections.abc import Callable
 from importlib.metadata import version
 
 import metapathology
+
+RunPython = Callable[..., "subprocess.CompletedProcess[str]"]
 
 _EXPECTED_PUBLIC_API = frozenset(
     {
@@ -20,8 +24,19 @@ _EXPECTED_PUBLIC_API = frozenset(
 )
 
 
-def test_distribution_metadata_is_available() -> None:
+def test_runtime_version_matches_distribution_metadata() -> None:
     assert version("metapathology") == metapathology.__version__
+
+
+def test_package_import_does_not_load_distribution_metadata(run_python: RunPython) -> None:
+    proc = run_python(
+        "import sys\n"
+        "assert 'importlib.metadata' not in sys.modules\n"
+        "import metapathology\n"
+        "print('importlib.metadata' in sys.modules)\n"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "False"
 
 
 def test_public_api_surface() -> None:

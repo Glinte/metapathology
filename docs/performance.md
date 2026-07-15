@@ -59,7 +59,8 @@ summary, and two PNG graphs:
 uv run --script scripts/benchmark.py
 ```
 
-The import graph separates two cases:
+The summary first reports fresh-process startup, package import, direct-script,
+and monitored-CLI timings. The import graph separates two cases:
 
 - `native` uses only the controlled standard-finder path and measures the
   audit-hook/list-check overhead without retained finder-call records.
