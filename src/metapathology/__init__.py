@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from metapathology._monitor import Monitor, get_monitor, install, render_report, uninstall, write_report
     from metapathology._records import (
         FindSpecCall,
+        ImportAuditStart,
         ImporterCacheDiff,
         ImporterCacheEntry,
         ImporterCacheReplacement,
@@ -40,6 +41,7 @@ _MONITOR_EXPORTS = frozenset(("Monitor", "get_monitor", "install", "render_repor
 _RECORD_EXPORTS = frozenset(
     (
         "FindSpecCall",
+        "ImportAuditStart",
         "ImportObjectRef",
         "ImporterCacheDiff",
         "ImporterCacheEntry",
@@ -55,6 +57,7 @@ _RECORD_EXPORTS = frozenset(
 
 __all__ = [
     "FindSpecCall",
+    "ImportAuditStart",
     "ImportObjectRef",
     "ImporterCacheDiff",
     "ImporterCacheEntry",

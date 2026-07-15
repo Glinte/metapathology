@@ -20,6 +20,7 @@ from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 from metapathology import _report
 from metapathology._records import (
     FindSpecCall,
+    ImportAuditStart,
     ImporterCacheDiff,
     ImporterCacheEntry,
     ImporterCacheReplacement,
@@ -182,6 +183,25 @@ def _diff_importer_cache(
 def _cache_entries(snapshot: dict[str, ImportObjectRef | None]) -> tuple[ImporterCacheEntry, ...]:
     """Project a cache snapshot into deterministic public entry records."""
     return tuple(ImporterCacheEntry(path, snapshot[path]) for path in sorted(snapshot))
+
+
+def _audit_resolution_name(args: tuple[object, ...]) -> str | None:
+    """Return the module name only for CPython's resolution-start event shape.
+
+    Native extension loading emits a second ``import`` event whose filename is
+    populated and whose import-state arguments are ``None``. It is a loading
+    boundary, not a second resolution start.
+    """
+    if (
+        len(args) < 5
+        or type(args[0]) is not str
+        or args[1] is not None
+        or args[2] is None
+        or args[3] is None
+        or args[4] is None
+    ):
+        return None
+    return args[0]
 
 
 def _snapshot_importer_cache() -> tuple[
@@ -532,7 +552,7 @@ class Monitor:
             atexit.unregister(self._report_atexit)
 
     def _audit(self, event: str, args: tuple[object, ...]) -> None:
-        """Detect direct import-list reassignment on each ``import`` audit event.
+        """Record resolution starts and detect direct import-list reassignment.
 
         Audit hooks are irremovable, so this must stay a cheap no-op once the
         monitor is disabled. Exceptions are diverted into the event log because
@@ -549,7 +569,25 @@ class Monitor:
             return
         self._local.active = True
         try:
-            self._check_importer_cache_fingerprint()
+            fullname = _audit_resolution_name(args)
+            if fullname is None:
+                self._check_importer_cache_fingerprint()
+            else:
+                current_meta_path = sys.meta_path
+                meta_path_id = id(current_meta_path)
+                meta_path_type_names = tuple(type_name(finder) for finder in list(current_meta_path))
+                path_hooks_id = id(sys.path_hooks) if self._path_hooks_enabled else None
+                cache_fingerprint: tuple[int, int] | None = None
+                if self._importer_cache_enabled:
+                    cache = sys.path_importer_cache
+                    cache_fingerprint = (id(cache), len(cache))
+                self._record_import_audit_start(
+                    fullname,
+                    meta_path_id,
+                    meta_path_type_names,
+                    path_hooks_id,
+                    cache_fingerprint,
+                )
             meta_path_current = sys.meta_path is self._instrumented
             path_hooks_current = not self._path_hooks_enabled or sys.path_hooks is self._instrumented_path_hooks
             if meta_path_current and path_hooks_current:
@@ -560,6 +598,36 @@ class Monitor:
             self._record_internal_error("audit_hook", exc)
         finally:
             self._local.active = False
+
+    def _record_import_audit_start(
+        self,
+        fullname: str,
+        meta_path_id: int,
+        meta_path_type_names: tuple[str, ...],
+        path_hooks_id: int | None,
+        cache_fingerprint: tuple[int, int] | None,
+    ) -> None:
+        """Append one plain-data audit record and update T2's cheap fingerprint."""
+        thread_name = threading.current_thread().name
+        importer_cache_id = None if cache_fingerprint is None else cache_fingerprint[0]
+        importer_cache_size = None if cache_fingerprint is None else cache_fingerprint[1]
+        with self._record_lock:
+            if cache_fingerprint is not None and cache_fingerprint != self._importer_cache_fingerprint:
+                self._importer_cache_fingerprint = cache_fingerprint
+                self._importer_cache_dirty = True
+            self._seq += 1
+            self._events.append(
+                ImportAuditStart(
+                    seq=self._seq,
+                    fullname=fullname,
+                    meta_path_id=meta_path_id,
+                    meta_path_type_names=meta_path_type_names,
+                    path_hooks_id=path_hooks_id,
+                    importer_cache_id=importer_cache_id,
+                    importer_cache_size=importer_cache_size,
+                    thread_name=thread_name,
+                )
+            )
 
     def _check_importer_cache_fingerprint(self) -> None:
         """Mark T2 dirty using only dictionary identity and length."""

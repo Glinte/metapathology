@@ -31,7 +31,7 @@ import observed_mod
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 0, "minor": 4, "name": "metapathology.report"}
+assert document["schema"] == {"major": 0, "minor": 5, "name": "metapathology.report"}
 assert document["capture"]["early_site_bootstrap"] is None
 assert document["capture"]["cutoff_seq"] == max(event["seq"] for event in document["timeline"])
 assert document["snapshots"][0]["id"] == "snapshot:install"
@@ -43,6 +43,7 @@ assert "path_hooks_mutation" in kinds, kinds
 assert "path_hooks_reassignment" in kinds, kinds
 assert "find_spec_call" in kinds, kinds
 assert "importer_cache_diff" in kinds, kinds
+assert "import_audit_start" in kinds, kinds
 assert all(event["id"] == f"event:{event['seq']}" for event in document["timeline"])
 stack_event = next(event for event in document["timeline"] if event["kind"] == "meta_path_mutation")
 assert set(stack_event["stack"][0]) == {"filename", "function", "lineno"}

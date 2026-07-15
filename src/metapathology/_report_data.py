@@ -14,6 +14,7 @@ from importlib.machinery import PathFinder
 from metapathology import __version__
 from metapathology._records import (
     FindSpecCall,
+    ImportAuditStart,
     ImporterCacheDiff,
     ImporterCacheEntry,
     ImporterCacheReplacement,
@@ -45,7 +46,7 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 4
+_SCHEMA_MINOR = 5
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -465,6 +466,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
     path_hook_mutations = sum(isinstance(event, PathHooksMutation) for event in document.events)
     path_hook_reassignments = sum(isinstance(event, PathHooksReassignment) for event in document.events)
     importer_cache_diffs = sum(isinstance(event, ImporterCacheDiff) for event in document.events)
+    audit_starts = sum(isinstance(event, ImportAuditStart) for event in document.events)
     calls = sum(isinstance(event, FindSpecCall) for event in document.events)
     version = sys.version_info
     return {
@@ -489,6 +491,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
             "mechanisms": [
                 _mechanism("meta_path_mutations", document.monitor_enabled, mutations, "best_effort"),
                 _mechanism("meta_path_reassignments", document.monitor_enabled, reassignments, "import_boundaries"),
+                _mechanism("import_audit_starts", document.monitor_enabled, audit_starts, "resolution_starts"),
                 _mechanism("finder_attribution", document.monitor_enabled, calls, "instrumented_finders"),
                 _mechanism("path_hooks_mutations", document.path_hooks_enabled, path_hook_mutations, "best_effort"),
                 _mechanism(
@@ -613,7 +616,27 @@ def _json_early_site_bootstrap(bootstrap: EarlySiteBootstrap | None) -> dict[str
 def _json_event(event: MonitorEvent) -> dict[str, object]:
     """Serialize a public event record without inspecting foreign objects."""
     result: dict[str, object] = {"id": f"event:{event.seq}", "seq": event.seq}
-    if isinstance(event, FindSpecCall):
+    if isinstance(event, ImportAuditStart):
+        result.update(
+            {
+                "evidence": "resolution_started",
+                "fullname": event.fullname,
+                "importer_cache": None
+                if event.importer_cache_id is None
+                else {
+                    "object_id": f"0x{event.importer_cache_id:x}",
+                    "size": event.importer_cache_size,
+                },
+                "kind": "import_audit_start",
+                "meta_path": {
+                    "entries": list(event.meta_path_type_names),
+                    "object_id": f"0x{event.meta_path_id:x}",
+                },
+                "path_hooks_id": None if event.path_hooks_id is None else f"0x{event.path_hooks_id:x}",
+                "thread_name": event.thread_name,
+            }
+        )
+    elif isinstance(event, FindSpecCall):
         result.update(
             {
                 "exception_type_name": event.exception_type_name,

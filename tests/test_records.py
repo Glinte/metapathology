@@ -2,7 +2,7 @@
 
 import pytest
 
-from metapathology import ImporterCacheEntry, ImporterCacheReplacement, ImportObjectRef, InternalError
+from metapathology import ImportAuditStart, ImporterCacheEntry, ImporterCacheReplacement, ImportObjectRef, InternalError
 
 
 def test_record_fields_are_read_only_and_slotted() -> None:
@@ -44,3 +44,25 @@ def test_importer_cache_values_distinguish_negative_entries_and_replacements() -
     assert not hasattr(entry, "__dict__")
     with pytest.raises(AttributeError, match="read-only"):
         setattr(entry, "path", "/changed")
+
+
+def test_import_audit_start_contains_only_plain_capture_data() -> None:
+    record = ImportAuditStart(
+        seq=7,
+        fullname="example.module",
+        meta_path_id=41,
+        meta_path_type_names=("BuiltinImporter", "PathFinder"),
+        path_hooks_id=42,
+        importer_cache_id=43,
+        importer_cache_size=5,
+        thread_name="MainThread",
+    )
+
+    assert repr(record) == (
+        "ImportAuditStart(seq=7, fullname='example.module', meta_path_id=41, "
+        "meta_path_type_names=('BuiltinImporter', 'PathFinder'), path_hooks_id=42, "
+        "importer_cache_id=43, importer_cache_size=5, thread_name='MainThread')"
+    )
+    assert not hasattr(record, "__dict__")
+    with pytest.raises(AttributeError, match="read-only"):
+        setattr(record, "fullname", "changed")

@@ -4,12 +4,14 @@ import os
 
 from metapathology._records import (
     FindSpecCall,
+    ImportAuditStart,
     ImporterCacheDiff,
     ImporterCacheEntry,
     ImportObjectRef,
     InternalError,
     MetaPathMutation,
     MetaPathReassignment,
+    MonitorEvent,
     PathHooksMutation,
     PathHooksReassignment,
 )
@@ -95,6 +97,13 @@ def render_lines(document: ReportDocument) -> list[str]:
     lines.append(f"modules imported since install: {module_count}")
 
     lines.append("")
+    lines.append(f"-- chronological evidence timeline ({len(document.events)}) --")
+    lines.append("Sequence numbers are capture order; concurrent events are not a global wall-clock order.")
+    if not document.events:
+        lines.append("(none)")
+    lines.extend(_timeline_line(event) for event in document.events)
+
+    lines.append("")
     lines.append(f"-- sys.meta_path mutations ({len(mutations)}) --")
     if not mutations:
         lines.append("(none)")
@@ -159,6 +168,66 @@ def _internal_error_line(error: InternalError) -> str:
     """Format an internal error without requiring captured foreign exception text."""
     line = f"#{error.seq} in {error.where}: {error.exception_type_name}"
     return line if error.message is None else f"{line}: {error.message}"
+
+
+def _timeline_line(event: MonitorEvent) -> str:
+    """Render one compact line using only data captured in the event record."""
+    if isinstance(event, ImportAuditStart):
+        path_hooks = "disabled" if event.path_hooks_id is None else f"0x{event.path_hooks_id:x}"
+        if event.importer_cache_id is None:
+            importer_cache = "disabled"
+        else:
+            importer_cache = f"0x{event.importer_cache_id:x} size {event.importer_cache_size}"
+        return (
+            f"#{event.seq} import audit: resolution started for {event.fullname!r}; outcome unknown "
+            f"[thread {event.thread_name}; meta_path 0x{event.meta_path_id:x} "
+            f"{_names_line(event.meta_path_type_names)}; path_hooks {path_hooks}; "
+            f"importer_cache {importer_cache}]"
+        )
+    if isinstance(event, FindSpecCall):
+        if event.exception_type_name is not None:
+            outcome = f"raised {event.exception_type_name}"
+        elif event.found:
+            outcome = f"claimed with loader {event.loader_type_name}, origin {event.origin!r}"
+        else:
+            outcome = "passed"
+        return (
+            f"#{event.seq} finder {event.finder_type_name} id 0x{event.finder_id:x} probed "
+            f"{event.fullname!r}: {outcome} [thread {event.thread_name}]"
+        )
+    if isinstance(event, ImporterCacheDiff):
+        return (
+            f"#{event.seq} importer cache diff at {event.observation}: +{len(event.added)} "
+            f"-{len(event.removed)} ~{len(event.replaced)} [thread {event.thread_name}]"
+        )
+    if isinstance(event, MetaPathMutation):
+        return f"#{event.seq} sys.meta_path {event.op} {_timeline_delta(event.added, event.removed)} [thread {event.thread_name}]"
+    if isinstance(event, MetaPathReassignment):
+        return (
+            f"#{event.seq} sys.meta_path reassignment detected during {event.during_import!r} "
+            f"[thread {event.thread_name}]"
+        )
+    if isinstance(event, PathHooksMutation):
+        return (
+            f"#{event.seq} sys.path_hooks {event.op}: +{len(event.added)} -{len(event.removed)} "
+            f"[thread {event.thread_name}]"
+        )
+    if isinstance(event, PathHooksReassignment):
+        return (
+            f"#{event.seq} sys.path_hooks reassignment detected during {event.during_import!r} "
+            f"[thread {event.thread_name}]"
+        )
+    return _internal_error_line(event)
+
+
+def _timeline_delta(added: tuple[str, ...], removed: tuple[str, ...]) -> str:
+    """Format a compact meta-path delta."""
+    parts: list[str] = []
+    if added:
+        parts.append("+" + _names_line(added))
+    if removed:
+        parts.append("-" + _names_line(removed))
+    return " ".join(parts) if parts else "(order change)"
 
 
 def _names_line(names: tuple[str, ...]) -> str:

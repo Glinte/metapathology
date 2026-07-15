@@ -13,6 +13,7 @@ _EXPECTED_PUBLIC_API = frozenset(
         "ImporterCacheDiff",
         "ImporterCacheEntry",
         "ImporterCacheReplacement",
+        "ImportAuditStart",
         "InternalError",
         "MetaPathMutation",
         "MetaPathReassignment",

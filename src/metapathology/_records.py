@@ -183,6 +183,66 @@ class ImporterCacheDiff(_Record):
         self._thread_name = thread_name
 
 
+class ImportAuditStart(_Record):
+    """One CPython ``import`` audit event proving resolution started.
+
+    The audit event has no matching completion signal. This record therefore
+    does not claim that the import succeeded, failed, or selected a finder.
+    Enabled auxiliary mechanisms contribute only constant-size identities and
+    the importer-cache size; detailed list and cache changes remain separate
+    events.
+    """
+
+    __slots__ = (
+        "_fullname",
+        "_importer_cache_id",
+        "_importer_cache_size",
+        "_meta_path_id",
+        "_meta_path_type_names",
+        "_path_hooks_id",
+        "_seq",
+        "_thread_name",
+    )
+    _fields = (
+        "seq",
+        "fullname",
+        "meta_path_id",
+        "meta_path_type_names",
+        "path_hooks_id",
+        "importer_cache_id",
+        "importer_cache_size",
+        "thread_name",
+    )
+    seq = _ReadOnlyField[int]("_seq")
+    fullname = _ReadOnlyField[str]("_fullname")
+    meta_path_id = _ReadOnlyField[int]("_meta_path_id")
+    meta_path_type_names = _ReadOnlyField[tuple[str, ...]]("_meta_path_type_names")
+    path_hooks_id = _ReadOnlyField[int | None]("_path_hooks_id")
+    importer_cache_id = _ReadOnlyField[int | None]("_importer_cache_id")
+    importer_cache_size = _ReadOnlyField[int | None]("_importer_cache_size")
+    thread_name = _ReadOnlyField[str]("_thread_name")
+
+    def __init__(
+        self,
+        seq: int,
+        fullname: str,
+        meta_path_id: int,
+        meta_path_type_names: tuple[str, ...],
+        path_hooks_id: int | None,
+        importer_cache_id: int | None,
+        importer_cache_size: int | None,
+        thread_name: str,
+    ) -> None:
+        self._seq = seq
+        self._fullname = fullname
+        self._meta_path_id = meta_path_id
+        self._meta_path_type_names = meta_path_type_names
+        self._path_hooks_id = path_hooks_id
+        self._importer_cache_id = importer_cache_id
+        self._importer_cache_size = importer_cache_size
+        self._thread_name = thread_name
+
+
 class MetaPathMutation(_Record):
     """A mutating method call observed on the instrumented ``sys.meta_path`` list.
 
@@ -468,6 +528,7 @@ class InternalError(_Record):
 # Everything the monitor records goes into one chronological log; ``seq`` orders records across types.
 MonitorEvent = (
     FindSpecCall
+    | ImportAuditStart
     | ImporterCacheDiff
     | InternalError
     | MetaPathMutation

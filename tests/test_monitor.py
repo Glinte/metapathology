@@ -530,6 +530,7 @@ import sys
 import threading
 
 import metapathology
+from metapathology import ImportAuditStart
 
 class DummyFinder:
     def find_spec(self, fullname, path=None, target=None):
@@ -592,6 +593,8 @@ for thread in threads:
 
 assert not failures, failures
 assert all(module_name in sys.modules for module_name in module_names)
+starts = {event.fullname for event in monitor.events() if isinstance(event, ImportAuditStart)}
+assert starts >= set(module_names), (starts, module_names)
 assert monitor.enabled
 metapathology.uninstall()
 assert type(sys.meta_path) is list
