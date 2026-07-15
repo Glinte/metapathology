@@ -31,7 +31,7 @@ import observed_mod
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 0, "minor": 6, "name": "metapathology.report"}
+assert document["schema"] == {"major": 0, "minor": 7, "name": "metapathology.report"}
 assert document["capture"]["early_site_bootstrap"] is None
 assert document["capture"]["cutoff_seq"] == max(event["seq"] for event in document["timeline"])
 assert document["snapshots"][0]["id"] == "snapshot:install"
@@ -149,6 +149,7 @@ def test_report_document_uses_hand_written_slots(run_python: RunPython) -> None:
         "    importer_cache_coalesced=0,\n"
         "    modules_since_install=(), events=(), skipped_finders=(), findings=(),\n"
         "    early_site_bootstrap=None,\n"
+        "    deep_diagnostics=(),\n"
         "    report_errors=(), cwd=None, argv=(),\n"
         ")\n"
         "try:\n"

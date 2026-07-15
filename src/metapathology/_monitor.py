@@ -19,6 +19,7 @@ from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 
 from metapathology import _report
 from metapathology._records import (
+    DeepDiagnosticCall,
     FindSpecCall,
     ImportAuditStart,
     ImporterCacheDiff,
@@ -245,6 +246,7 @@ class Monitor:
         # imports still run normally, but our instrumentation delegates without
         # trying to observe itself recursively.
         self._local = _ThreadState()
+        self._deep_local = _ThreadState()
         # One counter for all record types, so the report can interleave the
         # different event kinds chronologically.
         self._seq = 0
@@ -300,6 +302,12 @@ class Monitor:
         self._baseline_modules: frozenset[str] = frozenset()
         # Finder display names at install time, for the report header.
         self._initial_meta_path: tuple[str, ...] = ()
+        self._deep_path_hooks = False
+        self._deep_path_entry_finders = False
+        self._deep_loaders = False
+        self._deep_hook_wrappers: dict[int, tuple[object, object]] = {}
+        self._deep_finder_patches: dict[int, tuple[object, object]] = {}
+        self._deep_loader_patches: dict[int, tuple[object, object]] = {}
 
     @property
     def enabled(self) -> bool:
@@ -325,6 +333,18 @@ class Monitor:
     def importer_cache_enabled(self) -> bool:
         """Whether passive ``sys.path_importer_cache`` monitoring is active."""
         return self._enabled and self._importer_cache_enabled
+
+    @property
+    def deep_diagnostics(self) -> tuple[str, ...]:
+        """Names of explicitly enabled inline delegation mechanisms."""
+        enabled: list[str] = []
+        if self._enabled and self._deep_path_hooks:
+            enabled.append("path_hooks")
+        if self._enabled and self._deep_path_entry_finders:
+            enabled.append("path_entry_finders")
+        if self._enabled and self._deep_loaders:
+            enabled.append("loaders")
+        return tuple(enabled)
 
     @property
     def initial_importer_cache(self) -> tuple[ImporterCacheEntry, ...]:
@@ -405,6 +425,9 @@ class Monitor:
         report_format: "Literal['text', 'json'] | None" = None,
         monitor_path_hooks: bool = True,
         monitor_importer_cache: bool = True,
+        deep_path_hooks: bool = False,
+        deep_path_entry_finders: bool = False,
+        deep_loaders: bool = False,
     ) -> None:
         """Instrument ``sys.meta_path`` and register the import audit hook (idempotent).
 
@@ -425,6 +448,9 @@ class Monitor:
             monitor_importer_cache: Passively observe
                 ``sys.path_importer_cache``. A later true value enables the
                 mechanism; false never disables an already-active mechanism.
+            deep_path_hooks: Replace path hooks with exact-delegating call wrappers.
+            deep_path_entry_finders: Shadow mutable path-entry finder calls.
+            deep_loaders: Shadow mutable loader lifecycle methods.
         """
         with self._reinstall_lock:
             was_enabled = self._enabled
@@ -462,6 +488,15 @@ class Monitor:
                 self._enable_path_hooks()
             if monitor_importer_cache and not self._importer_cache_enabled:
                 self._enable_importer_cache()
+            if deep_path_entry_finders:
+                self._deep_path_entry_finders = True
+                for finder in list(sys.path_importer_cache.values()):
+                    if finder is not None:
+                        self._instrument_deep_path_entry_finder(finder)
+            if deep_loaders:
+                self._deep_loaders = True
+            if deep_path_hooks and not self._deep_path_hooks:
+                self._enable_deep_path_hooks()
         if report_at_exit and not self._report_at_exit:
             self._report_at_exit = True
             atexit.register(self._report_atexit)
@@ -519,6 +554,159 @@ class Monitor:
         self._importer_cache_enabled = True
         self._observe_importer_cache("install", initial=True)
 
+    def _enable_deep_path_hooks(self) -> None:
+        """Replace current path hooks with wrappers only after explicit opt-in."""
+        self._deep_path_hooks = True
+        for index, hook in enumerate(list(sys.path_hooks)):
+            wrapper = self._make_deep_path_hook(hook)
+            self._deep_hook_wrappers[id(wrapper)] = (wrapper, hook)
+            list.__setitem__(sys.path_hooks, index, wrapper)
+
+    def _make_deep_path_hook(self, hook: "_PathHook") -> "_PathHook":
+        """Return an exact-delegating path-hook wrapper."""
+        hook_id = id(hook)
+        hook_name = type_name(hook)
+
+        @functools.wraps(hook, assigned=(), updated=())
+        def wrapped(path: str) -> "PathEntryFinderProtocol":
+            if not self._enabled:
+                return hook(path)
+            if self._deep_local.active:
+                self._record_deep_call("path_hook", hook_id, hook_name, None, path, "unobserved_reentrant", None)
+                return hook(path)
+            self._deep_local.active = True
+            try:
+                try:
+                    finder = hook(path)
+                except BaseException as exc:
+                    self._record_deep_call("path_hook", hook_id, hook_name, None, path, "raised", type(exc).__name__)
+                    raise
+                self._record_deep_call("path_hook", hook_id, hook_name, None, path, "returned", None)
+                self._instrument_deep_path_entry_finder(finder)
+                return finder
+            finally:
+                self._deep_local.active = False
+
+        return wrapped
+
+    def _instrument_deep_path_entry_finder(self, finder: object) -> None:
+        """Shadow one mutable path-entry finder's find_spec when requested."""
+        if not self._deep_path_entry_finders or id(finder) in self._deep_finder_patches:
+            return
+        try:
+            instance_dict = finder.__dict__
+            original = getattr(finder, "find_spec")
+            previous = instance_dict.get("find_spec", _MISSING)
+            finder_id = id(finder)
+            finder_name = type_name(finder)
+
+            @functools.wraps(original, assigned=(), updated=())
+            def wrapped(fullname: str, target: object = None) -> object:
+                if not self._enabled:
+                    return original(fullname, target)
+                if self._deep_local.active:
+                    self._record_deep_call(
+                        "path_entry_finder", finder_id, finder_name, fullname, None, "unobserved_reentrant", None
+                    )
+                    return original(fullname, target)
+                self._deep_local.active = True
+                try:
+                    try:
+                        spec = original(fullname, target)
+                    except BaseException as exc:
+                        self._record_deep_call(
+                            "path_entry_finder", finder_id, finder_name, fullname, None, "raised", type(exc).__name__
+                        )
+                        raise
+                    self._record_deep_call(
+                        "path_entry_finder",
+                        finder_id,
+                        finder_name,
+                        fullname,
+                        None,
+                        "found" if spec is not None else "not_found",
+                        None,
+                    )
+                    if spec is not None:
+                        self._instrument_deep_loader(getattr(spec, "loader", None), fullname)
+                    return spec
+                finally:
+                    self._deep_local.active = False
+
+            instance_dict["find_spec"] = wrapped
+            self._deep_finder_patches[id(finder)] = (finder, previous)
+        except Exception as exc:
+            self._record_internal_error("deep_path_entry_finder", exc)
+
+    def _instrument_deep_loader(self, loader: object, fullname: str) -> None:
+        """Shadow one mutable loader's exec_module when requested."""
+        if loader is None or not self._deep_loaders or id(loader) in self._deep_loader_patches:
+            return
+        try:
+            instance_dict = loader.__dict__
+            original = getattr(loader, "exec_module")
+            previous = instance_dict.get("exec_module", _MISSING)
+            loader_id = id(loader)
+            loader_name = type_name(loader)
+
+            @functools.wraps(original, assigned=(), updated=())
+            def wrapped(module: object) -> object:
+                if not self._enabled:
+                    return original(module)
+                if self._deep_local.active:
+                    self._record_deep_call(
+                        "loader_exec_module", loader_id, loader_name, fullname, None, "unobserved_reentrant", None
+                    )
+                    return original(module)
+                self._deep_local.active = True
+                try:
+                    try:
+                        result = original(module)
+                    except BaseException as exc:
+                        self._record_deep_call(
+                            "loader_exec_module", loader_id, loader_name, fullname, None, "raised", type(exc).__name__
+                        )
+                        raise
+                    self._record_deep_call(
+                        "loader_exec_module", loader_id, loader_name, fullname, None, "returned", None
+                    )
+                    return result
+                finally:
+                    self._deep_local.active = False
+
+            instance_dict["exec_module"] = wrapped
+            self._deep_loader_patches[id(loader)] = (loader, previous)
+        except Exception as exc:
+            self._record_internal_error("deep_loader", exc)
+
+    def _record_deep_call(
+        self,
+        boundary: str,
+        object_id: int,
+        object_type_name: str,
+        fullname: str | None,
+        path: str | None,
+        outcome: str,
+        exception_type_name: str | None,
+    ) -> None:
+        """Append primitive-only deep evidence without holding a lock across delegation."""
+        thread_name = threading.current_thread().name
+        with self._record_lock:
+            self._seq += 1
+            self._events.append(
+                DeepDiagnosticCall(
+                    self._seq,
+                    boundary,
+                    object_id,
+                    object_type_name,
+                    fullname,
+                    path,
+                    outcome,
+                    exception_type_name,
+                    thread_name,
+                )
+            )
+
     def uninstall(self) -> None:
         """Restore plain import lists and unshadow all finders (idempotent)."""
         with self._reinstall_lock:
@@ -537,6 +725,20 @@ class Monitor:
                     self._record_internal_error("uninstall_path_hooks", exc)
                 self._path_hooks_enabled = False
                 self._instrumented_path_hooks = None
+            for finder, previous in list(self._deep_finder_patches.values()):
+                self._restore_attribute(finder, "find_spec", previous)
+            for loader, previous in list(self._deep_loader_patches.values()):
+                self._restore_attribute(loader, "exec_module", previous)
+            if self._deep_hook_wrappers:
+                originals = self._deep_hook_wrappers
+                restored = [originals.get(id(hook), (None, hook))[1] for hook in list(sys.path_hooks)]
+                sys.path_hooks = _cast("list[_PathHook]", restored)
+            self._deep_hook_wrappers.clear()
+            self._deep_finder_patches.clear()
+            self._deep_loader_patches.clear()
+            self._deep_path_hooks = False
+            self._deep_path_entry_finders = False
+            self._deep_loaders = False
             for finder, _original, previous in list(self._patched.values()):
                 self._restore_find_spec(finder, previous)
             with self._record_lock:
@@ -550,6 +752,18 @@ class Monitor:
         if self._report_at_exit:
             self._report_at_exit = False
             atexit.unregister(self._report_atexit)
+
+    @staticmethod
+    def _restore_attribute(obj: object, name: str, previous: object) -> None:
+        """Restore an instance-dict shadow without invoking foreign setters."""
+        try:
+            instance_dict = obj.__dict__
+            if previous is _MISSING:
+                del instance_dict[name]
+            else:
+                instance_dict[name] = previous
+        except (AttributeError, KeyError, TypeError):
+            pass
 
     def _audit(self, event: str, args: tuple[object, ...]) -> None:
         """Record resolution starts and detect direct import-list reassignment.
@@ -1024,6 +1238,7 @@ class Monitor:
                 loader = getattr(spec, "loader", None)
                 if loader is not None:
                     loader_type_name = type_name(loader)
+                    self._instrument_deep_loader(loader, fullname)
                 raw_origin = getattr(spec, "origin", None)
                 if isinstance(raw_origin, str):
                     origin = raw_origin
@@ -1117,6 +1332,15 @@ class Monitor:
                 return
             added_refs = tuple(_import_object_ref(hook) for hook in added)
             removed_refs = tuple(_import_object_ref(hook) for hook in removed)
+            if self._deep_path_hooks:
+                for added_hook in added:
+                    if id(added_hook) in self._deep_hook_wrappers:
+                        continue
+                    wrapper = self._make_deep_path_hook(_cast("_PathHook", added_hook))
+                    self._deep_hook_wrappers[id(wrapper)] = (wrapper, added_hook)
+                    for index, current in enumerate(mutated):
+                        if current is added_hook:
+                            list.__setitem__(mutated, index, wrapper)
             contents_after = tuple(_import_object_ref(hook) for hook in list(mutated))
             observed_hooks = (*added, *removed, *mutated)
             thread_name = threading.current_thread().name
@@ -1460,6 +1684,9 @@ def install(
     report_format: "Literal['text', 'json'] | None" = None,
     monitor_path_hooks: bool = True,
     monitor_importer_cache: bool = True,
+    deep_path_hooks: bool = False,
+    deep_path_entry_finders: bool = False,
+    deep_loaders: bool = False,
 ) -> Monitor:
     """Install the import-machinery monitor (idempotent) and return it.
 
@@ -1477,6 +1704,9 @@ def install(
         monitor_importer_cache: Passively observe
             ``sys.path_importer_cache``. A later true value enables this
             mechanism.
+        deep_path_hooks: Replace path hooks with call-capturing delegates.
+        deep_path_entry_finders: Shadow path-entry finder calls as they appear.
+        deep_loaders: Shadow loader execution reached through captured finders.
     """
     global _monitor_singleton
     with _singleton_lock:
@@ -1489,6 +1719,9 @@ def install(
         report_format=report_format,
         monitor_path_hooks=monitor_path_hooks,
         monitor_importer_cache=monitor_importer_cache,
+        deep_path_hooks=deep_path_hooks,
+        deep_path_entry_finders=deep_path_entry_finders,
+        deep_loaders=deep_loaders,
     )
     return monitor
 

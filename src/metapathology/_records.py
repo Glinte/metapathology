@@ -495,6 +495,64 @@ class FindSpecCall(_Record):
         self._thread_name = thread_name
 
 
+class DeepDiagnosticCall(_Record):
+    """One call crossing an explicitly enabled deep-diagnostics boundary."""
+
+    __slots__ = (
+        "_boundary",
+        "_exception_type_name",
+        "_fullname",
+        "_object_id",
+        "_object_type_name",
+        "_outcome",
+        "_path",
+        "_seq",
+        "_thread_name",
+    )
+    _fields = (
+        "seq",
+        "boundary",
+        "object_id",
+        "object_type_name",
+        "fullname",
+        "path",
+        "outcome",
+        "exception_type_name",
+        "thread_name",
+    )
+    seq = _ReadOnlyField[int]("_seq")
+    boundary = _ReadOnlyField[str]("_boundary")
+    object_id = _ReadOnlyField[int]("_object_id")
+    object_type_name = _ReadOnlyField[str]("_object_type_name")
+    fullname = _ReadOnlyField[str | None]("_fullname")
+    path = _ReadOnlyField[str | None]("_path")
+    outcome = _ReadOnlyField[str]("_outcome")
+    exception_type_name = _ReadOnlyField[str | None]("_exception_type_name")
+    thread_name = _ReadOnlyField[str]("_thread_name")
+
+    def __init__(
+        self,
+        seq: int,
+        boundary: str,
+        object_id: int,
+        object_type_name: str,
+        fullname: str | None,
+        path: str | None,
+        outcome: str,
+        exception_type_name: str | None,
+        thread_name: str,
+    ) -> None:
+        self._seq = seq
+        self._boundary = boundary
+        self._object_id = object_id
+        self._object_type_name = object_type_name
+        self._fullname = fullname
+        self._path = path
+        self._outcome = outcome
+        self._exception_type_name = exception_type_name
+        self._thread_name = thread_name
+
+
 class InternalError(_Record):
     """An exception raised inside metapathology's own instrumentation.
 
@@ -527,7 +585,8 @@ class InternalError(_Record):
 
 # Everything the monitor records goes into one chronological log; ``seq`` orders records across types.
 MonitorEvent = (
-    FindSpecCall
+    DeepDiagnosticCall
+    | FindSpecCall
     | ImportAuditStart
     | ImporterCacheDiff
     | InternalError

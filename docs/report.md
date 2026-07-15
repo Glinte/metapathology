@@ -41,6 +41,12 @@ Sequence numbers reflect acquisition of the monitor's shared recording lock.
 They provide deterministic capture order but do not claim a process-wide
 wall-clock order for concurrent threads.
 
+Opt-in deep calls appear as `deep_diagnostic_call` records in JSON and `deep`
+lines in text. Their evidence level is `deep_delegation`. A returned, found,
+not-found, or raised outcome describes the exact wrapped boundary;
+`unobserved_reentrant` explicitly marks a nested call that delegated under the
+guard without reconstructing an exact nested trace.
+
 An import-audit line proves only that uncached resolution started. It includes
 the copied `sys.meta_path` identity and finder type names plus constant-size
 identities/fingerprints for enabled auxiliary mechanisms. It deliberately says

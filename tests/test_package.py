@@ -8,6 +8,7 @@ RunPython = Callable[..., "subprocess.CompletedProcess[str]"]
 
 _EXPECTED_PUBLIC_API = frozenset(
     {
+        "DeepDiagnosticCall",
         "FindSpecCall",
         "ImportObjectRef",
         "ImporterCacheDiff",

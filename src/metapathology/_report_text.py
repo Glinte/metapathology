@@ -3,6 +3,7 @@
 import os
 
 from metapathology._records import (
+    DeepDiagnosticCall,
     FindSpecCall,
     ImportAuditStart,
     ImporterCacheDiff,
@@ -50,6 +51,11 @@ def render_lines(document: ReportDocument) -> list[str]:
     lines = ["== metapathology report =="]
     lines.append("report guide: https://glinte.github.io/metapathology/report/")
     lines.append(f"monitor enabled: {document.monitor_enabled}")
+    if document.deep_diagnostics:
+        lines.append("WARNING: opt-in deep diagnostics replace foreign callables and may perturb identity checks")
+        lines.append(f"deep mechanisms enabled: {', '.join(document.deep_diagnostics)}")
+    else:
+        lines.append("deep diagnostics: disabled")
     bootstrap = document.early_site_bootstrap
     if bootstrap is None:
         lines.append("early site bootstrap: inactive")
@@ -172,6 +178,9 @@ def _internal_error_line(error: InternalError) -> str:
 
 def _timeline_line(event: MonitorEvent) -> str:
     """Render one compact line using only data captured in the event record."""
+    if isinstance(event, DeepDiagnosticCall):
+        subject = event.fullname if event.fullname is not None else event.path
+        return f"#{event.seq} deep {event.boundary} {subject or '<unknown>'}: {event.outcome}"
     if isinstance(event, ImportAuditStart):
         path_hooks = "disabled" if event.path_hooks_id is None else f"0x{event.path_hooks_id:x}"
         if event.importer_cache_id is None:

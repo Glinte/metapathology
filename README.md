@@ -103,6 +103,18 @@ import metapathology
 monitor = metapathology.install()  # as early as possible
 ```
 
+Opt-in deep diagnostics can capture delegated path-hook, path-entry finder,
+and loader calls when passive evidence is insufficient:
+
+```console
+python -m metapathology --deep-path-hooks --deep-path-entry-finders --deep-loaders myscript.py
+```
+
+These mechanisms are disabled by default because they put monitor code inline
+with imports and path-hook wrapping changes callable identity. Enable only the
+needed switches in a controlled reproduction; the report warns when any are
+active.
+
 `install()` is idempotent and returns the process-wide `Monitor`. By default,
 it prints a report to standard error when Python exits. To control when or
 where the report is written, disable that callback and report explicitly:
@@ -135,7 +147,7 @@ For integration with another diagnostic or test harness:
 - `metapathology.get_monitor()` returns the process-wide monitor, or `None`
   before the first call to `install()`; and
 - `monitor.events()` returns a capture-order snapshot of the structured
-  `ImportAuditStart`, `FindSpecCall`, meta-path, path-hooks, importer-cache,
+  `ImportAuditStart`, `FindSpecCall`, `DeepDiagnosticCall`, meta-path, path-hooks, importer-cache,
   and `InternalError` records. Path-hook records use `ImportObjectRef` values
   containing captured identity and safe type/name metadata. Mutating the
   returned list does not alter the monitor.

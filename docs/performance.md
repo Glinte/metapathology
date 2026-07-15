@@ -140,6 +140,13 @@ finders per import, use longer search paths, or mutate `sys.meta_path` with
 deeper stacks. Re-run the benchmark in the target environment when sizing a
 long capture.
 
+Deep diagnostics retain one constant-size record for every observed delegated
+boundary for the lifetime of the monitor. This is exhaustive and unbounded in
+the number of calls: no events are silently dropped. Path-hook, path-entry
+finder, and loader wrappers also add one Python call boundary to the selected
+foreign operations, so their overhead is intentionally outside the default
+mode's performance guarantee.
+
 ## Run the environment matrix
 
 The repository's [**Benchmarks** GitHub Actions workflow][benchmark-workflow]

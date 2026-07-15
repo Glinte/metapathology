@@ -13,6 +13,7 @@ from importlib.machinery import PathFinder
 
 from metapathology import __version__
 from metapathology._records import (
+    DeepDiagnosticCall,
     FindSpecCall,
     ImportAuditStart,
     ImporterCacheDiff,
@@ -46,7 +47,7 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 6
+_SCHEMA_MINOR = 7
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -237,6 +238,7 @@ class ReportDocument(_Record):
         "_current_path_hooks",
         "_cutoff_seq",
         "_cwd",
+        "_deep_diagnostics",
         "_early_site_bootstrap",
         "_events",
         "_findings",
@@ -274,6 +276,7 @@ class ReportDocument(_Record):
         "modules_since_install",
         "events",
         "early_site_bootstrap",
+        "deep_diagnostics",
         "skipped_finders",
         "findings",
         "report_errors",
@@ -299,6 +302,7 @@ class ReportDocument(_Record):
     modules_since_install = _ReadOnlyField[tuple[str, ...] | None]("_modules_since_install")
     events = _ReadOnlyField[tuple[MonitorEvent, ...]]("_events")
     early_site_bootstrap = _ReadOnlyField[EarlySiteBootstrap | None]("_early_site_bootstrap")
+    deep_diagnostics = _ReadOnlyField[tuple[str, ...]]("_deep_diagnostics")
     skipped_finders = _ReadOnlyField[tuple[SkippedFinder, ...]]("_skipped_finders")
     findings = _ReadOnlyField[tuple[Finding, ...]]("_findings")
     report_errors = _ReadOnlyField[tuple[ReportError, ...]]("_report_errors")
@@ -327,6 +331,7 @@ class ReportDocument(_Record):
         modules_since_install: tuple[str, ...] | None,
         events: tuple[MonitorEvent, ...],
         early_site_bootstrap: EarlySiteBootstrap | None,
+        deep_diagnostics: tuple[str, ...],
         skipped_finders: tuple[SkippedFinder, ...],
         findings: tuple[Finding, ...],
         report_errors: tuple[ReportError, ...],
@@ -352,6 +357,7 @@ class ReportDocument(_Record):
         self._modules_since_install = modules_since_install
         self._events = events
         self._early_site_bootstrap = early_site_bootstrap
+        self._deep_diagnostics = deep_diagnostics
         self._skipped_finders = skipped_finders
         self._findings = findings
         self._report_errors = report_errors
@@ -427,6 +433,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         modules_since_install=modules_since_install,
         events=tuple(events),
         early_site_bootstrap=early_site_bootstrap,
+        deep_diagnostics=monitor.deep_diagnostics,
         skipped_finders=skipped_finders,
         findings=findings,
         report_errors=tuple(report_errors),
@@ -655,6 +662,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
     importer_cache_diffs = sum(isinstance(event, ImporterCacheDiff) for event in document.events)
     audit_starts = sum(isinstance(event, ImportAuditStart) for event in document.events)
     calls = sum(isinstance(event, FindSpecCall) for event in document.events)
+    deep_calls = sum(isinstance(event, DeepDiagnosticCall) for event in document.events)
     version = sys.version_info
     return {
         "schema": {"major": _SCHEMA_MAJOR, "minor": _SCHEMA_MINOR, "name": _SCHEMA_NAME},
@@ -680,6 +688,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
                 _mechanism("meta_path_reassignments", document.monitor_enabled, reassignments, "import_boundaries"),
                 _mechanism("import_audit_starts", document.monitor_enabled, audit_starts, "resolution_starts"),
                 _mechanism("finder_attribution", document.monitor_enabled, calls, "instrumented_finders"),
+                _mechanism("deep_diagnostics", bool(document.deep_diagnostics), deep_calls, "delegated_boundaries"),
                 _mechanism("path_hooks_mutations", document.path_hooks_enabled, path_hook_mutations, "best_effort"),
                 _mechanism(
                     "path_hooks_reassignments",
@@ -820,6 +829,21 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
                     "object_id": f"0x{event.meta_path_id:x}",
                 },
                 "path_hooks_id": None if event.path_hooks_id is None else f"0x{event.path_hooks_id:x}",
+                "thread_name": event.thread_name,
+            }
+        )
+    elif isinstance(event, DeepDiagnosticCall):
+        result.update(
+            {
+                "boundary": event.boundary,
+                "evidence": "deep_delegation",
+                "exception_type_name": event.exception_type_name,
+                "fullname": event.fullname,
+                "kind": "deep_diagnostic_call",
+                "object_id": f"0x{event.object_id:x}",
+                "object_type_name": event.object_type_name,
+                "outcome": event.outcome,
+                "path": event.path,
                 "thread_name": event.thread_name,
             }
         )

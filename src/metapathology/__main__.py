@@ -44,6 +44,9 @@ class _Arguments(argparse.Namespace):
         self.report_format: Literal["text", "json"] | None = None
         self.monitor_path_hooks = True
         self.monitor_importer_cache = True
+        self.deep_path_hooks = False
+        self.deep_path_entry_finders = False
+        self.deep_loaders = False
         self.is_module = False
         self.target = ""
         self.target_args: list[str] = []
@@ -80,6 +83,12 @@ def _make_parser() -> _ArgumentParser:
         action="store_false",
         help="do not snapshot or report sys.path_importer_cache changes",
     )
+    deep = parser.add_argument_group("opt-in deep diagnostics (may perturb third-party identity checks)")
+    deep.add_argument("--deep-path-hooks", action="store_true", help="capture delegated path-hook calls")
+    deep.add_argument(
+        "--deep-path-entry-finders", action="store_true", help="capture delegated path-entry finder decisions"
+    )
+    deep.add_argument("--deep-loaders", action="store_true", help="capture delegated loader execution")
     parser.add_argument("-m", dest="is_module", action="store_true", help="run TARGET as a module")
     parser.add_argument("target", metavar="TARGET", help="script path, or module name with -m")
     parser.add_argument("target_args", metavar="ARG", nargs=argparse.REMAINDER, help="arguments passed to TARGET")
@@ -118,6 +127,9 @@ def main(argv: list[str] | None = None) -> int:
             report_format=parsed.report_format,
             monitor_path_hooks=parsed.monitor_path_hooks,
             monitor_importer_cache=parsed.monitor_importer_cache,
+            deep_path_hooks=parsed.deep_path_hooks,
+            deep_path_entry_finders=parsed.deep_path_entry_finders,
+            deep_loaders=parsed.deep_loaders,
         )
     return _run(
         parsed.target,
@@ -127,6 +139,9 @@ def main(argv: list[str] | None = None) -> int:
         report_format=parsed.report_format,
         monitor_path_hooks=parsed.monitor_path_hooks,
         monitor_importer_cache=parsed.monitor_importer_cache,
+        deep_path_hooks=parsed.deep_path_hooks,
+        deep_path_entry_finders=parsed.deep_path_entry_finders,
+        deep_loaders=parsed.deep_loaders,
     )
 
 
@@ -139,6 +154,9 @@ def _run(
     report_format: "Literal['text', 'json'] | None",
     monitor_path_hooks: bool,
     monitor_importer_cache: bool,
+    deep_path_hooks: bool,
+    deep_path_entry_finders: bool,
+    deep_loaders: bool,
 ) -> int:
     """Install the monitor, run the target via runpy, and always write the report.
 
@@ -151,6 +169,9 @@ def _run(
         monitor_path_hooks: Whether to instrument ``sys.path_hooks``.
         monitor_importer_cache: Whether to observe
             ``sys.path_importer_cache``.
+        deep_path_hooks: Capture path-hook calls through replacement delegates.
+        deep_path_entry_finders: Capture path-entry finder calls.
+        deep_loaders: Capture loader execution.
 
     Returns:
         The exit code a direct invocation of the target would produce.
@@ -175,6 +196,9 @@ def _run(
         report_format=report_format,
         monitor_path_hooks=monitor_path_hooks,
         monitor_importer_cache=monitor_importer_cache,
+        deep_path_hooks=deep_path_hooks,
+        deep_path_entry_finders=deep_path_entry_finders,
+        deep_loaders=deep_loaders,
     )
     exit_code = 0
     try:

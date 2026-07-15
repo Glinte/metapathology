@@ -9,7 +9,7 @@ truth for the supported public API.
 
 ## Lifecycle and reporting
 
-### `install(*, report_at_exit=True, report_destination=None, report_format=None, monitor_path_hooks=True, monitor_importer_cache=True) -> Monitor`
+### `install(*, report_at_exit=True, report_destination=None, report_format=None, monitor_path_hooks=True, monitor_importer_cache=True, deep_path_hooks=False, deep_path_entry_finders=False, deep_loaders=False) -> Monitor`
 
 Installs the process-wide monitor and returns it. Repeated calls return and
 enable the same monitor. Only activity after installation can be observed.
@@ -25,6 +25,12 @@ true value enables it if initially disabled; false does not disable an active
 mechanism. Use `uninstall()` for cleanup.
 `monitor_importer_cache` has the same enable-later semantics and controls
 passive `sys.path_importer_cache` snapshots and diffs.
+
+The three `deep_*` switches independently enable exact-delegating wrappers
+around path hooks, mutable path-entry finders, and mutable loaders. They are
+never enabled automatically. Path-hook wrapping changes callable identity;
+all three mechanisms put monitor code inline with foreign imports and should
+be reserved for controlled diagnostic runs.
 
 Automatic reports always include the current process ID in their filename. For
 process 1234, `report.json` becomes `report.1234.json`. When the configured path
@@ -60,7 +66,7 @@ format.
 ### `render_report(*, format="text") -> str`
 
 Returns text or JSON, including its trailing newline. JSON currently uses the
-experimental `metapathology.report` schema version 0.6. Its shape may change
+experimental `metapathology.report` schema version 0.7. Its shape may change
 throughout schema 0.x; schema 1.0 will be reviewed once the evidence model stabilizes.
 Raises `RuntimeError` before the first installation and `ValueError` for an
 unknown format. Ordinary generation failures degrade to a valid failure
@@ -78,6 +84,8 @@ competing monitors is not supported because import state is process-global.
   type/name metadata captured when path-hook monitoring was enabled.
 - `importer_cache_enabled: bool` — whether passive importer-cache observation
   is currently active.
+- `deep_diagnostics: tuple[str, ...]` — explicitly enabled inline delegation
+  mechanisms.
 - `initial_importer_cache: tuple[ImporterCacheEntry, ...]` — string-keyed
   cache entries captured when importer-cache monitoring was enabled.
 - `baseline_modules: frozenset[str]` — `sys.modules` names at installation.
@@ -96,7 +104,14 @@ the intended entry points.
 All records are immutable, slotted classes with a standard field-based repr.
 They deliberately use identity equality and do not define positional pattern
 matching. Their shared `seq` field provides a single chronological order
-across record types. `MonitorEvent` includes the eight event classes below.
+across record types. `MonitorEvent` includes the event classes below.
+
+### `DeepDiagnosticCall`
+
+Records one opt-in delegated boundary with the mechanism, safe object
+identity/type, module or path, outcome, exception type, and thread. The
+`unobserved_reentrant` outcome means a nested call delegated normally while
+the per-thread guard suppressed exact nested instrumentation.
 
 ### `ImportAuditStart`
 

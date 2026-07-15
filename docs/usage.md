@@ -56,6 +56,7 @@ python -m metapathology --report diagnostics.json path/to/script.py
 python -m metapathology --report diagnostics.txt --report-format text -m package.module
 python -m metapathology --no-path-hook-monitoring path/to/script.py
 python -m metapathology --no-importer-cache-monitoring path/to/script.py
+python -m metapathology --deep-path-hooks --deep-path-entry-finders --deep-loaders path/to/script.py
 ```
 
 Automatic file destinations are process-safe. `{pid}` is replaced when it is
@@ -70,6 +71,14 @@ passed through to the target rather than parsed by metapathology.
 Importer-cache monitoring is also enabled by default. Its disable option
 skips passive cache snapshots and diffs; metapathology never replaces the
 cache dictionary in either mode.
+
+Deep diagnostics are disabled by default. The three `--deep-*` options are
+independent and capture exact-delegating path-hook calls, path-entry finder
+decisions, and loader execution respectively. This puts metapathology inline
+with foreign import code: path-hook wrappers change callable identity and can
+affect membership checks. Reports display a warning whenever any deep
+mechanism is active. Use this mode only in a diagnostic reproduction after
+passive evidence proves insufficient.
 
 For frozen or embedded bootstrap code, configure the same behavior before
 calling `install()`:

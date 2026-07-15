@@ -130,7 +130,7 @@ correlate a path-hook mutation, cache clear, later import, and changed loader.
 meta-path mutations, path-hook mutations, importer-cache diffs, finder calls,
 and internal errors in one exhaustive capture-order event list. Text reports
 lead with a compact chronological projection while retaining the detailed
-mechanism sections; the current JSON schema 0.6 projects the same records.
+mechanism sections; the current JSON schema 0.7 projects the same records.
 
 Audit starts copy immediate meta-path identity/type evidence and constant-size
 enabled-mechanism fingerprints. Native-extension load events are filtered from
@@ -369,7 +369,7 @@ toolchain cannot be installed, so it degrades to "skipped" rather than
 - The fixture is reproducible from pinned inputs and leaves generated binaries
   outside version control.
 
-## T10: Add opt-in deep diagnostics
+## T10: Add opt-in deep diagnostics (implemented)
 
 **Weakness:** Passive snapshots cannot attribute every path-hook factory call,
 path-entry finder decision, failed import, or loader invocation. Short-lived
@@ -412,6 +412,12 @@ deep-mode crash can still leave machine-readable evidence.
   imports, and partial installation.
 - Re-entrant imports delegate normally and are labeled unobserved rather than
   reconstructed as exact nested events.
+
+Implemented as three independent API/CLI switches. Deep records retain one
+constant-size event per observed boundary for the process lifetime; there is
+no queue, retry, or silent dropping. Mutable path-entry finders and loaders
+are shadowed in place, while path-hook identity replacement is confined to
+the explicitly selected mode and reversed on uninstall.
 
 ## T11: Compare spec semantics and namespace search locations
 
