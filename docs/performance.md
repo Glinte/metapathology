@@ -91,59 +91,13 @@ and peak traced allocations, and sampled peak RSS growth. Treat small timing
 differences as noise unless they persist across more repetitions and dedicated
 hardware.
 
-## Reference results
-
-A [default environment-matrix run][reference-run] on July 14, 2026, measured
-commit `a94f2ee` on GitHub-hosted Linux, Windows, and macOS runners with CPython
-3.10 and 3.14. Each environment used five fresh-process timing samples and
-three memory samples per point.
-
-The 400-operation points produced these cross-environment ranges:
-
-| Measure | Range | Median across environments |
-| --- | ---: | ---: |
-| Monitor installation | 0.020–0.043 ms | 0.033 ms |
-| 400 native imports, monitored/control time | 1.02–1.11x | 1.03x |
-| 400 attributed imports, monitored/control time | 1.00–1.19x | 1.13x |
-| Retained memory per attributed finder-call record, before snapshot sharing | 203–240 bytes | 223 bytes |
-| Monitored `pop`/`append` pair | 17–44 µs | 29 µs |
-| Retained memory per mutation record | 665–830 bytes | 747 bytes |
-
-The native result is the best approximation of import overhead when only the
-standard class finders handle imports and no finder-call records are retained.
-The attributed result includes search-path snapshots and retained records.
-Mutation ratios are intentionally not summarized: a plain-list `pop`/`append`
-pair is so short that a relative multiplier exaggerates the practical cost;
-the absolute microseconds per pair are more useful.
-
-The published matrix predates the current search-path snapshot sharing. A
-matched local Windows run on July 15, 2026, compared commit `0bdf4ae` with the
-current implementation using 400 attributed imports and three fresh-process
-memory samples per point:
-
-| CPython | Before | Current | Reduction |
-| --- | ---: | ---: | ---: |
-| 3.10 | 223 bytes/record | 146 bytes/record | 35% |
-| 3.14 | 243 bytes/record | 134 bytes/record | 45% |
-
-Each value is the median monitored-minus-control retained allocation divided
-by the 400 recorded finder calls. The comparison changes only record storage;
-the event count and captured fields are identical.
-
-These figures describe synthetic workloads, not a performance guarantee. The
-published matrix used shared hosted runners; the matched memory comparison
-used one local Windows machine. Real applications can probe several
-instrumentable finders per import, use longer search paths, or mutate
-`sys.meta_path` with deeper stacks. Re-run the benchmark in the target
-environment when sizing a long capture.
-
 ## Run the environment matrix
 
 The repository's [**Benchmarks** GitHub Actions workflow][benchmark-workflow]
 is manually triggered with `workflow_dispatch`. By default it benchmarks
-Python 3.10 and 3.14 on Linux, Windows, and macOS. Workload sizes, timing
-repetitions, memory repetitions, and the shuffle seed can be changed in the
-dispatch form.
+Python 3.10 and 3.14 on Linux, Windows, and macOS at 100, 1,000, and 5,000
+operations. Workload sizes, timing repetitions, memory repetitions, and the
+shuffle seed can be changed in the dispatch form.
 
 Each matrix job adds its Markdown table to the workflow summary and uploads a
 30-day artifact containing:
@@ -160,4 +114,3 @@ before treating a small percentage change as significant.
 
 [benchmark-script]: https://github.com/Glinte/metapathology/blob/main/scripts/benchmark.py
 [benchmark-workflow]: https://github.com/Glinte/metapathology/actions/workflows/benchmark.yml
-[reference-run]: https://github.com/Glinte/metapathology/actions/runs/29309310010

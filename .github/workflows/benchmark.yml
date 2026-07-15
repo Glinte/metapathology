@@ -6,7 +6,7 @@ on:
       counts:
         description: Comma-separated workload sizes
         required: true
-        default: "25,100,400"
+        default: "100,1000,5000"
         type: string
       repeats:
         description: Fresh processes per timing point

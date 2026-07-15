@@ -70,7 +70,7 @@ raw JSON, a Markdown summary, plus import and `sys.meta_path` mutation graphs be
 the workload and interpreter, for example:
 
 ```console
-uv run --script scripts/benchmark.py --counts 50,250,1000 --repeats 7 --python python3.12
+uv run --script scripts/benchmark.py --counts 250,2500,10000 --repeats 7 --python python3.12
 ```
 
 Fresh-process timings also cover bare interpreter startup, package import,

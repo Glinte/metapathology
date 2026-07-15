@@ -47,13 +47,19 @@ _WORKER = _SCRIPT_DIR / "_benchmark_worker.py"
 _SCENARIOS = ("native", "attributed", "mutation")
 _STARTUP_CASES = ("process", "package_import", "monitor_api_import", "direct_script", "monitored_script")
 _COLORS = {False: "#6b7280", True: "#2563eb"}
+_DEFAULT_COUNTS = "100,1000,5000"
 _RecordValue: TypeAlias = str | bool | int | float
 _Record: TypeAlias = dict[str, _RecordValue]
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--counts", type=parse_counts, default=parse_counts("25,100,400"))
+    parser.add_argument(
+        "--counts",
+        type=parse_counts,
+        default=parse_counts(_DEFAULT_COUNTS),
+        help=f"comma-separated workload sizes (default: {_DEFAULT_COUNTS})",
+    )
     parser.add_argument("--repeats", type=parse_positive_int, default=5, help="fresh processes per timing point")
     parser.add_argument("--memory-repeats", type=parse_positive_int, default=3, help="fresh processes per memory point")
     parser.add_argument("--seed", type=int, default=0, help="reproducible trial-order shuffle seed")
