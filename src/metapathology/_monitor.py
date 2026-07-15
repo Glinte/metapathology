@@ -160,8 +160,18 @@ class Monitor:
                 current = sys.meta_path
                 self._initial_meta_path = tuple(type_name(f) for f in current)
                 instrumented = _InstrumentedMetaPath(current, self)
-                for finder in list(instrumented):
-                    self._instrument_finder(finder)
+                # Instrumenting a finder runs foreign code (its find_spec
+                # attribute access can import); on a reinstall the audit hook
+                # is already live and would see a stale self._instrumented and
+                # deadlock re-entering _reinstall_lock. The active flag makes
+                # the hook a no-op on this thread, like every other caller of
+                # _instrument_finder.
+                self._local.active = True
+                try:
+                    for finder in list(instrumented):
+                        self._instrument_finder(finder)
+                finally:
+                    self._local.active = False
                 self._instrumented = instrumented
                 sys.meta_path = instrumented
                 if not self._audit_installed:

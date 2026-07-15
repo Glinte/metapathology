@@ -642,6 +642,48 @@ def test_concurrent_uninstall_is_idempotent(run_python: RunPython) -> None:
     assert "OK" in proc.stdout
 
 
+# On a reinstall the audit hook is already registered and _enabled is set
+# before the finder-instrumentation loop runs, so an import triggered from a
+# finder's lazy find_spec attribute re-enters _reinstall on the same thread
+# while install() still holds the non-reentrant reinstall lock.
+LAZY_ATTRIBUTE_REINSTALL = """
+import sys
+import threading
+
+import metapathology
+
+class LazyAttributeFinder:
+    # Lazy-import style: the first find_spec attribute access itself imports.
+    triggered = False
+
+    @property
+    def find_spec(self):
+        if not LazyAttributeFinder.triggered:
+            LazyAttributeFinder.triggered = True
+            import colorsys  # any not-yet-imported module: raises the import audit event
+        return None  # not callable, so the finder is merely skipped
+
+metapathology.install(report_at_exit=False)
+metapathology.uninstall()
+sys.meta_path.append(LazyAttributeFinder())
+
+worker = threading.Thread(target=metapathology.install, kwargs={"report_at_exit": False}, daemon=True)
+worker.start()
+worker.join(timeout=5)
+assert not worker.is_alive(), "install() deadlocked on its own reinstall lock"
+assert LazyAttributeFinder.triggered
+monitor = metapathology.get_monitor()
+assert monitor is not None and monitor.enabled
+print("OK")
+"""
+
+
+def test_reinstall_with_lazy_find_spec_attribute_does_not_deadlock(run_python: RunPython) -> None:
+    proc = run_python(LAZY_ATTRIBUTE_REINSTALL)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
 # install() documents report_at_exit as registering the atexit report, but the
 # idempotence early-return skips that block when the monitor is already
 # enabled, silently dropping the request.
