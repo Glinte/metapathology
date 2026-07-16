@@ -16,6 +16,7 @@ from metapathology import __version__
 from metapathology._module_metadata import ModuleMetadata, inspect_module
 from metapathology._records import (
     DeepDiagnosticCall,
+    DeepImportEvent,
     FindSpecCall,
     ImportAuditStart,
     ImporterCacheDiff,
@@ -51,7 +52,7 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 10
+_SCHEMA_MINOR = 11
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -398,6 +399,7 @@ class ReportDocument(_Record):
         "_cutoff_seq",
         "_cwd",
         "_deep_diagnostics",
+        "_deep_import_outcomes_status",
         "_early_site_bootstrap",
         "_events",
         "_findings",
@@ -439,6 +441,7 @@ class ReportDocument(_Record):
         "events",
         "early_site_bootstrap",
         "deep_diagnostics",
+        "deep_import_outcomes_status",
         "skipped_finders",
         "findings",
         "report_errors",
@@ -467,6 +470,7 @@ class ReportDocument(_Record):
     events = _ReadOnlyField[tuple[MonitorEvent, ...]]("_events")
     early_site_bootstrap = _ReadOnlyField[EarlySiteBootstrap | None]("_early_site_bootstrap")
     deep_diagnostics = _ReadOnlyField[tuple[str, ...]]("_deep_diagnostics")
+    deep_import_outcomes_status = _ReadOnlyField[str]("_deep_import_outcomes_status")
     skipped_finders = _ReadOnlyField[tuple[SkippedFinder, ...]]("_skipped_finders")
     findings = _ReadOnlyField[tuple[Finding, ...]]("_findings")
     report_errors = _ReadOnlyField[tuple[ReportError, ...]]("_report_errors")
@@ -498,6 +502,7 @@ class ReportDocument(_Record):
         events: tuple[MonitorEvent, ...],
         early_site_bootstrap: EarlySiteBootstrap | None,
         deep_diagnostics: tuple[str, ...],
+        deep_import_outcomes_status: str,
         skipped_finders: tuple[SkippedFinder, ...],
         findings: tuple[Finding, ...],
         report_errors: tuple[ReportError, ...],
@@ -526,6 +531,7 @@ class ReportDocument(_Record):
         self._events = events
         self._early_site_bootstrap = early_site_bootstrap
         self._deep_diagnostics = deep_diagnostics
+        self._deep_import_outcomes_status = deep_import_outcomes_status
         self._skipped_finders = skipped_finders
         self._findings = findings
         self._report_errors = report_errors
@@ -609,6 +615,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         events=tuple(events),
         early_site_bootstrap=early_site_bootstrap,
         deep_diagnostics=monitor.deep_diagnostics,
+        deep_import_outcomes_status=monitor.deep_import_outcomes_status,
         skipped_finders=skipped_finders,
         findings=findings,
         report_errors=tuple(report_errors),
@@ -651,24 +658,51 @@ def _import_attempts(
 ) -> tuple[ImportAttempt, ...]:
     """Join calls only to the matching latest audit start on their thread."""
     present = None if module_items is None else {name for name, _module in module_items if type(name) is str}
-    starts: list[ImportAuditStart] = []
-    latest_by_thread: dict[int, ImportAuditStart] = {}
-    linked: dict[int, list[FindSpecCall | DeepDiagnosticCall]] = {}
+    starts: dict[int, tuple[str, int, int, str]] = {}
+    order: list[int] = []
+    latest_by_thread: dict[int, tuple[int, str]] = {}
+    linked: dict[int, list[FindSpecCall | DeepDiagnosticCall | DeepImportEvent]] = {}
     for event in events:
-        if isinstance(event, ImportAuditStart):
-            starts.append(event)
-            latest_by_thread[event.thread_id] = event
-            linked[event.attempt_id] = []
+        if isinstance(event, DeepImportEvent):
+            if event.outcome == "started":
+                if event.attempt_id not in starts:
+                    starts[event.attempt_id] = (event.fullname, event.seq, event.thread_id, event.thread_name)
+                    order.append(event.attempt_id)
+                    linked[event.attempt_id] = []
+                latest_by_thread[event.thread_id] = (event.attempt_id, event.fullname)
+                linked[event.attempt_id].append(event)
+            elif event.attempt_id in linked:
+                linked[event.attempt_id].append(event)
+        elif isinstance(event, ImportAuditStart):
+            if event.attempt_id not in starts:
+                starts[event.attempt_id] = (event.fullname, event.seq, event.thread_id, event.thread_name)
+                order.append(event.attempt_id)
+                linked[event.attempt_id] = []
+            else:
+                fullname, _seq, thread_id, thread_name = starts[event.attempt_id]
+                starts[event.attempt_id] = (fullname, event.seq, thread_id, thread_name)
+            latest_by_thread[event.thread_id] = (event.attempt_id, event.fullname)
         elif isinstance(event, (FindSpecCall, DeepDiagnosticCall)):
-            start = latest_by_thread.get(event.thread_id)
-            if start is not None and event.fullname == start.fullname:
-                linked[start.attempt_id].append(event)
+            latest = latest_by_thread.get(event.thread_id)
+            if latest is not None and event.fullname == latest[1]:
+                linked[latest[0]].append(event)
     attempts: list[ImportAttempt] = []
-    for start in starts:
-        evidence = linked[start.attempt_id]
+    for attempt_id in order:
+        fullname, start_seq, thread_id, thread_name = starts[attempt_id]
+        evidence = linked[attempt_id]
+        exact = next(
+            (
+                event.outcome
+                for event in reversed(evidence)
+                if isinstance(event, DeepImportEvent) and event.outcome != "started"
+            ),
+            None,
+        )
         claimed = any(isinstance(event, FindSpecCall) and event.found for event in evidence)
         raised = any(isinstance(event, FindSpecCall) and event.exception_type_name is not None for event in evidence)
-        if claimed and raised:
+        if exact is not None:
+            progress = exact
+        elif claimed and raised:
             progress = "unknown"
         elif claimed:
             progress = "finder_claimed"
@@ -676,17 +710,15 @@ def _import_attempts(
             progress = "finder_raised"
         else:
             progress = "started"
-        presence = (
-            "unknown" if present is None else "present_at_report" if start.fullname in present else "absent_at_report"
-        )
+        presence = "unknown" if present is None else "present_at_report" if fullname in present else "absent_at_report"
         attempts.append(
             ImportAttempt(
-                start.attempt_id,
-                start.fullname,
-                start.seq,
-                tuple(event.seq for event in evidence),
-                start.thread_id,
-                start.thread_name,
+                attempt_id,
+                fullname,
+                start_seq,
+                tuple(event.seq for event in evidence if event.seq != start_seq),
+                thread_id,
+                thread_name,
                 progress,
                 presence,
             )
@@ -1060,6 +1092,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
     audit_starts = sum(isinstance(event, ImportAuditStart) for event in document.events)
     calls = sum(isinstance(event, FindSpecCall) for event in document.events)
     deep_calls = sum(isinstance(event, DeepDiagnosticCall) for event in document.events)
+    deep_import_events = sum(isinstance(event, DeepImportEvent) for event in document.events)
     version = sys.version_info
     return {
         "schema": {"major": _SCHEMA_MAJOR, "minor": _SCHEMA_MINOR, "name": _SCHEMA_NAME},
@@ -1086,6 +1119,12 @@ def json_document(document: ReportDocument) -> dict[str, object]:
                 _mechanism("import_audit_starts", document.monitor_enabled, audit_starts, "resolution_starts"),
                 _mechanism("finder_attribution", document.monitor_enabled, calls, "instrumented_finders"),
                 _mechanism("deep_diagnostics", bool(document.deep_diagnostics), deep_calls, "delegated_boundaries"),
+                _mechanism(
+                    "deep_import_outcomes",
+                    "import_outcomes" in document.deep_diagnostics,
+                    deep_import_events,
+                    document.deep_import_outcomes_status,
+                ),
                 _mechanism("path_hooks_mutations", document.path_hooks_enabled, path_hook_mutations, "best_effort"),
                 _mechanism(
                     "path_hooks_reassignments",
@@ -1247,6 +1286,18 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
                 "path": event.path,
                 "thread_name": event.thread_name,
                 "thread_id": event.thread_id,
+            }
+        )
+    elif isinstance(event, DeepImportEvent):
+        result.update(
+            {
+                "attempt_id": event.attempt_id,
+                "evidence": "exact_import_boundary",
+                "fullname": event.fullname,
+                "kind": "deep_import_event",
+                "outcome": event.outcome,
+                "thread_id": event.thread_id,
+                "thread_name": event.thread_name,
             }
         )
     elif isinstance(event, FindSpecCall):

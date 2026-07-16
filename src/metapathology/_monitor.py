@@ -8,6 +8,7 @@ foreign objects are reduced to type names and ids at capture time.
 import atexit
 import copy
 import functools
+import importlib._bootstrap as _importlib_bootstrap
 import operator
 import os
 import sys
@@ -21,6 +22,7 @@ from metapathology import _report
 from metapathology._module_metadata import safe_module_name, safe_spec_loader, safe_spec_name
 from metapathology._records import (
     DeepDiagnosticCall,
+    DeepImportEvent,
     FindSpecCall,
     ImportAuditStart,
     ImporterCacheDiff,
@@ -310,6 +312,9 @@ class Monitor:
         self._deep_path_hooks = False
         self._deep_path_entry_finders = False
         self._deep_loaders = False
+        self._deep_import_outcomes = False
+        self._deep_import_outcomes_status = "disabled"
+        self._deep_import_code: types.CodeType | None = None
         self._deep_hook_wrappers: dict[int, tuple[object, object]] = {}
         self._deep_finder_patches: dict[int, tuple[object, object]] = {}
         self._deep_loader_patches: dict[int, tuple[object, tuple[tuple[str, object], ...]]] = {}
@@ -349,7 +354,14 @@ class Monitor:
             enabled.append("path_entry_finders")
         if self._enabled and self._deep_loaders:
             enabled.append("loaders")
+        if self._enabled and self._deep_import_outcomes:
+            enabled.append("import_outcomes")
         return tuple(enabled)
+
+    @property
+    def deep_import_outcomes_status(self) -> str:
+        """Activation state and thread scope of exact import outcomes."""
+        return self._deep_import_outcomes_status
 
     @property
     def initial_importer_cache(self) -> tuple[ImporterCacheEntry, ...]:
@@ -433,6 +445,7 @@ class Monitor:
         deep_path_hooks: bool = False,
         deep_path_entry_finders: bool = False,
         deep_loaders: bool = False,
+        deep_import_outcomes: bool = False,
     ) -> None:
         """Instrument ``sys.meta_path`` and register the import audit hook (idempotent).
 
@@ -456,6 +469,7 @@ class Monitor:
             deep_path_hooks: Replace path hooks with exact-delegating call wrappers.
             deep_path_entry_finders: Shadow mutable path-entry finder calls.
             deep_loaders: Shadow mutable loader lifecycle methods.
+            deep_import_outcomes: Profile CPython's complete import boundary.
         """
         with self._reinstall_lock:
             was_enabled = self._enabled
@@ -502,6 +516,8 @@ class Monitor:
                 self._deep_loaders = True
             if deep_path_hooks and not self._deep_path_hooks:
                 self._enable_deep_path_hooks()
+            if deep_import_outcomes and not self._deep_import_outcomes:
+                self._enable_deep_import_outcomes()
         if report_at_exit and not self._report_at_exit:
             self._report_at_exit = True
             atexit.register(self._report_atexit)
@@ -553,6 +569,64 @@ class Monitor:
         self._instrumented_path_hooks = instrumented
         self._path_hooks_enabled = True
         sys.path_hooks = instrumented
+
+    def _enable_deep_import_outcomes(self) -> None:
+        """Install a reversible profiler for the captured CPython import boundary."""
+        if sys.getprofile() is not None or threading.getprofile() is not None:
+            self._deep_import_outcomes_status = "refused_existing_profiler"
+            return
+        boundary = getattr(_importlib_bootstrap, "_find_and_load", None)
+        code = getattr(boundary, "__code__", None)
+        if not isinstance(code, types.CodeType):
+            self._deep_import_outcomes_status = "unsupported_boundary"
+            return
+        self._deep_import_code = code
+        self._deep_import_outcomes = True
+        self._deep_import_outcomes_status = "active_current_and_future_threading_threads_cache_hits_not_observed"
+        threading.setprofile(self._profile_import_boundary)
+        sys.setprofile(self._profile_import_boundary)
+
+    def _profile_import_boundary(self, frame: "FrameType", event: str, arg: object) -> None:
+        """Record paired entry and completion for the captured ``_find_and_load`` code."""
+        if not self._enabled or not self._deep_import_outcomes or frame.f_code is not self._deep_import_code:
+            return
+        try:
+            if event == "call":
+                fullname = frame.f_locals.get("name")
+                if type(fullname) is not str:
+                    return
+                thread_name = threading.current_thread().name
+                pending = getattr(self._local, "pending_import_attempt", None)
+                self._local.pending_import_attempt = None
+                with self._record_lock:
+                    thread_id = self._thread_id_locked()
+                    if pending is not None and pending[1] == fullname:
+                        attempt_id = pending[0]
+                    else:
+                        self._attempt_id += 1
+                        attempt_id = self._attempt_id
+                    self._seq += 1
+                    self._events.append(
+                        DeepImportEvent(self._seq, attempt_id, fullname, "started", thread_id, thread_name)
+                    )
+                stack = getattr(self._deep_local, "import_attempts", ())
+                self._deep_local.import_attempts = (*stack, (attempt_id, fullname))
+            elif event == "return":
+                stack = getattr(self._deep_local, "import_attempts", ())
+                if not stack:
+                    return
+                attempt_id, fullname = stack[-1]
+                self._deep_local.import_attempts = stack[:-1]
+                outcome = "failed" if arg is None else "loaded"
+                thread_name = threading.current_thread().name
+                with self._record_lock:
+                    thread_id = self._thread_id_locked()
+                    self._seq += 1
+                    self._events.append(
+                        DeepImportEvent(self._seq, attempt_id, fullname, outcome, thread_id, thread_name)
+                    )
+        except BaseException as exc:
+            self._record_internal_error("deep_import_outcomes", exc)
 
     def _enable_importer_cache(self) -> None:
         """Capture the T2 baseline without replacing the interpreter cache."""
@@ -810,6 +884,12 @@ class Monitor:
                 return
             self._observe_importer_cache("uninstall")
             self._enabled = False
+            if self._deep_import_outcomes:
+                sys.setprofile(None)
+                threading.setprofile(None)
+                self._deep_import_outcomes = False
+                self._deep_import_code = None
+                self._deep_import_outcomes_status = "inactive_after_uninstall"
             current = sys.meta_path
             if isinstance(current, _InstrumentedMetaPath):
                 sys.meta_path = list(current)
@@ -933,11 +1013,12 @@ class Monitor:
                 self._importer_cache_dirty = True
             thread_id = self._thread_id_locked()
             self._attempt_id += 1
+            attempt_id = self._attempt_id
             self._seq += 1
             self._events.append(
                 ImportAuditStart(
                     seq=self._seq,
-                    attempt_id=self._attempt_id,
+                    attempt_id=attempt_id,
                     fullname=fullname,
                     meta_path_id=meta_path_id,
                     meta_path_type_names=meta_path_type_names,
@@ -948,6 +1029,8 @@ class Monitor:
                     thread_id=thread_id,
                 )
             )
+        if self._deep_import_outcomes:
+            self._local.pending_import_attempt = (attempt_id, fullname)
 
     def _check_importer_cache_fingerprint(self) -> None:
         """Mark T2 dirty using only dictionary identity and length."""
@@ -1799,6 +1882,7 @@ def install(
     deep_path_hooks: bool = False,
     deep_path_entry_finders: bool = False,
     deep_loaders: bool = False,
+    deep_import_outcomes: bool = False,
 ) -> Monitor:
     """Install the import-machinery monitor (idempotent) and return it.
 
@@ -1819,6 +1903,7 @@ def install(
         deep_path_hooks: Replace path hooks with call-capturing delegates.
         deep_path_entry_finders: Shadow path-entry finder calls as they appear.
         deep_loaders: Shadow modern loader creation and execution reached through captured finders.
+        deep_import_outcomes: Observe exact CPython import invocation outcomes.
     """
     global _monitor_singleton
     with _singleton_lock:
@@ -1834,6 +1919,7 @@ def install(
         deep_path_hooks=deep_path_hooks,
         deep_path_entry_finders=deep_path_entry_finders,
         deep_loaders=deep_loaders,
+        deep_import_outcomes=deep_import_outcomes,
     )
     return monitor
 

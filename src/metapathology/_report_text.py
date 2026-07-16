@@ -4,6 +4,7 @@ import os
 
 from metapathology._records import (
     DeepDiagnosticCall,
+    DeepImportEvent,
     FindSpecCall,
     ImportAuditStart,
     ImporterCacheDiff,
@@ -246,6 +247,8 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
     if document.deep_diagnostics:
         lines.append("WARNING: opt-in deep diagnostics replace foreign callables and may perturb identity checks")
         lines.append(f"deep mechanisms enabled: {', '.join(document.deep_diagnostics)}")
+    if document.deep_import_outcomes_status != "disabled":
+        lines.append(f"deep import outcome coverage: {document.deep_import_outcomes_status}")
     bootstrap = document.early_site_bootstrap
     if bootstrap is not None:
         lines.append(f"early site bootstrap: {context.display_path(bootstrap.path)}")
@@ -427,6 +430,8 @@ def _timeline_line(event: MonitorEvent, context: _RenderContext) -> str:
     if isinstance(event, DeepDiagnosticCall):
         subject = event.fullname if event.fullname is not None else event.path
         return f"#{event.seq} deep {event.boundary} {subject or '<unknown>'}: {event.outcome}"
+    if isinstance(event, DeepImportEvent):
+        return f"#{event.seq} deep import {event.fullname!r}: {event.outcome}{context.thread_suffix(event.thread_name)}"
     if isinstance(event, ImportAuditStart):
         # Stable snapshot context lives in the timeline preamble; deviations
         # are appended by _timeline_lines as continuation lines.

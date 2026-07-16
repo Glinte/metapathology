@@ -47,6 +47,7 @@ class _Arguments(argparse.Namespace):
         self.deep_path_hooks = False
         self.deep_path_entry_finders = False
         self.deep_loaders = False
+        self.deep_import_outcomes = False
         self.is_module = False
         self.target = ""
         self.target_args: list[str] = []
@@ -89,6 +90,9 @@ def _make_parser() -> _ArgumentParser:
         "--deep-path-entry-finders", action="store_true", help="capture delegated path-entry finder decisions"
     )
     deep.add_argument("--deep-loaders", action="store_true", help="capture delegated loader creation and execution")
+    deep.add_argument(
+        "--deep-import-outcomes", action="store_true", help="capture exact CPython import invocation outcomes"
+    )
     parser.add_argument("-m", dest="is_module", action="store_true", help="run TARGET as a module")
     parser.add_argument("target", metavar="TARGET", help="script path, or module name with -m")
     parser.add_argument("target_args", metavar="ARG", nargs=argparse.REMAINDER, help="arguments passed to TARGET")
@@ -130,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
             deep_path_hooks=parsed.deep_path_hooks,
             deep_path_entry_finders=parsed.deep_path_entry_finders,
             deep_loaders=parsed.deep_loaders,
+            deep_import_outcomes=parsed.deep_import_outcomes,
         )
     return _run(
         parsed.target,
@@ -142,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         deep_path_hooks=parsed.deep_path_hooks,
         deep_path_entry_finders=parsed.deep_path_entry_finders,
         deep_loaders=parsed.deep_loaders,
+        deep_import_outcomes=parsed.deep_import_outcomes,
     )
 
 
@@ -157,6 +163,7 @@ def _run(
     deep_path_hooks: bool,
     deep_path_entry_finders: bool,
     deep_loaders: bool,
+    deep_import_outcomes: bool,
 ) -> int:
     """Install the monitor, run the target via runpy, and always write the report.
 
@@ -172,6 +179,7 @@ def _run(
         deep_path_hooks: Capture path-hook calls through replacement delegates.
         deep_path_entry_finders: Capture path-entry finder calls.
         deep_loaders: Capture modern loader creation and execution.
+        deep_import_outcomes: Capture exact CPython import invocation outcomes.
 
     Returns:
         The exit code a direct invocation of the target would produce.
@@ -199,6 +207,7 @@ def _run(
         deep_path_hooks=deep_path_hooks,
         deep_path_entry_finders=deep_path_entry_finders,
         deep_loaders=deep_loaders,
+        deep_import_outcomes=deep_import_outcomes,
     )
     exit_code = 0
     try:

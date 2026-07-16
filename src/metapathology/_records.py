@@ -648,6 +648,29 @@ class DeepDiagnosticCall(_Record):
         self._thread_id = thread_id
 
 
+class DeepImportEvent(_Record):
+    """Entry or exact completion observed at CPython's complete import boundary."""
+
+    __slots__ = ("_attempt_id", "_fullname", "_outcome", "_seq", "_thread_id", "_thread_name")
+    _fields = ("seq", "attempt_id", "fullname", "outcome", "thread_id", "thread_name")
+    seq = _ReadOnlyField[int]("_seq")
+    attempt_id = _ReadOnlyField[int]("_attempt_id")
+    fullname = _ReadOnlyField[str]("_fullname")
+    outcome = _ReadOnlyField[str]("_outcome")
+    thread_id = _ReadOnlyField[int]("_thread_id")
+    thread_name = _ReadOnlyField[str]("_thread_name")
+
+    def __init__(
+        self, seq: int, attempt_id: int, fullname: str, outcome: str, thread_id: int, thread_name: str
+    ) -> None:
+        self._seq = seq
+        self._attempt_id = attempt_id
+        self._fullname = fullname
+        self._outcome = outcome
+        self._thread_id = thread_id
+        self._thread_name = thread_name
+
+
 class InternalError(_Record):
     """An exception raised inside metapathology's own instrumentation.
 
@@ -681,6 +704,7 @@ class InternalError(_Record):
 # Everything the monitor records goes into one chronological log; ``seq`` orders records across types.
 MonitorEvent = (
     DeepDiagnosticCall
+    | DeepImportEvent
     | FindSpecCall
     | ImportAuditStart
     | ImporterCacheDiff
