@@ -53,7 +53,7 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 12
+_SCHEMA_MINOR = 13
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -328,6 +328,7 @@ class Finding(_Record):
 
     __slots__ = (
         "_claim",
+        "_deep_call",
         "_finding_id",
         "_kind",
         "_module",
@@ -335,11 +336,21 @@ class Finding(_Record):
         "_spec_comparison",
         "_structural_comparison",
     )
-    _fields = ("finding_id", "kind", "module", "claim", "replay", "spec_comparison", "structural_comparison")
+    _fields = (
+        "finding_id",
+        "kind",
+        "module",
+        "claim",
+        "deep_call",
+        "replay",
+        "spec_comparison",
+        "structural_comparison",
+    )
     finding_id = _ReadOnlyField[str]("_finding_id")
     kind = _ReadOnlyField[str]("_kind")
     module = _ReadOnlyField[str]("_module")
     claim = _ReadOnlyField[FindSpecCall | None]("_claim")
+    deep_call = _ReadOnlyField[DeepDiagnosticCall | None]("_deep_call")
     replay = _ReadOnlyField[ReplayResult | None]("_replay")
     spec_comparison = _ReadOnlyField[SpecComparison | None]("_spec_comparison")
     structural_comparison = _ReadOnlyField[StructuralComparison | None]("_structural_comparison")
@@ -353,11 +364,13 @@ class Finding(_Record):
         replay: ReplayResult | None = None,
         spec_comparison: SpecComparison | None = None,
         structural_comparison: StructuralComparison | None = None,
+        deep_call: DeepDiagnosticCall | None = None,
     ) -> None:
         self._finding_id = finding_id
         self._kind = kind
         self._module = module
         self._claim = claim
+        self._deep_call = deep_call
         self._replay = replay
         self._spec_comparison = spec_comparison
         self._structural_comparison = structural_comparison
@@ -772,6 +785,7 @@ def _suspicious_findings(
         current_importer_cache,
     )
     findings = _finder_side_effect_findings(events)
+    findings.extend(_module_replacement_findings(events, len(findings)))
     baseline = monitor.baseline_modules
     if module_items is None:
         return tuple(findings)
@@ -942,6 +956,34 @@ def _compare_specs(observed: SpecSummary, replayed: SpecSummary) -> SpecComparis
         observed.locations_state,
         replayed.locations_state,
     )
+
+
+def _module_replacement_findings(events: list[MonitorEvent], offset: int) -> list[Finding]:
+    """Return exact object replacements captured across deep loader boundaries."""
+    findings: list[Finding] = []
+    for event in events:
+        if not isinstance(event, DeepDiagnosticCall) or not event.boundary.startswith("loader_"):
+            continue
+        before = event.module_state_before
+        after = event.module_state_after
+        if (
+            before is None
+            or after is None
+            or before.state != "object"
+            or after.state != "object"
+            or before.object_id == after.object_id
+            or event.fullname is None
+        ):
+            continue
+        findings.append(
+            Finding(
+                f"finding:{offset + len(findings) + 1}",
+                "module_replacement",
+                event.fullname,
+                deep_call=event,
+            )
+        )
+    return findings
 
 
 def _location_delta(
@@ -1313,6 +1355,8 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
                 "exception_type_name": event.exception_type_name,
                 "fullname": event.fullname,
                 "kind": "deep_diagnostic_call",
+                "module_state_after": _json_module_state(event.module_state_after),
+                "module_state_before": _json_module_state(event.module_state_before),
                 "object_id": f"0x{event.object_id:x}",
                 "object_type_name": event.object_type_name,
                 "outcome": event.outcome,
@@ -1578,6 +1622,15 @@ def _json_finding(finding: Finding) -> dict[str, object]:
                     else "passed"
                 ),
             }
+    if finding.deep_call is not None:
+        result["deep_call"] = {
+            "boundary": finding.deep_call.boundary,
+            "event_ref": f"event:{finding.deep_call.seq}",
+            "module_state_after": _json_module_state(finding.deep_call.module_state_after),
+            "module_state_before": _json_module_state(finding.deep_call.module_state_before),
+            "outcome": finding.deep_call.outcome,
+        }
+        result["evidence"] = {"level": "captured_deep_boundary"}
     if finding.replay is not None:
         result["path_finder_replay"] = {
             "evidence_level": finding.replay.evidence_level,

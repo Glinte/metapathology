@@ -430,7 +430,8 @@ def _timeline_line(event: MonitorEvent, context: _RenderContext) -> str:
     """Render one compact line using only data captured in the event record."""
     if isinstance(event, DeepDiagnosticCall):
         subject = event.fullname if event.fullname is not None else event.path
-        return f"#{event.seq} deep {event.boundary} {subject or '<unknown>'}: {event.outcome}"
+        transition = _module_transition_suffix(event.module_state_before, event.module_state_after)
+        return f"#{event.seq} deep {event.boundary} {subject or '<unknown>'}: {event.outcome}{transition}"
     if isinstance(event, DeepImportEvent):
         return f"#{event.seq} deep import {event.fullname!r}: {event.outcome}{context.thread_suffix(event.thread_name)}"
     if isinstance(event, ImportAuditStart):
@@ -696,6 +697,13 @@ def _attribution_lines(calls: list[FindSpecCall], context: _RenderContext) -> li
 
 def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
     """Render one structured finding as a headline plus labeled evidence lines."""
+    if finding.kind == "module_replacement" and finding.deep_call is not None:
+        call = finding.deep_call
+        transition = _module_transition(call.module_state_before, call.module_state_after)
+        return [
+            f"[module-replacement] '{finding.module}': object identity changed across deep {call.boundary}",
+            f"    captured boundary: {transition}; internal steps and temporary objects are unknown",
+        ]
     if finding.kind == "no_spec":
         return [
             f"[no-spec] '{finding.module}' is in sys.modules with no __spec__ and no recorded finder claim "
