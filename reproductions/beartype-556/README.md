@@ -38,19 +38,19 @@ The monitored command prints `3` twice and exits successfully, demonstrating
 that the invalid argument was not checked. The normalized report excerpt is:
 
 ```text
-initial sys.meta_path: [_Finder, ScikitBuildRedirectingFinder,
+sys.meta_path (unchanged since install): [_Finder, ScikitBuildRedirectingFinder,
     BuiltinImporter, FrozenImporter, PathFinder]
--- sys.meta_path mutations (0) --
-ScikitBuildRedirectingFinder (...): ... find_spec calls, 1 claimed
-    myproject
 -- suspicious findings (1) --
-[bypass] 'myproject' was claimed by ScikitBuildRedirectingFinder
-    (loader _ScikitBuildLoaderWrapper, origin <reproduction>/src/myproject/__init__.py);
-    the current live PathFinder replay would use loader BeartypeSourceFileLoader
-    (origin <reproduction>/src/myproject/__init__.py).
-    sys.path_hooks-based tools were bypassed.
-    historical structural evidence: ...
--- internal errors (0) --
+[bypass] 'myproject': claimed by ScikitBuildRedirectingFinder,
+    bypassing sys.path_hooks-based tools
+    claimed: loader _ScikitBuildLoaderWrapper, origin 'src/myproject/__init__.py'
+    PathFinder replay: loader BeartypeSourceFileLoader, same origin
+    differences (import-time claim vs live replay): loader type
+    structural evidence: ...
+-- finder attribution (instrumented finders only) --
+ScikitBuildRedirectingFinder: ... probes, 1 claimed
+    myproject
+nothing recorded: sys.meta_path mutations, ..., internal errors
 ```
 
 This directly identifies the cause: scikit-build-core's meta-path finder wins

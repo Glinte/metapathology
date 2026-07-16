@@ -53,6 +53,10 @@ def test_finder_shadowing_path_hooks_is_flagged_as_bypass(run_python: RunPython,
     assert "real_mod" in proc.stdout
     assert "SneakyLoader" in proc.stdout
     assert "SourceFileLoader" in proc.stdout
+    # Findings lead the report, and paths under the reported cwd are relativized.
+    assert proc.stdout.index("-- suspicious findings") < proc.stdout.index("-- chronological evidence timeline")
+    assert "origin 'real_mod.py'" in proc.stdout
+    assert f"paths shown relative to: {tmp_path}" in proc.stdout
 
 
 def test_module_invisible_to_path_machinery_is_flagged_as_unfindable(run_python: RunPython, tmp_path: Path) -> None:
@@ -103,16 +107,18 @@ def test_standard_unwrapped_finders_are_explained(run_python: RunPython) -> None
     assert proc.returncode == 0, proc.stderr
     assert "report guide: https://glinte.github.io/metapathology/report/" in proc.stdout
     assert "standard CPython finders left unwrapped (expected)" in proc.stdout
-    assert "BuiltinImporter handles built-in modules" in proc.stdout
-    assert "FrozenImporter handles frozen modules" in proc.stdout
-    assert "PathFinder handles sys.path and package paths" in proc.stdout
-    assert "classes shared by the interpreter" in proc.stdout
+    assert "interpreter-shared classes handle built-in, frozen, and sys.path imports" in proc.stdout
+    assert "Custom claims are checked against PathFinder below" in proc.stdout
     assert "BuiltinImporter: class entry" not in proc.stdout
     assert "FrozenImporter: class entry" not in proc.stdout
     assert "PathFinder: class entry" not in proc.stdout
-    assert "sys.path_hooks monitoring enabled: True" in proc.stdout
-    assert "-- sys.path_hooks mutations (0) --" in proc.stdout
-    assert "-- sys.path_hooks reassignments (0) --" in proc.stdout
+    assert "monitoring: sys.meta_path, sys.path_hooks, sys.path_importer_cache" in proc.stdout
+    assert "sys.meta_path (unchanged since install):" in proc.stdout
+    assert (
+        "nothing recorded: sys.meta_path mutations, sys.meta_path reassignments, "
+        "sys.path_hooks mutations, sys.path_hooks reassignments" in proc.stdout
+    )
+    assert "-- sys.path_hooks mutations (0) --" not in proc.stdout
 
 
 PATH_REMOVED_AFTER_IMPORT = """

@@ -100,7 +100,7 @@ def test_cli_can_disable_path_hook_monitoring_without_consuming_target_options(t
 
     assert proc.returncode == 0, proc.stderr
     assert "True ['--no-path-hook-monitoring']" in proc.stdout
-    assert "sys.path_hooks monitoring enabled: False" in proc.stderr
+    assert "sys.path_hooks off" in proc.stderr
 
 
 def test_cli_can_disable_importer_cache_monitoring_without_consuming_target_options(tmp_path: Path) -> None:
@@ -116,7 +116,7 @@ def test_cli_can_disable_importer_cache_monitoring_without_consuming_target_opti
 
     assert proc.returncode == 0, proc.stderr
     assert "['--no-importer-cache-monitoring']" in proc.stdout
-    assert "sys.path_importer_cache monitoring enabled: False" in proc.stderr
+    assert "sys.path_importer_cache off" in proc.stderr
 
 
 def test_invalid_report_format_fails_before_running_target(tmp_path: Path) -> None:

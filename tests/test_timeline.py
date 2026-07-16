@@ -56,7 +56,8 @@ text = metapathology.render_report()
 timeline = text.split("-- chronological evidence timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
 positions = [timeline.index(f"#{event.seq}") for event in (hook, cache, start, claim)]
 assert positions == sorted(positions), timeline
-assert "resolution started for 'timeline_target'; outcome unknown" in timeline
+assert "resolution started for 'timeline_target'" in timeline
+assert "the audit event has no outcome or winner signal" in timeline
 assert "capture order; concurrent events are not a global wall-clock order" in timeline
 
 document = json.loads(metapathology.render_report(format="json"))
@@ -137,13 +138,39 @@ else:
     raise AssertionError("missing import unexpectedly succeeded")
 text = metapathology.render_report()
 line = next(line for line in text.splitlines() if "metapathology_missing_timeline_module" in line)
-assert "resolution started" in line and "outcome unknown" in line, line
+assert "resolution started" in line, line
+assert "the audit event has no outcome or winner signal" in text
 print("OK")
 """
 
 
 def test_audit_starts_exclude_cache_hits_native_load_events_and_malformed_events(run_python: RunPython) -> None:
     proc = run_python(AUDIT_SHAPES)
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+DEVIATION = r"""
+import sys
+
+import metapathology
+
+metapathology.install(report_at_exit=False)
+import colorsys
+sys.meta_path = list(sys.meta_path)
+import graphlib
+
+text = metapathology.render_report()
+timeline = text.split("-- chronological evidence timeline", 1)[1].split("-- sys.meta_path reassignments", 1)[0]
+assert "sys.path_hooks and sys.path_importer_cache identities stable across all audited imports" in timeline, timeline
+assert "\n    meta_path 0x" in timeline, timeline
+print("OK")
+"""
+
+
+def test_timeline_details_meta_path_identity_only_on_deviation(run_python: RunPython) -> None:
+    proc = run_python(DEVIATION)
 
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "OK"

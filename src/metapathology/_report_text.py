@@ -38,8 +38,103 @@ _MAX_LISTED_MODULES = 25
 _MAX_CACHE_CHANGES_PER_DIFF = 25
 
 
+class _RenderContext:
+    """Per-document display state computed once before rendering.
+
+    Holds the base directory for path shortening, whether the per-line
+    ``[thread ...]`` suffix can be elided (single-threaded capture), and which
+    display labels need an ``id 0x...`` suffix because several distinct
+    objects share them. Ambiguity is tracked per display domain (finders vs
+    path hooks) so that, for example, many per-module loader instances do not
+    force hex ids back onto unrelated sections.
+    """
+
+    __slots__ = ("_base", "_base_prefix", "finder_ambiguous", "hook_ambiguous", "only_thread")
+
+    def __init__(self, document: ReportDocument) -> None:
+        cwd = document.cwd
+        if cwd:
+            base = os.path.normcase(cwd).rstrip(os.sep)
+            self._base: str | None = base
+            self._base_prefix: str | None = base + os.sep
+        else:
+            self._base = None
+            self._base_prefix = None
+
+        threads = {
+            thread
+            for thread in (getattr(event, "thread_name", None) for event in document.events)
+            if thread is not None
+        }
+        self.only_thread: str | None = next(iter(threads)) if len(threads) == 1 else None
+
+        finder_ids: dict[str, set[int]] = {}
+        hook_ids: dict[str, set[int]] = {}
+        for event in document.events:
+            if isinstance(event, FindSpecCall):
+                finder_ids.setdefault(event.finder_type_name, set()).add(event.finder_id)
+            elif isinstance(event, PathHooksMutation):
+                for reference in (*event.added, *event.removed, *event.contents_after):
+                    _note_label(hook_ids, reference)
+            elif isinstance(event, PathHooksReassignment):
+                for reference in (*event.old_contents, *event.new_contents):
+                    _note_label(hook_ids, reference)
+        for reference in (*document.initial_path_hooks, *(document.current_path_hooks or ())):
+            _note_label(hook_ids, reference)
+        self.finder_ambiguous = {label for label, ids in finder_ids.items() if len(ids) > 1}
+        self.hook_ambiguous = {label for label, ids in hook_ids.items() if len(ids) > 1}
+
+    def display_path(self, path: str) -> str:
+        """Shorten a path under the report's base directory; the base itself becomes '.'."""
+        if self._base is None or self._base_prefix is None:
+            return path
+        # normcase preserves length, so slicing the original keeps its casing.
+        normalized = os.path.normcase(path)
+        if normalized.rstrip(os.sep) == self._base:
+            return "."
+        if normalized.startswith(self._base_prefix):
+            return path[len(self._base_prefix) :]
+        return path
+
+    def quoted_path(self, path: str) -> str:
+        """Quote a shortened path without repr's backslash escaping."""
+        return f"'{self.display_path(path)}'"
+
+    def finder_label(self, type_name: str, finder_id: int) -> str:
+        """Name an instrumented finder, adding its id only when the type name is ambiguous."""
+        if type_name in self.finder_ambiguous:
+            return f"{type_name} id 0x{finder_id:x}"
+        return type_name
+
+    def hook_ref(self, reference: ImportObjectRef) -> str:
+        """Name a path hook, adding its id only when the display label is ambiguous."""
+        label = _ref_label(reference)
+        if label in self.hook_ambiguous:
+            return f"{label} id 0x{reference.object_id:x}"
+        return label
+
+    def hook_refs(self, references: tuple[ImportObjectRef, ...]) -> str:
+        """Format a path-hook snapshot."""
+        return "[" + ", ".join(self.hook_ref(reference) for reference in references) + "]"
+
+    def thread_suffix(self, thread_name: str) -> str:
+        """Per-line thread marker, elided when the whole capture is single-threaded."""
+        return "" if self.only_thread is not None else f" [thread {thread_name}]"
+
+
+def _note_label(ids_by_label: dict[str, set[int]], reference: ImportObjectRef) -> None:
+    """Record one displayed label/id pair for ambiguity detection."""
+    ids_by_label.setdefault(_ref_label(reference), set()).add(reference.object_id)
+
+
+def _ref_label(reference: ImportObjectRef) -> str:
+    """Preferred display label: the callable's own name, else its type name."""
+    return reference.type_name if reference.name is None else reference.name
+
+
 def render_lines(document: ReportDocument) -> list[str]:
     """Build the report body as a list of lines; the caller adds the trailing newline."""
+    context = _RenderContext(document)
     mutations = _events_of_type(document.events, MetaPathMutation)
     reassignments = _events_of_type(document.events, MetaPathReassignment)
     path_hook_mutations = _events_of_type(document.events, PathHooksMutation)
@@ -48,42 +143,129 @@ def render_lines(document: ReportDocument) -> list[str]:
     calls = _events_of_type(document.events, FindSpecCall)
     errors = _events_of_type(document.events, InternalError)
 
+    lines = _header_lines(document, context)
+
+    lines.append("")
+    lines.append(f"-- suspicious findings ({len(document.findings)}) --")
+    if not document.findings:
+        lines.append("(none)")
+    for finding in document.findings:
+        lines.extend(_finding_lines(finding, context))
+
+    lines.append("")
+    lines.append("-- finder attribution (instrumented finders only) --")
+    lines.extend(_attribution_lines(calls, context))
+
+    lines.append("")
+    lines.extend(_timeline_lines(document, context))
+
+    empty_sections: list[str] = []
+
+    if mutations:
+        lines.append("")
+        lines.append(f"-- sys.meta_path mutations ({len(mutations)}) --")
+        for mutation in mutations:
+            lines.extend(_mutation_lines(mutation, context))
+    else:
+        empty_sections.append("sys.meta_path mutations")
+
+    if reassignments:
+        lines.append("")
+        lines.append(f"-- sys.meta_path reassignments ({len(reassignments)}) --")
+        for reassignment in reassignments:
+            lines.extend(_reassignment_lines(reassignment, context))
+    else:
+        empty_sections.append("sys.meta_path reassignments")
+
+    if path_hook_mutations:
+        lines.append("")
+        lines.append(f"-- sys.path_hooks mutations ({len(path_hook_mutations)}) --")
+        for mutation in path_hook_mutations:
+            lines.extend(_path_hooks_mutation_lines(mutation, context))
+    else:
+        empty_sections.append("sys.path_hooks mutations")
+
+    if path_hook_reassignments:
+        lines.append("")
+        lines.append(f"-- sys.path_hooks reassignments ({len(path_hook_reassignments)}) --")
+        for reassignment in path_hook_reassignments:
+            lines.extend(_path_hooks_reassignment_lines(reassignment, context))
+    else:
+        empty_sections.append("sys.path_hooks reassignments")
+
+    if importer_cache_diffs:
+        lines.append("")
+        lines.append(f"-- sys.path_importer_cache changes ({len(importer_cache_diffs)}) --")
+        for diff in importer_cache_diffs:
+            lines.extend(_importer_cache_diff_lines(diff, context))
+    else:
+        empty_sections.append("sys.path_importer_cache changes")
+
+    error_count = len(errors) + len(document.report_errors)
+    if error_count:
+        lines.append("")
+        lines.append(f"-- internal errors ({error_count}) --")
+        lines.extend(_internal_error_line(error) for error in errors)
+        lines.extend(f"during report in {error.where}: {error.exception_type_name}" for error in document.report_errors)
+    else:
+        empty_sections.append("internal errors")
+
+    lines.append("")
+    lines.extend(_loader_inventory_lines(document, context))
+
+    if empty_sections:
+        lines.append("")
+        lines.append("nothing recorded: " + ", ".join(empty_sections))
+    lines.append("")
+    return lines
+
+
+def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
+    """Summarize mechanism status and interpreter state, collapsing unchanged snapshots."""
     lines = ["== metapathology report =="]
     lines.append("report guide: https://glinte.github.io/metapathology/report/")
-    lines.append(f"monitor enabled: {document.monitor_enabled}")
+    lines.append(_monitoring_line(document))
     if document.deep_diagnostics:
         lines.append("WARNING: opt-in deep diagnostics replace foreign callables and may perturb identity checks")
         lines.append(f"deep mechanisms enabled: {', '.join(document.deep_diagnostics)}")
-    else:
-        lines.append("deep diagnostics: disabled")
     bootstrap = document.early_site_bootstrap
-    if bootstrap is None:
-        lines.append("early site bootstrap: inactive")
-    else:
-        lines.append(f"early site bootstrap: {bootstrap.path}")
-        lines.append(f"bootstrap site-packages: {bootstrap.site_packages}")
+    if bootstrap is not None:
+        lines.append(f"early site bootstrap: {context.display_path(bootstrap.path)}")
+        lines.append(f"bootstrap site-packages: {context.display_path(bootstrap.site_packages)}")
         lines.append(f"bootstrap activation: {bootstrap.activation_source}")
         earlier = _names_line(bootstrap.earlier_pth_files) if bootstrap.earlier_pth_files else "(none)"
         lines.append(f"earlier .pth files outside capture: {earlier}")
-    lines.append(f"initial sys.meta_path: {_names_line(document.initial_meta_path)}")
-    current_meta_path = ("<unavailable>",) if document.current_meta_path is None else document.current_meta_path
-    lines.append(f"current sys.meta_path: {_names_line(current_meta_path)}")
-    lines.append(f"sys.path_hooks monitoring enabled: {document.path_hooks_enabled}")
-    lines.append(f"initial sys.path_hooks: {_refs_line(document.initial_path_hooks)}")
-    current_path_hooks = () if document.current_path_hooks is None else document.current_path_hooks
-    lines.append(f"current sys.path_hooks: {_refs_line(current_path_hooks)}")
-    lines.append(f"sys.path_importer_cache monitoring enabled: {document.importer_cache_enabled}")
-    lines.append(
-        "initial sys.path_importer_cache: "
-        f"{len(document.initial_importer_cache)} string keys, "
-        f"{document.initial_importer_cache_non_string_keys} non-string keys omitted"
-    )
-    current_cache_count = 0 if document.current_importer_cache is None else len(document.current_importer_cache)
-    lines.append(
-        "current sys.path_importer_cache: "
-        f"{current_cache_count} string keys, "
-        f"{document.current_importer_cache_non_string_keys or 0} non-string keys omitted"
-    )
+
+    if document.current_meta_path == document.initial_meta_path:
+        lines.append(f"sys.meta_path (unchanged since install): {_names_line(document.initial_meta_path)}")
+    else:
+        current_meta_path = ("<unavailable>",) if document.current_meta_path is None else document.current_meta_path
+        lines.append(f"sys.meta_path at install: {_names_line(document.initial_meta_path)}")
+        lines.append(f"sys.meta_path now: {_names_line(current_meta_path)}")
+
+    if document.path_hooks_enabled:
+        current_hooks = document.current_path_hooks
+        if current_hooks is not None and _ref_signatures(current_hooks) == _ref_signatures(document.initial_path_hooks):
+            lines.append(f"sys.path_hooks (unchanged since install): {context.hook_refs(document.initial_path_hooks)}")
+        else:
+            now = "<unavailable>" if current_hooks is None else context.hook_refs(current_hooks)
+            lines.append(f"sys.path_hooks at install: {context.hook_refs(document.initial_path_hooks)}")
+            lines.append(f"sys.path_hooks now: {now}")
+
+    if document.importer_cache_enabled:
+        initial_count = len(document.initial_importer_cache)
+        cache = document.current_importer_cache
+        current_count = "<unavailable>" if cache is None else str(len(cache))
+        line = f"sys.path_importer_cache: {initial_count} -> {current_count} string-keyed entries"
+        initial_non_string = document.initial_importer_cache_non_string_keys
+        current_non_string = document.current_importer_cache_non_string_keys or 0
+        if initial_non_string or current_non_string:
+            if initial_non_string == current_non_string:
+                line += f" ({initial_non_string} non-string keys omitted)"
+            else:
+                line += f" ({initial_non_string} -> {current_non_string} non-string keys omitted)"
+        lines.append(line)
+
     standard_skipped = [item for item in document.skipped_finders if item.expected]
     other_skipped = [item for item in document.skipped_finders if not item.expected]
     if standard_skipped:
@@ -91,81 +273,46 @@ def render_lines(document: ReportDocument) -> list[str]:
             "standard CPython finders left unwrapped (expected): "
             + _names_line(tuple(item.finder_type_name for item in standard_skipped))
         )
-        lines.append("    BuiltinImporter handles built-in modules; FrozenImporter handles frozen modules.")
-        lines.append(
-            "    PathFinder handles sys.path and package paths; suspicious custom claims are compared with it later."
-        )
-        lines.append("    These entries are classes shared by the interpreter, so metapathology does not modify them.")
+        lines.append("    These interpreter-shared classes handle built-in, frozen, and sys.path imports;")
+        lines.append("    metapathology does not modify them. Custom claims are checked against PathFinder below.")
     if other_skipped:
         lines.append("other finders observed but not instrumented (direct attribution unavailable):")
         lines.extend(f"    {item.finder_type_name}: {item.reason}" for item in other_skipped)
+
     module_count = 0 if document.modules_since_install is None else len(document.modules_since_install)
     lines.append(f"modules imported since install: {module_count}")
-
-    lines.append("")
-    lines.extend(_loader_inventory_lines(document))
-
-    lines.append("")
-    lines.append(f"-- chronological evidence timeline ({len(document.events)}) --")
-    lines.append("Sequence numbers are capture order; concurrent events are not a global wall-clock order.")
-    if not document.events:
-        lines.append("(none)")
-    lines.extend(_timeline_line(event) for event in document.events)
-
-    lines.append("")
-    lines.append(f"-- sys.meta_path mutations ({len(mutations)}) --")
-    if not mutations:
-        lines.append("(none)")
-    for mutation in mutations:
-        lines.extend(_mutation_lines(mutation))
-
-    lines.append("")
-    lines.append(f"-- sys.meta_path reassignments ({len(reassignments)}) --")
-    if not reassignments:
-        lines.append("(none)")
-    for reassignment in reassignments:
-        lines.extend(_reassignment_lines(reassignment))
-
-    lines.append("")
-    lines.append(f"-- sys.path_hooks mutations ({len(path_hook_mutations)}) --")
-    if not path_hook_mutations:
-        lines.append("(none)")
-    for mutation in path_hook_mutations:
-        lines.extend(_path_hooks_mutation_lines(mutation))
-
-    lines.append("")
-    lines.append(f"-- sys.path_hooks reassignments ({len(path_hook_reassignments)}) --")
-    if not path_hook_reassignments:
-        lines.append("(none)")
-    for reassignment in path_hook_reassignments:
-        lines.extend(_path_hooks_reassignment_lines(reassignment))
-
-    lines.append("")
-    lines.append(f"-- sys.path_importer_cache changes ({len(importer_cache_diffs)}) --")
-    if not importer_cache_diffs:
-        lines.append("(none)")
-    for diff in importer_cache_diffs:
-        lines.extend(_importer_cache_diff_lines(diff))
-
-    lines.append("")
-    lines.append("-- finder attribution (instrumented finders only) --")
-    lines.extend(_attribution_lines(calls))
-
-    lines.append("")
-    lines.append(f"-- suspicious findings ({len(document.findings)}) --")
-    if not document.findings:
-        lines.append("(none)")
-    lines.extend(_finding_line(finding) for finding in document.findings)
-
-    error_count = len(errors) + len(document.report_errors)
-    lines.append("")
-    lines.append(f"-- internal errors ({error_count}) --")
-    if not error_count:
-        lines.append("(none)")
-    lines.extend(_internal_error_line(error) for error in errors)
-    lines.extend(f"during report in {error.where}: {error.exception_type_name}" for error in document.report_errors)
-    lines.append("")
+    if document.cwd:
+        lines.append(f"paths shown relative to: {document.cwd}")
     return lines
+
+
+def _monitoring_line(document: ReportDocument) -> str:
+    """One-line mechanism summary replacing the per-mechanism enabled/disabled lines."""
+    if not document.monitor_enabled:
+        return "monitoring: disabled"
+    mechanisms = ["sys.meta_path"]
+    notes: list[str] = []
+    for name, enabled in (
+        ("sys.path_hooks", document.path_hooks_enabled),
+        ("sys.path_importer_cache", document.importer_cache_enabled),
+    ):
+        if enabled:
+            mechanisms.append(name)
+        else:
+            notes.append(f"{name} off")
+    if not document.deep_diagnostics:
+        notes.append("deep diagnostics off")
+    if document.early_site_bootstrap is None:
+        notes.append("early site bootstrap inactive")
+    line = "monitoring: " + ", ".join(mechanisms)
+    if notes:
+        line += " (" + "; ".join(notes) + ")"
+    return line
+
+
+def _ref_signatures(references: tuple[ImportObjectRef, ...]) -> tuple[tuple[int, str, str | None], ...]:
+    """Comparable identity tuples for detecting an unchanged snapshot."""
+    return tuple((reference.object_id, reference.type_name, reference.name) for reference in references)
 
 
 def _events_of_type(events: "Iterable[object]", event_type: "type[_EventT]") -> "list[_EventT]":
@@ -179,55 +326,138 @@ def _internal_error_line(error: InternalError) -> str:
     return line if error.message is None else f"{line}: {error.message}"
 
 
-def _timeline_line(event: MonitorEvent) -> str:
+def _timeline_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
+    """Render the timeline with shared context hoisted into a preamble."""
+    events = document.events
+    lines = [f"-- chronological evidence timeline ({len(events)}) --"]
+    lines.append("Sequence numbers are capture order; concurrent events are not a global wall-clock order.")
+    if not events:
+        lines.append("(none)")
+        return lines
+    if context.only_thread is not None:
+        lines.append(f"All events on thread {context.only_thread}.")
+
+    audits = _events_of_type(events, ImportAuditStart)
+    meta_path_stable = len({(audit.meta_path_id, audit.meta_path_type_names) for audit in audits}) <= 1
+    path_hooks_stable = len({audit.path_hooks_id for audit in audits}) <= 1
+    importer_cache_stable = len({audit.importer_cache_id for audit in audits}) <= 1
+    if audits:
+        lines.append(
+            "Audit lines mark the start of uncached resolution; the audit event has no outcome or winner signal."
+        )
+        stable_names: list[str] = []
+        if meta_path_stable:
+            stable_names.append("sys.meta_path")
+        if path_hooks_stable and any(audit.path_hooks_id is not None for audit in audits):
+            stable_names.append("sys.path_hooks")
+        if importer_cache_stable and any(audit.importer_cache_id is not None for audit in audits):
+            stable_names.append("sys.path_importer_cache")
+        if stable_names:
+            noun = "identity" if len(stable_names) == 1 else "identities"
+            lines.append(f"{_join_names(stable_names)} {noun} stable across all audited imports.")
+
+    previous_audit: ImportAuditStart | None = None
+    for event in events:
+        lines.append(_timeline_line(event, context))
+        if isinstance(event, ImportAuditStart):
+            lines.extend(
+                _audit_deviation_lines(
+                    event, previous_audit, meta_path_stable, path_hooks_stable, importer_cache_stable
+                )
+            )
+            previous_audit = event
+    return lines
+
+
+def _join_names(names: list[str]) -> str:
+    """Join names as English prose: 'a', 'a and b', or 'a, b, and c'."""
+    if len(names) <= 1:
+        return "".join(names)
+    if len(names) == 2:
+        return f"{names[0]} and {names[1]}"
+    return ", ".join(names[:-1]) + f", and {names[-1]}"
+
+
+def _audit_deviation_lines(
+    event: ImportAuditStart,
+    previous: ImportAuditStart | None,
+    meta_path_stable: bool,
+    path_hooks_stable: bool,
+    importer_cache_stable: bool,
+) -> list[str]:
+    """Detail only the mechanisms whose identity deviates within the audit stream."""
+    lines: list[str] = []
+    if not meta_path_stable and (
+        previous is None
+        or (previous.meta_path_id, previous.meta_path_type_names) != (event.meta_path_id, event.meta_path_type_names)
+    ):
+        lines.append(f"    meta_path 0x{event.meta_path_id:x}: {_names_line(event.meta_path_type_names)}")
+    if not path_hooks_stable and (previous is None or previous.path_hooks_id != event.path_hooks_id):
+        value = "disabled" if event.path_hooks_id is None else f"0x{event.path_hooks_id:x}"
+        lines.append(f"    path_hooks {value}")
+    if not importer_cache_stable and (previous is None or previous.importer_cache_id != event.importer_cache_id):
+        if event.importer_cache_id is None:
+            value = "disabled"
+        else:
+            value = f"0x{event.importer_cache_id:x} size {event.importer_cache_size}"
+        lines.append(f"    importer_cache {value}")
+    return lines
+
+
+def _timeline_line(event: MonitorEvent, context: _RenderContext) -> str:
     """Render one compact line using only data captured in the event record."""
     if isinstance(event, DeepDiagnosticCall):
         subject = event.fullname if event.fullname is not None else event.path
         return f"#{event.seq} deep {event.boundary} {subject or '<unknown>'}: {event.outcome}"
     if isinstance(event, ImportAuditStart):
-        path_hooks = "disabled" if event.path_hooks_id is None else f"0x{event.path_hooks_id:x}"
-        if event.importer_cache_id is None:
-            importer_cache = "disabled"
-        else:
-            importer_cache = f"0x{event.importer_cache_id:x} size {event.importer_cache_size}"
+        # Stable snapshot context lives in the timeline preamble; deviations
+        # are appended by _timeline_lines as continuation lines.
         return (
-            f"#{event.seq} import audit: resolution started for {event.fullname!r}; outcome unknown "
-            f"[thread {event.thread_name}; meta_path 0x{event.meta_path_id:x} "
-            f"{_names_line(event.meta_path_type_names)}; path_hooks {path_hooks}; "
-            f"importer_cache {importer_cache}]"
+            f"#{event.seq} import audit: resolution started for {event.fullname!r}"
+            f"{context.thread_suffix(event.thread_name)}"
         )
     if isinstance(event, FindSpecCall):
         if event.exception_type_name is not None:
             outcome = f"raised {event.exception_type_name}"
         elif event.found:
-            outcome = f"claimed with loader {event.loader_type_name}, origin {event.origin!r}"
+            origin = "None" if event.origin is None else context.quoted_path(event.origin)
+            outcome = f"claimed (loader {event.loader_type_name}, origin {origin})"
         else:
             outcome = "passed"
-        return (
-            f"#{event.seq} finder {event.finder_type_name} id 0x{event.finder_id:x} probed "
-            f"{event.fullname!r}: {outcome} [thread {event.thread_name}]"
-        )
+        finder = context.finder_label(event.finder_type_name, event.finder_id)
+        return f"#{event.seq} {finder} probed {event.fullname!r}: {outcome}{context.thread_suffix(event.thread_name)}"
     if isinstance(event, ImporterCacheDiff):
+        deltas: list[str] = []
+        if event.added:
+            deltas.append(f"+{len(event.added)}")
+        if event.removed:
+            deltas.append(f"-{len(event.removed)}")
+        if event.replaced:
+            deltas.append(f"~{len(event.replaced)}")
+        delta = " ".join(deltas) if deltas else "(no string-key changes)"
         return (
-            f"#{event.seq} importer cache diff at {event.observation}: +{len(event.added)} "
-            f"-{len(event.removed)} ~{len(event.replaced)} [thread {event.thread_name}]"
+            f"#{event.seq} importer cache diff at {event.observation}: {delta}"
+            f"{context.thread_suffix(event.thread_name)}"
         )
     if isinstance(event, MetaPathMutation):
-        return f"#{event.seq} sys.meta_path {event.op} {_timeline_delta(event.added, event.removed)} [thread {event.thread_name}]"
+        return (
+            f"#{event.seq} sys.meta_path {event.op} {_timeline_delta(event.added, event.removed)}"
+            f"{context.thread_suffix(event.thread_name)}"
+        )
     if isinstance(event, MetaPathReassignment):
         return (
-            f"#{event.seq} sys.meta_path reassignment detected during {event.during_import!r} "
-            f"[thread {event.thread_name}]"
+            f"#{event.seq} sys.meta_path reassignment detected during {event.during_import!r}"
+            f"{context.thread_suffix(event.thread_name)}"
         )
     if isinstance(event, PathHooksMutation):
         return (
-            f"#{event.seq} sys.path_hooks {event.op}: +{len(event.added)} -{len(event.removed)} "
-            f"[thread {event.thread_name}]"
+            f"#{event.seq} sys.path_hooks {event.op}: +{len(event.added)} -{len(event.removed)}"
+            f"{context.thread_suffix(event.thread_name)}"
         )
     if isinstance(event, PathHooksReassignment):
         return (
-            f"#{event.seq} sys.path_hooks reassignment detected during {event.during_import!r} "
-            f"[thread {event.thread_name}]"
+            f"#{event.seq} sys.path_hooks reassignment detected during {event.during_import!r}"
+            f"{context.thread_suffix(event.thread_name)}"
         )
     return _internal_error_line(event)
 
@@ -247,18 +477,7 @@ def _names_line(names: tuple[str, ...]) -> str:
     return "[" + ", ".join(names) + "]"
 
 
-def _ref_name(reference: ImportObjectRef) -> str:
-    """Format captured identity metadata without inspecting the original object."""
-    label = reference.type_name if reference.name is None else f"{reference.name} ({reference.type_name})"
-    return f"{label} id 0x{reference.object_id:x}"
-
-
-def _refs_line(references: tuple[ImportObjectRef, ...]) -> str:
-    """Format a path-hook snapshot."""
-    return "[" + ", ".join(_ref_name(reference) for reference in references) + "]"
-
-
-def _loader_inventory_lines(document: ReportDocument) -> list[str]:
+def _loader_inventory_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
     """Render a bounded view of the exhaustive post-hoc loader inventory."""
     inventory = document.loader_inventory
     lines = [f"-- post-hoc loader inventory ({len(inventory.entries)} string-keyed entries) --"]
@@ -266,8 +485,16 @@ def _loader_inventory_lines(document: ReportDocument) -> list[str]:
     if not inventory.available:
         lines.append("(sys.modules snapshot unavailable)")
         return lines
-    for loader, entries in _loader_inventory_groups(inventory):
-        loader_name = "no loader" if loader is None else _ref_name(loader)
+    groups = _loader_inventory_groups(inventory)
+    labels = [None if loader is None else _ref_label(loader) for loader, _ in groups]
+    ambiguous = {label for label in labels if label is not None and labels.count(label) > 1}
+    for loader, entries in groups:
+        if loader is None:
+            loader_name = "no loader"
+        elif _ref_label(loader) in ambiguous:
+            loader_name = f"{_ref_label(loader)} id 0x{loader.object_id:x}"
+        else:
+            loader_name = _ref_label(loader)
         lines.append(f"{loader_name}: {len(entries)} module(s)")
         for entry in entries[:_MAX_LISTED_MODULES]:
             summary = entry.spec_summary
@@ -275,7 +502,8 @@ def _loader_inventory_lines(document: ReportDocument) -> list[str]:
             cached = None if summary is None else summary.cached
             disagreement = " [loader metadata disagreement]" if entry.loader_agreement is False else ""
             lines.append(
-                f"    {entry.name}: origin {_metadata_value(origin)}, cached {_metadata_value(cached)}{disagreement}"
+                f"    {entry.name}: origin {_metadata_value(origin, context)}, "
+                f"cached {_metadata_value(cached, context)}{disagreement}"
             )
         if len(entries) > _MAX_LISTED_MODULES:
             lines.append(f"    ... and {len(entries) - _MAX_LISTED_MODULES} more")
@@ -294,14 +522,16 @@ def _loader_inventory_lines(document: ReportDocument) -> list[str]:
     return lines
 
 
-def _metadata_value(value: str | ImportObjectRef | None) -> str:
+def _metadata_value(value: "str | ImportObjectRef | None", context: _RenderContext) -> str:
     """Format already-reduced metadata without consulting live objects."""
     if isinstance(value, ImportObjectRef):
-        return f"<{_ref_name(value)}>"
-    return repr(value)
+        return f"<{_ref_label(value)} id 0x{value.object_id:x}>"
+    if value is None:
+        return "None"
+    return context.quoted_path(value)
 
 
-def _mutation_lines(mutation: MetaPathMutation) -> list[str]:
+def _mutation_lines(mutation: MetaPathMutation, context: _RenderContext) -> list[str]:
     """Format one mutation record: op, delta, resulting contents, and user stack."""
     delta_parts: list[str] = []
     if mutation.added:
@@ -309,74 +539,84 @@ def _mutation_lines(mutation: MetaPathMutation) -> list[str]:
     if mutation.removed:
         delta_parts.append("-" + _names_line(mutation.removed))
     delta = " ".join(delta_parts) if delta_parts else "(order change)"
-    lines = [f"#{mutation.seq} {mutation.op} {delta} [thread {mutation.thread_name}]"]
+    lines = [f"#{mutation.seq} {mutation.op} {delta}{context.thread_suffix(mutation.thread_name)}"]
     lines.append(f"    meta_path after: {_names_line(mutation.contents_after)}")
-    lines.extend(_stack_lines(mutation.stack))
+    lines.extend(_stack_lines(mutation.stack, context))
     return lines
 
 
-def _reassignment_lines(reassignment: MetaPathReassignment) -> list[str]:
+def _reassignment_lines(reassignment: MetaPathReassignment, context: _RenderContext) -> list[str]:
     """Format one reassignment record with before/after contents and detection stack."""
     lines = [
         f"#{reassignment.seq} sys.meta_path REASSIGNED, detected during import of "
-        f"'{reassignment.during_import}' [thread {reassignment.thread_name}]"
+        f"'{reassignment.during_import}'{context.thread_suffix(reassignment.thread_name)}"
     ]
     lines.append(f"    before: {_names_line(reassignment.old_contents)}")
     lines.append(f"    after:  {_names_line(reassignment.new_contents)}")
     lines.append("    instrumentation reinstalled; stack shows the triggering import, not the reassignment itself:")
-    lines.extend(_stack_lines(reassignment.stack))
+    lines.extend(_stack_lines(reassignment.stack, context))
     return lines
 
 
-def _path_hooks_mutation_lines(mutation: PathHooksMutation) -> list[str]:
+def _path_hooks_mutation_lines(mutation: PathHooksMutation, context: _RenderContext) -> list[str]:
     """Format one path-hook mutation from captured plain references."""
     delta_parts: list[str] = []
     if mutation.added:
-        delta_parts.append("+" + _refs_line(mutation.added))
+        delta_parts.append("+" + context.hook_refs(mutation.added))
     if mutation.removed:
-        delta_parts.append("-" + _refs_line(mutation.removed))
+        delta_parts.append("-" + context.hook_refs(mutation.removed))
     delta = " ".join(delta_parts) if delta_parts else "(order change)"
-    lines = [f"#{mutation.seq} {mutation.op} {delta} [thread {mutation.thread_name}]"]
-    lines.append(f"    path_hooks after: {_refs_line(mutation.contents_after)}")
-    lines.extend(_stack_lines(mutation.stack))
+    lines = [f"#{mutation.seq} {mutation.op} {delta}{context.thread_suffix(mutation.thread_name)}"]
+    lines.append(f"    path_hooks after: {context.hook_refs(mutation.contents_after)}")
+    lines.extend(_stack_lines(mutation.stack, context))
     return lines
 
 
-def _path_hooks_reassignment_lines(reassignment: PathHooksReassignment) -> list[str]:
+def _path_hooks_reassignment_lines(reassignment: PathHooksReassignment, context: _RenderContext) -> list[str]:
     """Format one path-hooks reassignment detected at an import boundary."""
     lines = [
         f"#{reassignment.seq} sys.path_hooks REASSIGNED, detected during import of "
-        f"'{reassignment.during_import}' [thread {reassignment.thread_name}]"
+        f"'{reassignment.during_import}'{context.thread_suffix(reassignment.thread_name)}"
     ]
-    lines.append(f"    before: {_refs_line(reassignment.old_contents)}")
-    lines.append(f"    after:  {_refs_line(reassignment.new_contents)}")
+    lines.append(f"    before: {context.hook_refs(reassignment.old_contents)}")
+    lines.append(f"    after:  {context.hook_refs(reassignment.new_contents)}")
     lines.append("    instrumentation reinstalled; stack shows the triggering import, not the reassignment itself:")
-    lines.extend(_stack_lines(reassignment.stack))
+    lines.extend(_stack_lines(reassignment.stack, context))
     return lines
 
 
-def _cache_entry_line(entry: ImporterCacheEntry) -> str:
+def _cache_entry_line(entry: ImporterCacheEntry, context: _RenderContext) -> str:
     """Format one captured cache value without inspecting the live finder."""
     finder = _cache_finder_name(entry.finder)
-    return f"{entry.path!r} -> {finder}"
+    return f"{context.quoted_path(entry.path)} -> {finder}"
 
 
-def _cache_finder_name(finder: ImportObjectRef | None) -> str:
-    """Format a captured cache finder or its negative marker."""
-    return "negative (None)" if finder is None else _ref_name(finder)
+def _cache_finder_name(finder: ImportObjectRef | None, force_id: bool = False) -> str:
+    """Format a captured cache finder or its negative marker.
+
+    Cache finders are keyed by path, so their ids are usually noise;
+    ``force_id`` is used only when a replacement's before/after labels would
+    otherwise read identically.
+    """
+    if finder is None:
+        return "negative (None)"
+    label = _ref_label(finder)
+    return f"{label} id 0x{finder.object_id:x}" if force_id else label
 
 
-def _importer_cache_diff_lines(diff: ImporterCacheDiff) -> list[str]:
+def _importer_cache_diff_lines(diff: ImporterCacheDiff, context: _RenderContext) -> list[str]:
     """Format one bounded human projection of an exhaustive cache diff."""
-    lines = [f"#{diff.seq} {diff.observation} [thread {diff.thread_name}]"]
+    lines = [f"#{diff.seq} at {diff.observation}{context.thread_suffix(diff.thread_name)}"]
     changes: list[str] = []
-    changes.extend(f"    + {_cache_entry_line(entry)}" for entry in diff.added)
-    changes.extend(f"    - {_cache_entry_line(entry)}" for entry in diff.removed)
-    changes.extend(
-        f"    ~ {replacement.path!r}: "
-        f"{_cache_finder_name(replacement.before)} -> {_cache_finder_name(replacement.after)}"
-        for replacement in diff.replaced
-    )
+    changes.extend(f"    + {_cache_entry_line(entry, context)}" for entry in diff.added)
+    changes.extend(f"    - {_cache_entry_line(entry, context)}" for entry in diff.removed)
+    for replacement in diff.replaced:
+        same_label = _cache_finder_name(replacement.before) == _cache_finder_name(replacement.after)
+        changes.append(
+            f"    ~ {context.quoted_path(replacement.path)}: "
+            f"{_cache_finder_name(replacement.before, force_id=same_label)} -> "
+            f"{_cache_finder_name(replacement.after, force_id=same_label)}"
+        )
     lines.extend(changes[:_MAX_CACHE_CHANGES_PER_DIFF])
     if len(changes) > _MAX_CACHE_CHANGES_PER_DIFF:
         lines.append(f"    ... and {len(changes) - _MAX_CACHE_CHANGES_PER_DIFF} more changes")
@@ -385,7 +625,7 @@ def _importer_cache_diff_lines(diff: ImporterCacheDiff) -> list[str]:
     return lines
 
 
-def _attribution_lines(calls: list[FindSpecCall]) -> list[str]:
+def _attribution_lines(calls: list[FindSpecCall], context: _RenderContext) -> list[str]:
     """Summarize finder traffic, capping claimed-module display per finder."""
     probes: dict[tuple[str, int], int] = {}
     wins: dict[tuple[str, int], list[str]] = {}
@@ -399,114 +639,122 @@ def _attribution_lines(calls: list[FindSpecCall]) -> list[str]:
     lines: list[str] = []
     for (name, finder_id), count in sorted(probes.items()):
         claimed = wins.get((name, finder_id), [])
-        lines.append(f"{name} (id 0x{finder_id:x}): {count} find_spec calls, {len(claimed)} claimed")
+        lines.append(f"{context.finder_label(name, finder_id)}: {count} probes, {len(claimed)} claimed")
         lines.extend(f"    {module}" for module in claimed[:_MAX_LISTED_MODULES])
         if len(claimed) > _MAX_LISTED_MODULES:
             lines.append(f"    ... and {len(claimed) - _MAX_LISTED_MODULES} more")
     return lines
 
 
-def _finding_line(finding: Finding) -> str:
-    """Render one structured finding using the established human vocabulary."""
+def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
+    """Render one structured finding as a headline plus labeled evidence lines."""
     if finding.kind == "no_spec":
-        return (
+        return [
             f"[no-spec] '{finding.module}' is in sys.modules with no __spec__ and no recorded finder claim "
             "(manually created or exec_module-style load; invisible to all import hooks)."
-        )
+        ]
     claim = finding.claim
     replay = finding.replay
+    tag = finding.kind.replace("_", "-")
     if claim is None or replay is None:
-        return f"[{finding.kind}] '{finding.module}'"
+        return [f"[{tag}] '{finding.module}'"]
+    finder = context.finder_label(claim.finder_type_name, claim.finder_id)
+    claimed_line = f"    claimed: loader {claim.loader_type_name}, origin {_origin_display(claim.origin, context)}"
     if finding.kind == "unfindable":
-        return (
-            f"[unfindable] '{finding.module}' (origin {claim.origin}) was claimed by {claim.finder_type_name}, but "
-            "the current live PathFinder replay cannot find it: sys.path_hooks-based tools never see this module."
-            f"\n    {_structural_comparison_line(finding)}"
-        )
+        return [
+            f"[unfindable] '{finding.module}': claimed by {finder}, but a live PathFinder replay finds nothing; "
+            "sys.path_hooks-based tools never see this module",
+            claimed_line,
+            f"    {_structural_comparison_line(finding)}",
+        ]
     if finding.kind == "namespace_truncation":
         comparison = finding.spec_comparison
-        omitted = "an unavailable location"
-        if comparison is not None:
-            omitted = ", ".join(repr(path) for path in comparison.omitted_locations)
-        return (
-            f"[namespace-truncation] '{finding.module}' was claimed by {claim.finder_type_name}; the captured "
-            f"namespace search locations omit {omitted}, which the current live PathFinder replay includes."
-            f"\n    {_spec_comparison_line(finding)}"
-            f"\n    {_structural_comparison_line(finding)}"
-        )
-    if finding.kind == "package_displacement":
-        label = "package-displacement"
-    elif finding.kind == "origin_displacement":
-        label = "origin-displacement"
-    elif finding.kind == "spec_difference":
-        label = "spec-difference"
-    else:
-        label = "bypass"
-    return (
-        f"[{label}] '{finding.module}' was claimed by {claim.finder_type_name} "
-        f"(loader {claim.loader_type_name}, origin {claim.origin}); the current live PathFinder replay would use "
-        f"loader {replay.loader_type_name} (origin {replay.origin}). sys.path_hooks-based tools were bypassed."
-        f"\n    {_spec_comparison_line(finding)}"
-        f"\n    {_structural_comparison_line(finding)}"
+        if comparison is None:
+            omitted = "unavailable"
+        else:
+            omitted = ", ".join(context.quoted_path(path) for path in comparison.omitted_locations)
+        return [
+            f"[namespace-truncation] '{finding.module}': claimed as a namespace package by {finder}",
+            f"    locations omitted from the claim (present in the PathFinder replay): {omitted}",
+            f"    {_spec_comparison_line(finding)}",
+            f"    {_structural_comparison_line(finding)}",
+        ]
+    same_origin = (
+        claim.origin is not None
+        and replay.origin is not None
+        and os.path.normcase(claim.origin) == os.path.normcase(replay.origin)
     )
+    replay_origin = "same origin" if same_origin else f"origin {_origin_display(replay.origin, context)}"
+    return [
+        f"[{tag}] '{finding.module}': claimed by {finder}, bypassing sys.path_hooks-based tools",
+        claimed_line,
+        f"    PathFinder replay: loader {replay.loader_type_name}, {replay_origin}",
+        f"    {_spec_comparison_line(finding)}",
+        f"    {_structural_comparison_line(finding)}",
+    ]
+
+
+def _origin_display(origin: str | None, context: _RenderContext) -> str:
+    """Quote a spec origin path, keeping a bare None for absent origins."""
+    return "None" if origin is None else context.quoted_path(origin)
 
 
 def _spec_comparison_line(finding: Finding) -> str:
     comparison = finding.spec_comparison
     if comparison is None:
-        return "spec comparison unavailable."
+        return "differences: comparison unavailable"
     differences: list[str] = []
     if comparison.loader_type_changed:
-        differences.append("loader type differs")
+        differences.append("loader type")
     if comparison.origin_changed:
-        differences.append("origin differs")
+        differences.append("origin")
     if comparison.cached_changed:
-        differences.append("cached path differs")
+        differences.append("cached path")
     if comparison.package_status_changed:
-        differences.append("package/module status differs")
+        differences.append("package/module status")
     if comparison.omitted_locations:
-        differences.append(f"{len(comparison.omitted_locations)} standard search location(s) omitted")
+        count = len(comparison.omitted_locations)
+        differences.append(f"{count} standard search location{'' if count == 1 else 's'} omitted")
     if comparison.additional_locations:
-        differences.append(f"{len(comparison.additional_locations)} additional claimed search location(s)")
+        count = len(comparison.additional_locations)
+        differences.append(f"{count} additional claimed search location{'' if count == 1 else 's'}")
     if comparison.locations_reordered:
         differences.append("search locations reordered")
     detail = "; ".join(differences) if differences else "no comparable semantic differences"
-    completeness = "complete" if comparison.complete else "partial"
-    observed_phase = (
-        "post-hoc claim locations" if comparison.observed_locations_state == "post_hoc" else "import-time claim capture"
-    )
-    return f"spec comparison ({completeness}, {observed_phase} vs current live replay): {detail}."
+    phase = "post-hoc claim" if comparison.observed_locations_state == "post_hoc" else "import-time claim"
+    qualifier = "" if comparison.complete else "partial; "
+    return f"differences ({qualifier}{phase} vs live replay): {detail}"
 
 
 def _structural_comparison_line(finding: Finding) -> str:
     """Label identity-only evidence separately from the report-time replay."""
     comparison = finding.structural_comparison
     if comparison is None:
-        return "historical structural evidence unavailable."
+        return "structural evidence: unavailable"
     if comparison.path_hooks_changed is None:
         path_hooks = "sys.path_hooks comparison unavailable"
     elif comparison.path_hooks_changed:
-        path_hooks = "sys.path_hooks changed between install and report"
+        path_hooks = "sys.path_hooks changed since install"
     else:
-        path_hooks = "sys.path_hooks unchanged between install and report"
+        path_hooks = "sys.path_hooks unchanged since install"
     if comparison.importer_cache_changed is None:
-        importer_cache = "sys.path_importer_cache comparison unavailable"
+        importer_cache = "importer cache comparison unavailable"
     elif comparison.importer_cache_changed:
         count = len(comparison.importer_cache_changed_paths)
         noun = "path" if count == 1 else "paths"
-        importer_cache = f"sys.path_importer_cache changed for {count} captured search {noun}"
+        importer_cache = f"importer cache changed for {count} captured search {noun}"
     else:
-        importer_cache = "sys.path_importer_cache unchanged for the captured search path"
-    return f"historical structural evidence: {path_hooks}; {importer_cache}."
+        importer_cache = "importer cache unchanged for the captured search path"
+    return f"structural evidence: {path_hooks}; {importer_cache}"
 
 
-def _stack_lines(stack: "StackSummary") -> list[str]:
+def _stack_lines(stack: "StackSummary", context: _RenderContext) -> list[str]:
     """Format interesting captured frames, innermost first, with noise removed."""
     frames = [frame for frame in stack if not _is_noise_frame(frame.filename)]
     shown = frames[:_STACK_DISPLAY_FRAMES]  # walk_stack order: innermost first.
     if not shown:
         return ["    (no frames outside the import machinery)"]
-    return [f"    at {frame.filename}:{frame.lineno} in {frame.name}" for frame in shown]
+    return [f"    at {context.display_path(frame.filename)}:{frame.lineno} in {frame.name}" for frame in shown]
 
 
 def _is_noise_frame(filename: str) -> bool:

@@ -1,10 +1,17 @@
 # Reading the report
 
-Start with the chronological evidence timeline, then use the detailed sections
-to inspect changes to finder order and custom-finder claims before assessing
-suspicious findings. The
+Suspicious findings lead the report, right after the header; finder
+attribution, the chronological evidence timeline, and the detailed mechanism
+sections follow for the supporting evidence. Detail sections with nothing to
+show are collapsed into one final `nothing recorded:` line. The
 [library API](api.md#event-records) documents the corresponding structured
 event records.
+
+Text output favors readability: paths under the reported working directory
+are shown relative to it (the header names the base with
+`paths shown relative to:`), and object ids appear only when two displayed
+objects would otherwise be indistinguishable. JSON always keeps absolute
+paths and full identity metadata.
 
 ## JSON report
 
@@ -41,6 +48,13 @@ Sequence numbers reflect acquisition of the monitor's shared recording lock.
 They provide deterministic capture order but do not claim a process-wide
 wall-clock order for concurrent threads.
 
+Context shared by every line is hoisted into the timeline preamble instead of
+being repeated per event: a single-threaded capture states
+`All events on thread X.` once and omits per-line `[thread ...]` markers, and
+snapshot identities that stay stable across every audited import are declared
+stable once. When an identity does change, the audit line that observed it
+carries indented continuation lines describing only the changed mechanism.
+
 Opt-in deep calls appear as `deep_diagnostic_call` records in JSON and `deep`
 lines in text. Their evidence level is `deep_delegation`. A returned, found,
 not-found, or raised outcome describes the exact wrapped boundary;
@@ -51,21 +65,28 @@ Mutable loaders expose separate `loader_create_module` and
 from each call's actual spec or module metadata, so one loader shared by
 multiple modules remains distinguishable.
 
-An import-audit line proves only that uncached resolution started. It includes
-the copied `sys.meta_path` identity and finder type names plus constant-size
-identities/fingerprints for enabled auxiliary mechanisms. It deliberately says
-`outcome unknown`: the audit event has no completion signal, does not identify
-the winning finder, and does not fire for `sys.modules` cache hits. JSON exposes
-these records as `import_audit_start` with `evidence: resolution_started`.
+An import-audit line proves only that uncached resolution started. The record
+still captures the copied `sys.meta_path` identity and finder type names plus
+constant-size identities/fingerprints for enabled auxiliary mechanisms; text
+shows them only on deviation, as described above. The preamble states that
+the audit event has no outcome or winner signal: it has no completion signal,
+does not identify the winning finder, and does not fire for `sys.modules`
+cache hits. JSON exposes these records as `import_audit_start` with
+`evidence: resolution_started`.
 Lower-level importlib entry points may bypass the builtin audit boundary, so a
 finder call can legitimately appear without a preceding audit-start event.
 
 ## Header
 
-The header shows whether the monitor, path-hook, and importer-cache mechanisms are enabled,
-the initial and current `sys.meta_path` and `sys.path_hooks` snapshots, finders
-that could not be wrapped, and the number of modules added to `sys.modules`
-since installation.
+The header opens with one `monitoring:` line naming the enabled mechanisms
+(disabled mechanisms, inactive deep diagnostics, and an inactive early-site
+bootstrap are noted in parentheses). It then shows the `sys.meta_path` and
+`sys.path_hooks` snapshots — collapsed to a single
+`(unchanged since install)` line when the install and report snapshots are
+identical, and split into `at install:` / `now:` lines otherwise — the
+importer-cache entry counts as `initial -> current`, finders that could not
+be wrapped, and the number of modules added to `sys.modules` since
+installation.
 
 When the [early-site bootstrap](usage.md#observe-later-pth-files) activated the
 monitor, the header and JSON `capture.early_site_bootstrap` object identify its
@@ -132,9 +153,9 @@ instrumentation was reinstalled.
 
 ## `sys.path_hooks` mutations
 
-These records parallel meta-path mutations but identify each hook by object
-ID, safe type name, and a callable name when it can be read without foreign
-attribute dispatch. Metapathology never wraps or calls a hook factory. The
+These records parallel meta-path mutations but identify each hook by a
+callable name when it can be read without foreign attribute dispatch, else by
+its safe type name; the object ID is added only when that label is ambiguous. Metapathology never wraps or calls a hook factory. The
 resulting snapshot shows hook precedence after each operation.
 
 ## `sys.path_hooks` reassignments
@@ -193,9 +214,11 @@ These findings are leads, not verdicts:
 
 The replay uses the search path captured with the original claim, but it runs
 against the report-time filesystem, path hooks, and importer cache. It is
-labeled `live_replay` in JSON and as a "current live PathFinder replay" in the
-text report. A package can therefore produce an intentional or time-sensitive
-difference.
+labeled `live_replay` in JSON; in text each finding pairs a `claimed:` line
+with a `PathFinder replay:` line (collapsing to `same origin` when only the
+loader differs) and summarizes the field-level comparison on a
+`differences (import-time claim vs live replay):` line. A package can
+therefore produce an intentional or time-sensitive difference.
 
 Finder-call timeline records include import-time spec summaries. Exact string
 values and exact list/tuple package paths are copied before the spec is returned
@@ -206,7 +229,7 @@ are copied during reporting and marked `post_hoc`. Field comparisons expose
 omitted, additional, and reordered locations without presenting replay state
 as exact historical proof.
 
-Each replay-based finding separately includes historical structural evidence.
+Each replay-based finding separately includes a `structural evidence:` line.
 This identity-only comparison says whether `sys.path_hooks` changed between
 the install and report snapshots and whether relevant
 `sys.path_importer_cache` entries changed. JSON links the comparison to those

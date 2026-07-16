@@ -89,8 +89,8 @@ assert module_dir in cache["changed_paths"]
 assert cache["change_event_refs"]
 
 text = metapathology.render_report()
-assert "historical structural evidence: sys.path_hooks changed" in text, text
-assert "current live PathFinder replay" in text, text
+assert "structural evidence: sys.path_hooks changed" in text, text
+assert "PathFinder replay: loader CurrentLoader" in text, text
 print("OK")
 """
 

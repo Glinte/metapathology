@@ -29,21 +29,19 @@ historical failure before writing its report:
 INTERNALERROR> ImportError: cannot import name 'claw_state' from partially
 INTERNALERROR> initialized module 'beartype.claw._clawstate'
 
-initial sys.meta_path: [_Finder, BuiltinImporter, FrozenImporter, PathFinder]
--- sys.meta_path mutations (3) --
-AssertionRewritingHook (...): ... find_spec calls, 4 claimed
+sys.meta_path at install: [_Finder, BuiltinImporter, FrozenImporter, PathFinder]
+sys.meta_path now: [_Finder, AssertionRewritingHook, ...]
 -- suspicious findings (6) --
-[bypass] 'pytest_cov' was claimed by AssertionRewritingHook
-    (loader AssertionRewritingHook, origin <site-packages>/pytest_cov/__init__.py);
-    the current live PathFinder replay would use loader BeartypeSourceFileLoader
-    (origin <site-packages>/pytest_cov/__init__.py).
-    sys.path_hooks-based tools were bypassed.
-    historical structural evidence: ...
-[bypass] 'pytest_cov.plugin' was claimed by AssertionRewritingHook (...);
-    the current live PathFinder replay would use loader BeartypeSourceFileLoader (...).
-[bypass] 'pytest_cov.engine' was claimed by AssertionRewritingHook (...);
-    the current live PathFinder replay would use loader BeartypeSourceFileLoader (...).
--- internal errors (0) --
+[bypass] 'pytest_cov': claimed by AssertionRewritingHook,
+    bypassing sys.path_hooks-based tools
+    claimed: loader AssertionRewritingHook, origin '<site-packages>/pytest_cov/__init__.py'
+    PathFinder replay: loader BeartypeSourceFileLoader, same origin
+    structural evidence: ...
+[bypass] 'pytest_cov.plugin': claimed by AssertionRewritingHook, ...
+[bypass] 'pytest_cov.engine': claimed by AssertionRewritingHook, ...
+-- finder attribution (instrumented finders only) --
+AssertionRewritingHook: ... probes, 4 claimed
+-- sys.meta_path mutations (3) --
 ```
 
 The traceback establishes claw loader re-entrancy as the immediate crash. The

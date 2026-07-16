@@ -26,11 +26,11 @@ BeartypeClawImportConfException: Beartype configuration associated with module
 configurations associated with hooked modules include:
     {'beartypeproject.my_functions': BeartypeConf(...)}
 
-initial sys.meta_path: [_Finder, BuiltinImporter, FrozenImporter, PathFinder]
--- sys.meta_path mutations (0) --
+sys.meta_path (unchanged since install): [_Finder, BuiltinImporter,
+    FrozenImporter, PathFinder]
 -- finder attribution (instrumented finders only) --
-_Finder (...): ... find_spec calls, 0 claimed
--- internal errors (0) --
+_Finder: ... probes, 0 claimed
+nothing recorded: sys.meta_path mutations, ..., internal errors
 ```
 
 There is no `[bypass]` finding. The report also lists `[no-spec]` entries for
