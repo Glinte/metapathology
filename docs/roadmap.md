@@ -781,7 +781,7 @@ explanation when optional deep evidence is unavailable.
 - Ambiguous and contradictory evidence produces alternatives or `unknown`, not
   a confident single cause.
 
-## T16: Attribute standard path-resolution outcomes
+## T16: Attribute standard path-resolution outcomes (implemented)
 
 **Weakness:** `BuiltinImporter`, `FrozenImporter`, and `PathFinder` are shared
 class entries and deliberately remain unwrapped. Consequently, default reports
@@ -789,7 +789,7 @@ can show that a later editable finder was never called but cannot directly say
 that `PathFinder` first returned a namespace-package spec. Loader inventory is
 useful post-hoc evidence, not exact winner attribution.
 
-**Plan:** Provide progressively stronger evidence without mutating shared
+**Implementation:** Reports provide progressively stronger evidence without mutating shared
 stdlib classes. Project all three levels into one standard-resolution record
 linked to its T13 attempt, while preserving the provenance of each input:
 
