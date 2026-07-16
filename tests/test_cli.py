@@ -261,6 +261,59 @@ def test_environment_configures_automatic_report(tmp_path: Path) -> None:
     assert "== metapathology report ==" in reports[0].read_text(encoding="utf-8")
 
 
+def test_deep_umbrella_enables_every_mechanism(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("import metapathology\nprint(metapathology.get_monitor().deep_diagnostics)\n")
+
+    proc = run_cli("--deep", str(script), cwd=tmp_path)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "('path_hooks', 'path_entry_finders', 'loaders', 'import_outcomes')" in proc.stdout
+
+
+def test_capture_environment_and_explicit_cli_values_have_consistent_precedence(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text(
+        "import metapathology\n"
+        "monitor = metapathology.get_monitor()\n"
+        "print(monitor.path_hooks_enabled, monitor.importer_cache_enabled, monitor.deep_diagnostics)\n"
+    )
+    env = dict(os.environ)
+    env.update(
+        {
+            "METAPATHOLOGY_MONITOR_PATH_HOOKS": "off",
+            "METAPATHOLOGY_MONITOR_IMPORTER_CACHE": "false",
+            "METAPATHOLOGY_DEEP": "yes",
+            "METAPATHOLOGY_DEEP_LOADERS": "0",
+            "METAPATHOLOGY_DEEP_IMPORT_OUTCOMES": "1",
+        }
+    )
+
+    proc = run_cli(
+        "--path-hook-monitoring",
+        "--no-deep-import-outcomes",
+        str(script),
+        cwd=tmp_path,
+        env=env,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "True False ('path_hooks', 'path_entry_finders')" in proc.stdout
+
+
+def test_invalid_capture_environment_value_falls_back_and_is_reported(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("print('target ran')\n")
+    env = dict(os.environ)
+    env["METAPATHOLOGY_MONITOR_PATH_HOOKS"] = "sometimes"
+
+    proc = run_cli(str(script), cwd=tmp_path, env=env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "monitoring: sys.meta_path, sys.path_hooks," in proc.stderr
+    assert "environment_configuration.METAPATHOLOGY_MONITOR_PATH_HOOKS" in proc.stderr
+
+
 def test_concurrent_workers_do_not_overwrite_reports(tmp_path: Path) -> None:
     script = tmp_path / "prog.py"
     script.write_text("import time\ntime.sleep(0.2)\n")

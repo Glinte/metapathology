@@ -42,12 +42,13 @@ class _Arguments(argparse.Namespace):
         super().__init__()
         self.report_destination: str | None = None
         self.report_format: Literal["text", "json"] | None = None
-        self.monitor_path_hooks = True
-        self.monitor_importer_cache = True
-        self.deep_path_hooks = False
-        self.deep_path_entry_finders = False
-        self.deep_loaders = False
-        self.deep_import_outcomes = False
+        self.monitor_path_hooks: bool | None = None
+        self.monitor_importer_cache: bool | None = None
+        self.deep: bool | None = None
+        self.deep_path_hooks: bool | None = None
+        self.deep_path_entry_finders: bool | None = None
+        self.deep_loaders: bool | None = None
+        self.deep_import_outcomes: bool | None = None
         self.is_module = False
         self.target = ""
         self.target_args: list[str] = []
@@ -73,25 +74,34 @@ def _make_parser() -> _ArgumentParser:
         help="select text or JSON output; defaults to text on stderr and JSON for files",
     )
     parser.add_argument(
-        "--no-path-hook-monitoring",
+        "--path-hook-monitoring",
         dest="monitor_path_hooks",
-        action="store_false",
-        help="do not instrument or report sys.path_hooks mutations",
+        action=argparse.BooleanOptionalAction,
+        help="enable or disable sys.path_hooks mutation monitoring",
     )
     parser.add_argument(
-        "--no-importer-cache-monitoring",
+        "--importer-cache-monitoring",
         dest="monitor_importer_cache",
-        action="store_false",
-        help="do not snapshot or report sys.path_importer_cache changes",
+        action=argparse.BooleanOptionalAction,
+        help="enable or disable sys.path_importer_cache monitoring",
     )
     deep = parser.add_argument_group("opt-in deep diagnostics (may perturb third-party identity checks)")
-    deep.add_argument("--deep-path-hooks", action="store_true", help="capture delegated path-hook calls")
+    deep.add_argument("--deep", action=argparse.BooleanOptionalAction, help="enable or disable all deep mechanisms")
     deep.add_argument(
-        "--deep-path-entry-finders", action="store_true", help="capture delegated path-entry finder decisions"
+        "--deep-path-hooks", action=argparse.BooleanOptionalAction, help="capture delegated path-hook calls"
     )
-    deep.add_argument("--deep-loaders", action="store_true", help="capture delegated loader creation and execution")
     deep.add_argument(
-        "--deep-import-outcomes", action="store_true", help="capture exact CPython import invocation outcomes"
+        "--deep-path-entry-finders",
+        action=argparse.BooleanOptionalAction,
+        help="capture delegated path-entry finder decisions",
+    )
+    deep.add_argument(
+        "--deep-loaders", action=argparse.BooleanOptionalAction, help="capture delegated loader creation and execution"
+    )
+    deep.add_argument(
+        "--deep-import-outcomes",
+        action=argparse.BooleanOptionalAction,
+        help="capture exact CPython import invocation outcomes",
     )
     parser.add_argument("-m", dest="is_module", action="store_true", help="run TARGET as a module")
     parser.add_argument("target", metavar="TARGET", help="script path, or module name with -m")
@@ -131,6 +141,7 @@ def main(argv: list[str] | None = None) -> int:
             report_format=parsed.report_format,
             monitor_path_hooks=parsed.monitor_path_hooks,
             monitor_importer_cache=parsed.monitor_importer_cache,
+            deep=parsed.deep,
             deep_path_hooks=parsed.deep_path_hooks,
             deep_path_entry_finders=parsed.deep_path_entry_finders,
             deep_loaders=parsed.deep_loaders,
@@ -144,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         report_format=parsed.report_format,
         monitor_path_hooks=parsed.monitor_path_hooks,
         monitor_importer_cache=parsed.monitor_importer_cache,
+        deep=parsed.deep,
         deep_path_hooks=parsed.deep_path_hooks,
         deep_path_entry_finders=parsed.deep_path_entry_finders,
         deep_loaders=parsed.deep_loaders,
@@ -158,12 +170,13 @@ def _run(
     is_module: bool,
     report_destination: str | None,
     report_format: "Literal['text', 'json'] | None",
-    monitor_path_hooks: bool,
-    monitor_importer_cache: bool,
-    deep_path_hooks: bool,
-    deep_path_entry_finders: bool,
-    deep_loaders: bool,
-    deep_import_outcomes: bool,
+    monitor_path_hooks: bool | None,
+    monitor_importer_cache: bool | None,
+    deep: bool | None,
+    deep_path_hooks: bool | None,
+    deep_path_entry_finders: bool | None,
+    deep_loaders: bool | None,
+    deep_import_outcomes: bool | None,
 ) -> int:
     """Install the monitor, run the target via runpy, and always write the report.
 
@@ -176,6 +189,7 @@ def _run(
         monitor_path_hooks: Whether to instrument ``sys.path_hooks``.
         monitor_importer_cache: Whether to observe
             ``sys.path_importer_cache``.
+        deep: Whether to enable every deep mechanism.
         deep_path_hooks: Capture path-hook calls through replacement delegates.
         deep_path_entry_finders: Capture path-entry finder calls.
         deep_loaders: Capture modern loader creation and execution.
@@ -204,6 +218,7 @@ def _run(
         report_format=report_format,
         monitor_path_hooks=monitor_path_hooks,
         monitor_importer_cache=monitor_importer_cache,
+        deep=deep,
         deep_path_hooks=deep_path_hooks,
         deep_path_entry_finders=deep_path_entry_finders,
         deep_loaders=deep_loaders,

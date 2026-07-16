@@ -77,6 +77,15 @@ _STANDARD_CLASS_FINDERS = (BuiltinImporter, FrozenImporter, PathFinder)
 _STANDARD_CLASS_FINDER_REASON = "standard CPython class finder; expected and deliberately left unchanged"
 _REPORT_DESTINATION_ENV = "METAPATHOLOGY_REPORT"
 _REPORT_FORMAT_ENV = "METAPATHOLOGY_REPORT_FORMAT"
+_MONITOR_PATH_HOOKS_ENV = "METAPATHOLOGY_MONITOR_PATH_HOOKS"
+_MONITOR_IMPORTER_CACHE_ENV = "METAPATHOLOGY_MONITOR_IMPORTER_CACHE"
+_DEEP_ENV = "METAPATHOLOGY_DEEP"
+_DEEP_PATH_HOOKS_ENV = "METAPATHOLOGY_DEEP_PATH_HOOKS"
+_DEEP_PATH_ENTRY_FINDERS_ENV = "METAPATHOLOGY_DEEP_PATH_ENTRY_FINDERS"
+_DEEP_LOADERS_ENV = "METAPATHOLOGY_DEEP_LOADERS"
+_DEEP_IMPORT_OUTCOMES_ENV = "METAPATHOLOGY_DEEP_IMPORT_OUTCOMES"
+_TRUE_ENV_VALUES = frozenset(("1", "true", "yes", "on"))
+_FALSE_ENV_VALUES = frozenset(("0", "false", "no", "off"))
 
 
 class _ImporterCacheReportState:
@@ -440,12 +449,13 @@ class Monitor:
         report_at_exit: bool = True,
         report_destination: "str | PathLike[str] | None" = None,
         report_format: "Literal['text', 'json'] | None" = None,
-        monitor_path_hooks: bool = True,
-        monitor_importer_cache: bool = True,
-        deep_path_hooks: bool = False,
-        deep_path_entry_finders: bool = False,
-        deep_loaders: bool = False,
-        deep_import_outcomes: bool = False,
+        monitor_path_hooks: bool | None = None,
+        monitor_importer_cache: bool | None = None,
+        deep: bool | None = None,
+        deep_path_hooks: bool | None = None,
+        deep_path_entry_finders: bool | None = None,
+        deep_loaders: bool | None = None,
+        deep_import_outcomes: bool | None = None,
     ) -> None:
         """Instrument ``sys.meta_path`` and register the import audit hook (idempotent).
 
@@ -466,11 +476,19 @@ class Monitor:
             monitor_importer_cache: Passively observe
                 ``sys.path_importer_cache``. A later true value enables the
                 mechanism; false never disables an already-active mechanism.
+            deep: Enable every deep mechanism not explicitly configured.
             deep_path_hooks: Replace path hooks with exact-delegating call wrappers.
             deep_path_entry_finders: Shadow mutable path-entry finder calls.
             deep_loaders: Shadow mutable loader lifecycle methods.
             deep_import_outcomes: Profile CPython's complete import boundary.
         """
+        monitor_path_hooks = self._resolve_bool(monitor_path_hooks, _MONITOR_PATH_HOOKS_ENV, True)
+        monitor_importer_cache = self._resolve_bool(monitor_importer_cache, _MONITOR_IMPORTER_CACHE_ENV, True)
+        deep = self._resolve_bool(deep, _DEEP_ENV, False)
+        deep_path_hooks = self._resolve_bool(deep_path_hooks, _DEEP_PATH_HOOKS_ENV, deep)
+        deep_path_entry_finders = self._resolve_bool(deep_path_entry_finders, _DEEP_PATH_ENTRY_FINDERS_ENV, deep)
+        deep_loaders = self._resolve_bool(deep_loaders, _DEEP_LOADERS_ENV, deep)
+        deep_import_outcomes = self._resolve_bool(deep_import_outcomes, _DEEP_IMPORT_OUTCOMES_ENV, deep)
         with self._reinstall_lock:
             was_enabled = self._enabled
             # Validate explicit output configuration before touching import
@@ -521,6 +539,21 @@ class Monitor:
         if report_at_exit and not self._report_at_exit:
             self._report_at_exit = True
             atexit.register(self._report_atexit)
+
+    def _resolve_bool(self, explicit: bool | None, environment_name: str, default: bool) -> bool:
+        """Resolve one explicit/environment/default boolean without raising."""
+        if explicit is not None:
+            return explicit
+        raw = os.environ.get(environment_name)
+        if raw is None:
+            return default
+        normalized = raw.strip().lower()
+        if normalized in _TRUE_ENV_VALUES:
+            return True
+        if normalized in _FALSE_ENV_VALUES:
+            return False
+        self._record_internal_error(f"environment_configuration.{environment_name}", ValueError())
+        return default
 
     def _configure_report(
         self,
@@ -1877,12 +1910,13 @@ def install(
     report_at_exit: bool = True,
     report_destination: "str | PathLike[str] | None" = None,
     report_format: "Literal['text', 'json'] | None" = None,
-    monitor_path_hooks: bool = True,
-    monitor_importer_cache: bool = True,
-    deep_path_hooks: bool = False,
-    deep_path_entry_finders: bool = False,
-    deep_loaders: bool = False,
-    deep_import_outcomes: bool = False,
+    monitor_path_hooks: bool | None = None,
+    monitor_importer_cache: bool | None = None,
+    deep: bool | None = None,
+    deep_path_hooks: bool | None = None,
+    deep_path_entry_finders: bool | None = None,
+    deep_loaders: bool | None = None,
+    deep_import_outcomes: bool | None = None,
 ) -> Monitor:
     """Install the import-machinery monitor (idempotent) and return it.
 
@@ -1900,6 +1934,7 @@ def install(
         monitor_importer_cache: Passively observe
             ``sys.path_importer_cache``. A later true value enables this
             mechanism.
+        deep: Enable every deep mechanism not explicitly configured.
         deep_path_hooks: Replace path hooks with call-capturing delegates.
         deep_path_entry_finders: Shadow path-entry finder calls as they appear.
         deep_loaders: Shadow modern loader creation and execution reached through captured finders.
@@ -1916,6 +1951,7 @@ def install(
         report_format=report_format,
         monitor_path_hooks=monitor_path_hooks,
         monitor_importer_cache=monitor_importer_cache,
+        deep=deep,
         deep_path_hooks=deep_path_hooks,
         deep_path_entry_finders=deep_path_entry_finders,
         deep_loaders=deep_loaders,
