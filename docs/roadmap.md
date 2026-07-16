@@ -359,30 +359,98 @@ is unavailable.
 - A future beartype#599 fixture produces a frozen/source conflict rather than a
   generic bypass alone.
 
-## T8: Support bootstrap inside frozen applications
+## T8: Support bootstrap inside frozen applications (implemented)
 
 **Weakness:** `python -m metapathology frozen-app.exe` observes the outer Python
 process, not the interpreter and import machinery inside the executable. The
 observer must be bundled and installed inside the frozen process.
 
-**Recommendation:** Provide a generated, stdlib-only runtime bootstrap that
-calls the public `install()` API and configures a file report. Start with a
-PyInstaller runtime-hook template, but keep freezer-specific imports out of
-metapathology runtime code. The same generation interface can later support
-Nuitka, cx_Freeze, embedded CPython, or application-owned bootstraps.
+**Recommendation:** Build one freezer-neutral activation mechanism and support
+PyInstaller, Nuitka, cx_Freeze, and embedded/application-owned CPython as named
+integrations in the first release. Freezer support must be adapters and build
+recipes around the common bootstrap, not branches in the monitor or report
+implementation.
 
-The bootstrap runs after the freezer establishes its machinery but before
-application imports. Those pre-existing finders belong in the initial snapshot;
-their earlier installation cannot be observed.
+The common bootstrap is a small, generated Python file that imports
+metapathology from the bundle and calls a dedicated public activation function.
+That function delegates to `install()` and uses the existing
+`METAPATHOLOGY_*` configuration contract, including report destination, report
+format, default mechanisms, and individual deep mechanisms. Generation may
+bake in explicit values, but explicit values, environment variables, and
+defaults must retain the same precedence and validation rules as the CLI and
+library API. The generated source must contain no imports from a freezer.
+
+Provide a command such as
+`python -m metapathology.frozen_bootstrap generate FREEZER OUTPUT` with named
+`pyinstaller`, `nuitka`, `cx-freeze`, and `embedded` targets. The targets may
+render different thin entry files and instructions, but activation behavior and
+configuration belong to one shared implementation. Generation must be
+deterministic, refuse to overwrite an existing file unless explicitly asked,
+and produce source that is safe to inspect and check into an application.
+
+The initial adapters are:
+
+- **PyInstaller:** generate a runtime-hook file for `--runtime-hook`. Document
+  and test that metapathology is collected into the bundle and that the hook
+  runs before the application entry script.
+- **Nuitka:** generate an entry launcher that activates metapathology before
+  dispatching to the application entry point. Do not depend on a private Nuitka
+  plugin API merely to imitate PyInstaller's runtime hooks. Document the exact
+  `python -m nuitka` build invocation and the launcher's `__main__`, `sys.argv`,
+  and multiprocessing boundary.
+- **cx_Freeze:** generate an initialization script suitable for
+  `Executable(init_script=...)` / `--init-script`. Document how to ensure the
+  metapathology package is included.
+- **Embedded or application-owned CPython:** generate the plain activation
+  file and document importing or executing it immediately after interpreter
+  initialization and before application imports.
+
+Each adapter records plain bootstrap provenance in the report: the named
+integration, activation file, and the ordering boundary it can actually
+observe. The bootstrap normally runs after the freezer establishes its core
+machinery but before application imports. Those pre-existing finders and path
+hooks belong in the initial snapshot; their earlier installation cannot be
+observed. The report must say this directly rather than implying that a named
+integration observes freezer bootloader setup.
+
+Activation is diagnostic and must fail open. Import, configuration, install,
+and report-destination failures are caught at the generated boundary and
+written to a bounded best-effort fallback such as `sys.stderr`; they must not
+prevent the application from starting or change its import result. Automatic
+reporting retains the existing atomic-write and per-process `{pid}` behavior so
+one-file extraction, multiprocessing, and concurrent processes do not silently
+overwrite one another.
+
+Implement in three reviewable steps:
+
+1. Add the generic activation/provenance model, deterministic generator, CLI,
+   configuration parity tests, and failure-isolation tests.
+2. Add all four named adapters and executable documentation examples. Keep
+   adapter code declarative and thin; if an integration needs monitoring logic,
+   improve the common mechanism instead of specializing it.
+3. Add real frozen smoke fixtures for PyInstaller, Nuitka, and cx_Freeze, each
+   with a minimal import after activation and a semantic report assertion.
+   Exercise directory and one-file modes where the freezer supports them, and
+   keep slow platform-specific builds separate from the fast stdlib-only test
+   suite. Pin fixture tool versions without adding them as runtime dependencies.
 
 **Dependencies:** T5. T1 and T2 are required for useful beartype#599 evidence.
 
 **Definition of done:**
 
-- Documentation shows how to bundle the current checkout and runtime hook.
-- A frozen application writes a report from inside its own interpreter.
-- The bootstrap does not require PyInstaller at metapathology runtime.
-- Missing or unwritable report destinations do not break application imports.
+- PyInstaller, Nuitka, cx_Freeze, and embedded/application-owned CPython are
+  named generator targets with copy-pasteable build or integration examples.
+- All targets use the same activation and configuration implementation; no
+  freezer package is imported by metapathology at runtime.
+- Real executables built by PyInstaller, Nuitka, and cx_Freeze write reports
+  from inside their own interpreters before a fixture application import.
+- Reports identify the integration and its honest observation boundary.
+- Missing metapathology code, invalid configuration, and missing or unwritable
+  report destinations do not stop the frozen application.
+- Generated files are deterministic, bounded, type-checkable Python source and
+  are covered by overwrite-safety and malformed-input tests.
+- Slow freezer tests are version-pinned and explicitly separated by platform
+  and mode; one passing platform is not described as universal coverage.
 
 ## T9: Add a pinned beartype#599 integration fixture
 

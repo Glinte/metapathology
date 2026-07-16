@@ -9,6 +9,15 @@ truth for the supported public API.
 
 ## Lifecycle and reporting
 
+### `activate_frozen(integration, bootstrap_path) -> None`
+
+Installs the process-wide monitor and records activation inside a supported
+frozen or embedded startup boundary. `integration` accepts `"pyinstaller"`,
+`"nuitka"`, `"cx-freeze"`, or `"embedded"`. Prefer the generated and
+fail-open startup files described in the [frozen application guide](frozen.md)
+over calling this function directly. Direct calls propagate invalid integration
+and installation errors to the application.
+
 ### `install(*, report_at_exit=True, report_destination=None, report_format=None, monitor_path_hooks=None, monitor_importer_cache=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None) -> Monitor`
 
 Installs the process-wide monitor and returns it. Repeated calls return and
@@ -73,7 +82,7 @@ format.
 ### `render_report(*, format="text") -> str`
 
 Returns text or JSON, including its trailing newline. JSON currently uses the
-experimental `metapathology.report` schema version 0.17. Its shape may change
+experimental `metapathology.report` schema version 0.18. Its shape may change
 throughout schema 0.x; schema 1.0 will be reviewed once the evidence model stabilizes.
 Raises `RuntimeError` before the first installation and `ValueError` for an
 unknown format. Ordinary generation failures degrade to a valid failure

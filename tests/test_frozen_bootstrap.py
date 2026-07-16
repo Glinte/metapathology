@@ -34,10 +34,10 @@ def test_nuitka_launcher_requires_and_dispatches_a_module(tmp_path: Path) -> Non
     with pytest.raises(ValueError, match="requires an application module"):
         render("nuitka")
     source = render("nuitka", module="fixture_app")
-    assert source.index("activate_frozen") < source.index("import runpy")
+    assert source.index("activate_frozen") < source.index("from fixture_app import main")
     compile(source, "<nuitka>", "exec")
 
-    (tmp_path / "fixture_app.py").write_text("print('fixture-ran')\n", encoding="utf-8")
+    (tmp_path / "fixture_app.py").write_text("def main():\n    print('fixture-ran')\n", encoding="utf-8")
     launcher = tmp_path / "launcher.py"
     launcher.write_text(source, encoding="utf-8")
     process = subprocess.run(
@@ -50,6 +50,18 @@ def test_nuitka_launcher_requires_and_dispatches_a_module(tmp_path: Path) -> Non
     )
     assert process.returncode == 0, process.stderr
     assert process.stdout.strip() == "fixture-ran"
+
+
+def test_nuitka_launcher_rejects_source_injection() -> None:
+    with pytest.raises(ValueError, match="valid dotted Python identifiers"):
+        render("nuitka", module="fixture_app; import bad")
+
+
+def test_cx_freeze_adapter_exposes_the_init_script_protocol() -> None:
+    source = render("cx-freeze")
+    compile(source, "<cx-freeze>", "exec")
+    assert "def run(name):" in source
+    assert source.index("activate_frozen") < source.index("def run(name):")
 
 
 def test_generated_activation_records_provenance_and_environment_configuration(tmp_path: Path) -> None:
@@ -80,7 +92,7 @@ def test_generated_activation_records_provenance_and_environment_configuration(t
 
 def test_generated_activation_failure_does_not_stop_application(tmp_path: Path) -> None:
     source = render("nuitka", module="fixture_app")
-    (tmp_path / "fixture_app.py").write_text("print('continued')\n", encoding="utf-8")
+    (tmp_path / "fixture_app.py").write_text("def main():\n    print('continued')\n", encoding="utf-8")
     launcher = tmp_path / "launcher.py"
     launcher.write_text(source, encoding="utf-8")
     environment = dict(os.environ)
@@ -96,4 +108,4 @@ def test_generated_activation_failure_does_not_stop_application(tmp_path: Path) 
     )
     assert process.returncode == 0
     assert process.stdout.strip() == "continued"
-    assert "activation failed: ModuleNotFoundError" in process.stderr
+    assert "activation failed: ModuleNotFoundError:" in process.stderr

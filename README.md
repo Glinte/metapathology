@@ -66,9 +66,32 @@ Metapathology adds the current process ID to every automatic report filename,
 so concurrent workers write different files. For process 1234,
 `diagnostic.json` becomes `diagnostic.1234.json`. To control the position, put
 `{pid}` in the path: `diagnostic-{pid}.json` becomes
-`diagnostic-1234.json`. Frozen and embedded bootstraps can set
-`METAPATHOLOGY_REPORT` and `METAPATHOLOGY_REPORT_FORMAT` before calling
-`install()`. Reports can contain argv values, paths, origins, and stack
+`diagnostic-1234.json`.
+
+### Frozen and embedded applications
+
+An executable must activate metapathology inside its own interpreter; placing
+the executable under `python -m metapathology` observes the wrong process.
+Generate a startup file for PyInstaller, Nuitka, cx_Freeze, or an embedded
+interpreter:
+
+```console
+$ python -m metapathology.frozen_bootstrap generate pyinstaller metapathology-rthook.py
+```
+
+Set `METAPATHOLOGY_REPORT=diagnostic.txt` and
+`METAPATHOLOGY_REPORT_FORMAT=text` when running the built application.
+The same `METAPATHOLOGY_*` variables used by the ordinary CLI configure all
+generated integrations. See the [frozen application guide](https://glinte.github.io/metapathology/frozen/)
+for each freezer's generator and build commands.
+
+The generated activation catches diagnostic startup failures so a missing
+package, invalid setting, or unwritable report destination does not prevent the
+application from starting. Reports identify the integration and the honest
+observation boundary: freezer machinery established before the startup hook is
+part of the initial snapshot, not observed history.
+
+Reports can contain argv values, paths, origins, and stack
 filenames; treat them as potentially sensitive diagnostic artifacts.
 
 ### Observe later `.pth` startup hooks

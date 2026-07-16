@@ -11,6 +11,7 @@ site_dir = "site"
 nav = [
     { "Home" = "index.md" },
     { "Usage" = "usage.md" },
+    { "Frozen applications" = "frozen.md" },
     { "How it works" = "concepts.md" },
     { "Reading the report" = "report.md" },
     { "Library API" = "api.md" },

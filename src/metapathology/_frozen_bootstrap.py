@@ -2,7 +2,7 @@
 
 import os
 
-import metapathology
+from metapathology._monitor import install
 
 TYPE_CHECKING = False
 
@@ -24,5 +24,5 @@ def activate_frozen(integration: "_FrozenIntegration", bootstrap_path: str) -> N
     """
     if integration not in ("cx-freeze", "embedded", "nuitka", "pyinstaller"):
         raise ValueError(f"unsupported frozen integration: {integration!r}")
-    monitor = metapathology.install()
+    monitor = install()
     monitor._set_frozen_bootstrap(integration, os.path.abspath(bootstrap_path), "after freezer initialization")
