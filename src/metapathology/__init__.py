@@ -16,6 +16,7 @@ Documentation: https://glinte.github.io/metapathology/
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from metapathology._frozen_bootstrap import activate_frozen
     from metapathology._monitor import Monitor, get_monitor, install, render_report, uninstall, write_report
     from metapathology._records import (
         DeepDiagnosticCall,
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
 __version__ = "0.3.0"
 
 _MONITOR_EXPORTS = frozenset(("Monitor", "get_monitor", "install", "render_report", "uninstall", "write_report"))
+_FROZEN_EXPORTS = frozenset(("activate_frozen",))
 _RECORD_EXPORTS = frozenset(
     (
         "FindSpecCall",
@@ -85,6 +87,7 @@ __all__ = [
     "SpecSummary",
     "StandardFinderCall",
     "__version__",
+    "activate_frozen",
     "get_monitor",
     "install",
     "render_report",
@@ -97,6 +100,8 @@ def __getattr__(name: str) -> object:
     """Load public monitoring APIs only when first accessed."""
     if name in _MONITOR_EXPORTS:
         import metapathology._monitor as module
+    elif name in _FROZEN_EXPORTS:
+        import metapathology._frozen_bootstrap as module
     elif name in _RECORD_EXPORTS:
         import metapathology._records as module
     else:

@@ -384,6 +384,11 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
         lines.append(f"bootstrap activation: {bootstrap.activation_source}")
         earlier = _names_line(bootstrap.earlier_pth_files) if bootstrap.earlier_pth_files else "(none)"
         lines.append(f"earlier .pth files outside capture: {earlier}")
+    frozen_bootstrap = document.frozen_bootstrap
+    if frozen_bootstrap is not None:
+        lines.append(f"frozen integration: {frozen_bootstrap.integration}")
+        lines.append(f"frozen bootstrap: {context.display_path(frozen_bootstrap.path)}")
+        lines.append(f"frozen observation boundary: {frozen_bootstrap.boundary}")
 
     if document.current_meta_path == document.initial_meta_path:
         lines.append(f"sys.meta_path (unchanged since install): {_names_line(document.initial_meta_path)}")

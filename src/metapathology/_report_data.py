@@ -56,7 +56,7 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 17
+_SCHEMA_MINOR = 18
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -620,6 +620,21 @@ class EarlySiteBootstrap(_Record):
         self._earlier_pth_files = earlier_pth_files
 
 
+class FrozenBootstrap(_Record):
+    """Report-safe provenance for activation inside a frozen application."""
+
+    __slots__ = ("_boundary", "_integration", "_path")
+    _fields = ("integration", "path", "boundary")
+    integration = _ReadOnlyField[str]("_integration")
+    path = _ReadOnlyField[str]("_path")
+    boundary = _ReadOnlyField[str]("_boundary")
+
+    def __init__(self, integration: str, path: str, boundary: str) -> None:
+        self._integration = integration
+        self._path = path
+        self._boundary = boundary
+
+
 class ReportDocument(_Record):
     """One sequence-cutoff snapshot shared by all report renderers."""
 
@@ -640,6 +655,7 @@ class ReportDocument(_Record):
         "_explanations",
         "_finder_contracts",
         "_findings",
+        "_frozen_bootstrap",
         "_generated_at",
         "_importer_cache_coalesced",
         "_importer_cache_enabled",
@@ -680,6 +696,7 @@ class ReportDocument(_Record):
         "events",
         "explanations",
         "early_site_bootstrap",
+        "frozen_bootstrap",
         "deep_diagnostics",
         "deep_import_outcomes_status",
         "skipped_finders",
@@ -713,6 +730,7 @@ class ReportDocument(_Record):
     events = _ReadOnlyField[tuple[MonitorEvent, ...]]("_events")
     explanations = _ReadOnlyField[tuple[CausalExplanation, ...]]("_explanations")
     early_site_bootstrap = _ReadOnlyField[EarlySiteBootstrap | None]("_early_site_bootstrap")
+    frozen_bootstrap = _ReadOnlyField[FrozenBootstrap | None]("_frozen_bootstrap")
     deep_diagnostics = _ReadOnlyField[tuple[str, ...]]("_deep_diagnostics")
     deep_import_outcomes_status = _ReadOnlyField[str]("_deep_import_outcomes_status")
     skipped_finders = _ReadOnlyField[tuple[SkippedFinder, ...]]("_skipped_finders")
@@ -749,6 +767,7 @@ class ReportDocument(_Record):
         events: tuple[MonitorEvent, ...],
         explanations: tuple[CausalExplanation, ...],
         early_site_bootstrap: EarlySiteBootstrap | None,
+        frozen_bootstrap: FrozenBootstrap | None,
         deep_diagnostics: tuple[str, ...],
         deep_import_outcomes_status: str,
         skipped_finders: tuple[SkippedFinder, ...],
@@ -782,6 +801,7 @@ class ReportDocument(_Record):
         self._events = events
         self._explanations = explanations
         self._early_site_bootstrap = early_site_bootstrap
+        self._frozen_bootstrap = frozen_bootstrap
         self._deep_diagnostics = deep_diagnostics
         self._deep_import_outcomes_status = deep_import_outcomes_status
         self._skipped_finders = skipped_finders
@@ -803,6 +823,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         finder_contracts,
         importer_cache,
         early_site_bootstrap_raw,
+        frozen_bootstrap_raw,
     ) = monitor._report_state()
     report_errors: list[ReportError] = []
     current_meta_path = _current_meta_path_names(report_errors)
@@ -857,6 +878,15 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
             early_site_bootstrap_raw.earlier_pth_files,
         )
     )
+    frozen_bootstrap = (
+        None
+        if frozen_bootstrap_raw is None
+        else FrozenBootstrap(
+            frozen_bootstrap_raw.integration,
+            frozen_bootstrap_raw.path,
+            frozen_bootstrap_raw.boundary,
+        )
+    )
     return ReportDocument(
         generated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         attempts=attempts,
@@ -880,6 +910,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         events=tuple(events),
         explanations=explanations,
         early_site_bootstrap=early_site_bootstrap,
+        frozen_bootstrap=frozen_bootstrap,
         deep_diagnostics=monitor.deep_diagnostics,
         deep_import_outcomes_status=monitor.deep_import_outcomes_status,
         skipped_finders=skipped_finders,
@@ -1947,6 +1978,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
             "baseline_module_count": document.baseline_module_count,
             "cutoff_seq": document.cutoff_seq,
             "early_site_bootstrap": _json_early_site_bootstrap(document.early_site_bootstrap),
+            "frozen_bootstrap": _json_frozen_bootstrap(document.frozen_bootstrap),
             "enabled": document.monitor_enabled,
             "mechanisms": [
                 _mechanism("meta_path_mutations", document.monitor_enabled, mutations, "best_effort"),
@@ -2127,6 +2159,17 @@ def _json_early_site_bootstrap(bootstrap: EarlySiteBootstrap | None) -> dict[str
         "earlier_pth_files": list(bootstrap.earlier_pth_files),
         "path": bootstrap.path,
         "site_packages": bootstrap.site_packages,
+    }
+
+
+def _json_frozen_bootstrap(bootstrap: FrozenBootstrap | None) -> dict[str, object] | None:
+    """Serialize frozen activation provenance without consulting live state."""
+    if bootstrap is None:
+        return None
+    return {
+        "boundary": bootstrap.boundary,
+        "integration": bootstrap.integration,
+        "path": bootstrap.path,
     }
 
 

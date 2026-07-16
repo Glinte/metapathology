@@ -181,6 +181,17 @@ class _EarlySiteBootstrapState:
         self.earlier_pth_files = earlier_pth_files
 
 
+class _FrozenBootstrapState:
+    """Plain provenance for activation inside a frozen application."""
+
+    __slots__ = ("boundary", "integration", "path")
+
+    def __init__(self, integration: str, path: str, boundary: str) -> None:
+        self.integration = integration
+        self.path = path
+        self.boundary = boundary
+
+
 class _ThreadState(threading.local):
     """Per-thread re-entrancy state with a default for newly seen threads."""
 
@@ -325,6 +336,7 @@ class Monitor:
         # Set by the generated .pth activation path. The first activation wins
         # because a later site directory cannot move the evidence cutoff earlier.
         self._early_site_bootstrap: _EarlySiteBootstrapState | None = None
+        self._frozen_bootstrap: _FrozenBootstrapState | None = None
         # The exact list object we last put into sys.meta_path. The audit hook
         # compares by identity: a mismatch means someone reassigned sys.meta_path.
         self._instrumented: _InstrumentedMetaPath | None = None
@@ -457,6 +469,7 @@ class Monitor:
         list[FinderContract],
         _ImporterCacheReportState,
         _EarlySiteBootstrapState | None,
+        _FrozenBootstrapState | None,
     ]:
         """Copy chronological evidence and skipped finders at one sequence cutoff."""
         self._observe_importer_cache("report")
@@ -478,6 +491,7 @@ class Monitor:
                 list(self._finder_contracts.values()),
                 cache_state,
                 self._early_site_bootstrap,
+                self._frozen_bootstrap,
             )
 
     def _set_early_site_bootstrap(
@@ -492,6 +506,13 @@ class Monitor:
         with self._record_lock:
             if self._early_site_bootstrap is None:
                 self._early_site_bootstrap = state
+
+    def _set_frozen_bootstrap(self, integration: str, path: str, boundary: str) -> None:
+        """Attach frozen-application activation provenance to this capture."""
+        state = _FrozenBootstrapState(integration, path, boundary)
+        with self._record_lock:
+            if self._frozen_bootstrap is None:
+                self._frozen_bootstrap = state
 
     def _begin_report_analysis(self) -> bool:
         """Keep report-time replays from recording activity after their evidence cutoff."""
