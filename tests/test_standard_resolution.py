@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+from collections.abc import Callable
 from importlib.abc import Loader
 from importlib.machinery import (
     BuiltinImporter,
@@ -14,10 +15,10 @@ from importlib.machinery import (
 from pathlib import Path
 from typing import cast
 
-from conftest import RunPython
-
 from metapathology._report_data import _standard_spec_classification
 from metapathology._spec import summarize_spec
+
+RunPython = Callable[..., subprocess.CompletedProcess[str]]
 
 
 def test_standard_loader_categories_are_explicit() -> None:

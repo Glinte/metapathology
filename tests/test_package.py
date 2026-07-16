@@ -25,6 +25,7 @@ _EXPECTED_PUBLIC_API = frozenset(
         "PathHooksMutation",
         "PathHooksReassignment",
         "SpecSummary",
+        "StandardFinderCall",
         "__version__",
         "get_monitor",
         "install",
