@@ -210,9 +210,13 @@ The suspicious-findings section uses these labels:
 - `[finder-side-effect]` means an instrumented finder changed its own target's
   `sys.modules` entry before returning `None` or raising. The captured boundary
   does not reveal the nested operation that caused the change.
-- `[module-replacement]` means opt-in deep loader evidence captured two
-  different module object identities across one `create_module()` or
-  `exec_module()` call. Both objects may still have valid, matching specs.
+- `[module-replacement]` means opt-in deep loader evidence captured a module
+  identity change across one `create_module()` or `exec_module()` call, or an
+  `exec_module()` target distinct from the matching `sys.modules` entry. Both
+  objects may still have valid, matching specs. Default mode cannot observe
+  low-level loader calls that leave `sys.modules` unchanged; the monitoring
+  summary labels those identity transitions unobservable unless deep loader
+  diagnostics are enabled.
 - `[legacy-finder-contract]` identifies a captured finder with callable
   `find_module` but no callable `find_spec`.
 - `[path-hook-shadow]` means distinct captured path-hook boundaries accepted

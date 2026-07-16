@@ -450,7 +450,7 @@ def _monitoring_line(document: ReportDocument) -> str:
         else:
             notes.append(f"{name} off")
     if not document.deep_diagnostics:
-        notes.append("deep diagnostics off")
+        notes.append("deep diagnostics off; low-level loader identity transitions unobservable")
     if document.early_site_bootstrap is None:
         notes.append("early site bootstrap inactive")
     line = "monitoring: " + ", ".join(mechanisms)

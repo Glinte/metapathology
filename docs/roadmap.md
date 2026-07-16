@@ -792,7 +792,7 @@ attempt and boundary identities, and exact loader transitions depend on T10.
 - The report never expands an identity delta into an invented nested-import
   trace.
 
-## T15: Synthesize evidence into causal explanations
+## T15: Synthesize evidence into causal explanations (implemented)
 
 **Weakness:** Even a chronological report can force users to reconstruct the
 cause from finder calls, mutations, cache state, module metadata, and replay.

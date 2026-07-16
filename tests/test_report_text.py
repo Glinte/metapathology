@@ -150,6 +150,7 @@ def test_standard_unwrapped_finders_are_explained(run_python: RunPython) -> None
     assert "FrozenImporter: class entry" not in proc.stdout
     assert "PathFinder: class entry" not in proc.stdout
     assert "monitoring: sys.meta_path, sys.path_hooks, sys.path_importer_cache" in proc.stdout
+    assert "low-level loader identity transitions unobservable" in proc.stdout
     assert "sys.meta_path (unchanged since install):" in proc.stdout
     assert (
         "nothing recorded: sys.meta_path mutations, sys.meta_path reassignments, "
