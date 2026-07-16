@@ -658,15 +658,15 @@ model. Exact outcomes additionally depend on T10.
 - Unsupported exact outcomes remain visibly unknown; absence from
   `sys.modules` never becomes proof of failure.
 
-## T14: Track target-module identity transitions
+## T14: Track target-module identity transitions (implemented)
 
 **Weakness:** Report-time module metadata cannot reveal that a finder populated
 `sys.modules` and then passed, that a loader replaced an existing module, or
 that low-level extension loading executed a second object with the same valid
 spec. Setuptools#3073 and discord.py#10017 are representative failures.
 
-**Implementation plan:** Never replace or proxy `sys.modules`. Deliver the
-work in three independently reviewable stages:
+**Implementation:** Delivered in three independently reviewable stages without
+replacing or proxying `sys.modules`:
 
 1. Add one safe target-state primitive and its record vocabulary. A state is
    `unavailable`, `missing`, explicit `None`, or an object identity plus its
