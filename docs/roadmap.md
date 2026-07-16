@@ -419,18 +419,18 @@ no queue, retry, or silent dropping. Mutable path-entry finders and loaders
 are shadowed in place, while path-hook identity replacement is confined to
 the explicitly selected mode and reversed on uninstall.
 
-## T11: Compare spec semantics and namespace search locations
+## T11: Compare spec semantics and namespace search locations (implemented)
 
-**Weakness:** Current replay compares whether a custom meta-path claim and
+**Weakness addressed:** Replay previously compared whether a custom meta-path claim and
 `PathFinder` select different loader types. That detects many path-hook
 bypasses, but it does not explain differences inside the returned specs. In
 scikit-build-core#1482, the decisive defect is not merely that
 `ScikitBuildRedirectingFinder` claims the `mqt` namespace first: its
 `submodule_search_locations` omit the separately installed `site-packages/mqt`
-contribution, making `mqt.core` invisible. The current report identifies the
-claiming finder but stops short of showing the omitted namespace path.
+contribution, making `mqt.core` invisible. Earlier reports identified the
+claiming finder but stopped short of showing the omitted namespace path.
 
-**Recommendation:** Extend claim records and counterfactual replay with safe,
+**Implementation:** Claim records and counterfactual replay now carry safe,
 plain summaries of the observed and replayed specs:
 
 - origin and cached path when they are strings;
@@ -439,14 +439,14 @@ plain summaries of the observed and replayed specs:
 - a copied tuple of string `submodule_search_locations`;
 - the copied string parent path supplied to `find_spec`.
 
-Render a field-level comparison for suspicious custom claims. Introduce
+Reports render a field-level comparison for suspicious custom claims and provide
 specific evidence such as `[namespace-truncation]` when a custom namespace spec
 omits locations found by standard path resolution, `[package-displacement]`
 when package status differs, and `[origin-displacement]` when both resolutions
 find a module at different origins. State what differs rather than declaring
 which package is defective.
 
-Recording must remain conservative. Do not call `repr()` or `str()` on spec,
+Recording remains conservative. It does not call `repr()` or `str()` on spec,
 loader, path, or location objects. Only copy values already known to be strings
 and identify all other values by type/name and identity. Treat malformed specs,
 foreign sequences, attribute access failures, and concurrent mutation as

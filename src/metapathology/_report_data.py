@@ -9,6 +9,7 @@ inspect the interpreter independently.
 import os
 import sys
 import time
+import types
 from importlib.machinery import PathFinder
 
 from metapathology import __version__
@@ -26,10 +27,12 @@ from metapathology._records import (
     MonitorEvent,
     PathHooksMutation,
     PathHooksReassignment,
+    SpecSummary,
     _ReadOnlyField,
     _Record,
     type_name,
 )
+from metapathology._spec import summarize_spec
 
 TYPE_CHECKING = False
 
@@ -47,7 +50,7 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 7
+_SCHEMA_MINOR = 8
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -88,15 +91,25 @@ class ReplayResult(_Record):
         "_exception_type_name",
         "_loader_type_name",
         "_origin",
+        "_spec_summary",
         "_state_phase",
         "_status",
     )
-    _fields = ("evidence_level", "state_phase", "status", "loader_type_name", "origin", "exception_type_name")
+    _fields = (
+        "evidence_level",
+        "state_phase",
+        "status",
+        "loader_type_name",
+        "origin",
+        "spec_summary",
+        "exception_type_name",
+    )
     evidence_level = _ReadOnlyField[str]("_evidence_level")
     state_phase = _ReadOnlyField[str]("_state_phase")
     status = _ReadOnlyField[str]("_status")
     loader_type_name = _ReadOnlyField[str | None]("_loader_type_name")
     origin = _ReadOnlyField[str | None]("_origin")
+    spec_summary = _ReadOnlyField[SpecSummary | None]("_spec_summary")
     exception_type_name = _ReadOnlyField[str | None]("_exception_type_name")
 
     def __init__(
@@ -104,6 +117,7 @@ class ReplayResult(_Record):
         status: str,
         loader_type_name: str | None = None,
         origin: str | None = None,
+        spec_summary: SpecSummary | None = None,
         exception_type_name: str | None = None,
     ) -> None:
         self._evidence_level = "live_replay"
@@ -111,6 +125,7 @@ class ReplayResult(_Record):
         self._status = status
         self._loader_type_name = loader_type_name
         self._origin = origin
+        self._spec_summary = spec_summary
         self._exception_type_name = exception_type_name
 
 
@@ -151,6 +166,69 @@ class StructuralComparison(_Record):
         self._importer_cache_event_seqs = importer_cache_event_seqs
 
 
+class SpecComparison(_Record):
+    """Field-level differences between a captured claim and live replay."""
+
+    __slots__ = (
+        "_additional_locations",
+        "_cached_changed",
+        "_complete",
+        "_loader_type_changed",
+        "_locations_reordered",
+        "_observed_locations_state",
+        "_omitted_locations",
+        "_origin_changed",
+        "_package_status_changed",
+        "_replayed_locations_state",
+    )
+    _fields = (
+        "complete",
+        "loader_type_changed",
+        "origin_changed",
+        "cached_changed",
+        "package_status_changed",
+        "omitted_locations",
+        "additional_locations",
+        "locations_reordered",
+        "observed_locations_state",
+        "replayed_locations_state",
+    )
+    complete = _ReadOnlyField[bool]("_complete")
+    loader_type_changed = _ReadOnlyField[bool | None]("_loader_type_changed")
+    origin_changed = _ReadOnlyField[bool | None]("_origin_changed")
+    cached_changed = _ReadOnlyField[bool | None]("_cached_changed")
+    package_status_changed = _ReadOnlyField[bool | None]("_package_status_changed")
+    omitted_locations = _ReadOnlyField[tuple[str, ...]]("_omitted_locations")
+    additional_locations = _ReadOnlyField[tuple[str, ...]]("_additional_locations")
+    locations_reordered = _ReadOnlyField[bool | None]("_locations_reordered")
+    observed_locations_state = _ReadOnlyField[str]("_observed_locations_state")
+    replayed_locations_state = _ReadOnlyField[str]("_replayed_locations_state")
+
+    def __init__(
+        self,
+        complete: bool,
+        loader_type_changed: bool | None,
+        origin_changed: bool | None,
+        cached_changed: bool | None,
+        package_status_changed: bool | None,
+        omitted_locations: tuple[str, ...],
+        additional_locations: tuple[str, ...],
+        locations_reordered: bool | None,
+        observed_locations_state: str,
+        replayed_locations_state: str,
+    ) -> None:
+        self._complete = complete
+        self._loader_type_changed = loader_type_changed
+        self._origin_changed = origin_changed
+        self._cached_changed = cached_changed
+        self._package_status_changed = package_status_changed
+        self._omitted_locations = omitted_locations
+        self._additional_locations = additional_locations
+        self._locations_reordered = locations_reordered
+        self._observed_locations_state = observed_locations_state
+        self._replayed_locations_state = replayed_locations_state
+
+
 class _StructuralContext:
     """One report's primitive-only index for per-finding comparisons."""
 
@@ -177,13 +255,22 @@ class _StructuralContext:
 class Finding(_Record):
     """Structured evidence for one human or machine-readable finding."""
 
-    __slots__ = ("_claim", "_finding_id", "_kind", "_module", "_replay", "_structural_comparison")
-    _fields = ("finding_id", "kind", "module", "claim", "replay", "structural_comparison")
+    __slots__ = (
+        "_claim",
+        "_finding_id",
+        "_kind",
+        "_module",
+        "_replay",
+        "_spec_comparison",
+        "_structural_comparison",
+    )
+    _fields = ("finding_id", "kind", "module", "claim", "replay", "spec_comparison", "structural_comparison")
     finding_id = _ReadOnlyField[str]("_finding_id")
     kind = _ReadOnlyField[str]("_kind")
     module = _ReadOnlyField[str]("_module")
     claim = _ReadOnlyField[FindSpecCall | None]("_claim")
     replay = _ReadOnlyField[ReplayResult | None]("_replay")
+    spec_comparison = _ReadOnlyField[SpecComparison | None]("_spec_comparison")
     structural_comparison = _ReadOnlyField[StructuralComparison | None]("_structural_comparison")
 
     def __init__(
@@ -193,6 +280,7 @@ class Finding(_Record):
         module: str,
         claim: FindSpecCall | None = None,
         replay: ReplayResult | None = None,
+        spec_comparison: SpecComparison | None = None,
         structural_comparison: StructuralComparison | None = None,
     ) -> None:
         self._finding_id = finding_id
@@ -200,6 +288,7 @@ class Finding(_Record):
         self._module = module
         self._claim = claim
         self._replay = replay
+        self._spec_comparison = spec_comparison
         self._structural_comparison = structural_comparison
 
 
@@ -502,7 +591,7 @@ def _suspicious_findings(
             continue
         winner = winners.get(name)
         if winner is not None:
-            finding = _bypass_finding(name, winner, len(findings) + 1, structural_context, report_errors)
+            finding = _bypass_finding(name, module, winner, len(findings) + 1, structural_context, report_errors)
             if finding is not None:
                 findings.append(finding)
             continue
@@ -520,25 +609,181 @@ def _suspicious_findings(
 
 def _bypass_finding(
     name: str,
+    module: object,
     winner: FindSpecCall,
     finding_number: int,
     structural_context: _StructuralContext,
     report_errors: list[ReportError],
 ) -> Finding | None:
-    """Compare one custom source claim with a report-time PathFinder replay."""
-    origin = winner.origin
-    if origin is None or not origin.endswith(_SOURCE_SUFFIXES) or winner.loader_type_name is None:
+    """Compare one custom claim with a report-time PathFinder replay."""
+    observed = winner.spec_summary
+    if observed is None:
         return None
+    observed = _post_hoc_spec_summary(module, observed)
     structural_comparison = _structural_comparison(winner.search_path, structural_context)
     replay = _replay_path_finder(name, winner.search_path)
     if replay.status == "failed":
         report_errors.append(ReportError("path_finder_replay", replay.exception_type_name or "Exception"))
         return None
     if replay.status == "not_found":
-        return Finding(f"finding:{finding_number}", "unfindable", name, winner, replay, structural_comparison)
-    if replay.loader_type_name != winner.loader_type_name or not _same_path(replay.origin, origin):
-        return Finding(f"finding:{finding_number}", "bypass", name, winner, replay, structural_comparison)
+        origin = winner.origin
+        if origin is not None and origin.endswith(_SOURCE_SUFFIXES) and winner.loader_type_name is not None:
+            return Finding(
+                f"finding:{finding_number}",
+                "unfindable",
+                name,
+                winner,
+                replay,
+                structural_comparison=structural_comparison,
+            )
+        return None
+    replayed = replay.spec_summary
+    if replayed is None:
+        return None
+    spec_comparison = _compare_specs(observed, replayed)
+    kind = _spec_finding_kind(winner, observed, replayed, spec_comparison)
+    if kind is not None:
+        return Finding(
+            f"finding:{finding_number}",
+            kind,
+            name,
+            winner,
+            replay,
+            spec_comparison,
+            structural_comparison,
+        )
     return None
+
+
+def _post_hoc_spec_summary(module: object, observed: SpecSummary) -> SpecSummary:
+    """Enrich a deferred package path only when the loaded module retained the same spec."""
+    if observed.locations_state != "deferred" or type(module) is not types.ModuleType:
+        return observed
+    try:
+        namespace = types.ModuleType.__getattribute__(module, "__dict__")
+        current = namespace.get("__spec__")
+        if current is None or id(current) != observed.spec.object_id:
+            return observed
+        summary, _loader = summarize_spec(current, iterate_foreign_locations=True)
+        return summary
+    except Exception:
+        return observed
+
+
+def _spec_finding_kind(
+    winner: FindSpecCall,
+    observed: SpecSummary,
+    replayed: SpecSummary,
+    comparison: SpecComparison,
+) -> str | None:
+    """Choose the most specific user-facing label supported by the evidence."""
+    if observed.is_namespace is True and replayed.is_namespace is True and comparison.omitted_locations:
+        return "namespace_truncation"
+    if comparison.package_status_changed:
+        return "package_displacement"
+    if comparison.origin_changed and type(observed.origin) is str and type(replayed.origin) is str:
+        return "origin_displacement"
+    source_claim = winner.origin is not None and winner.origin.endswith(_SOURCE_SUFFIXES)
+    if source_claim and (comparison.loader_type_changed or comparison.origin_changed):
+        return "bypass"
+    if (
+        comparison.loader_type_changed
+        or comparison.cached_changed
+        or comparison.omitted_locations
+        or comparison.additional_locations
+        or comparison.locations_reordered
+    ):
+        return "spec_difference"
+    return None
+
+
+def _compare_specs(observed: SpecSummary, replayed: SpecSummary) -> SpecComparison:
+    """Compare safe semantic fields without inspecting either live spec."""
+    loader_changed = (
+        None
+        if "loader:missing" in observed.unavailable_fields or "loader:missing" in replayed.unavailable_fields
+        else _loader_type(observed) != _loader_type(replayed)
+    )
+    origin_changed = _safe_path_value_changed(observed.origin, replayed.origin)
+    cached_changed = _safe_path_value_changed(observed.cached, replayed.cached)
+    package_changed = (
+        None
+        if observed.is_package is None or replayed.is_package is None
+        else observed.is_package != replayed.is_package
+    )
+    observed_locations = _string_locations(observed)
+    replayed_locations = _string_locations(replayed)
+    omitted: tuple[str, ...] = ()
+    additional: tuple[str, ...] = ()
+    reordered: bool | None = None
+    if observed_locations is not None and replayed_locations is not None:
+        observed_keys = tuple(_path_key(path) for path in observed_locations)
+        replayed_keys = tuple(_path_key(path) for path in replayed_locations)
+        omitted, additional = _location_delta(observed_locations, observed_keys, replayed_locations, replayed_keys)
+        reordered = not omitted and not additional and observed_keys != replayed_keys
+    locations_complete = not (
+        observed.is_package is True and observed.locations_state in ("deferred", "failed")
+    ) and not (replayed.is_package is True and replayed.locations_state in ("deferred", "failed"))
+    complete = not observed.unavailable_fields and not replayed.unavailable_fields and locations_complete
+    return SpecComparison(
+        complete,
+        loader_changed,
+        origin_changed,
+        cached_changed,
+        package_changed,
+        omitted,
+        additional,
+        reordered,
+        observed.locations_state,
+        replayed.locations_state,
+    )
+
+
+def _location_delta(
+    observed: tuple[str, ...],
+    observed_keys: tuple[str, ...],
+    replayed: tuple[str, ...],
+    replayed_keys: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return multiset differences while preserving each side's display order."""
+    unmatched_observed = list(zip(observed_keys, observed, strict=True))
+    omitted: list[str] = []
+    for replayed_key, replayed_path in zip(replayed_keys, replayed, strict=True):
+        for index, (observed_key, _observed_path) in enumerate(unmatched_observed):
+            if replayed_key == observed_key:
+                del unmatched_observed[index]
+                break
+        else:
+            omitted.append(replayed_path)
+    return tuple(omitted), tuple(path for _key, path in unmatched_observed)
+
+
+def _loader_type(summary: SpecSummary) -> str | None:
+    return None if summary.loader is None else summary.loader.type_name
+
+
+def _safe_path_value_changed(
+    observed: str | ImportObjectRef | None,
+    replayed: str | ImportObjectRef | None,
+) -> bool | None:
+    if type(observed) is str and type(replayed) is str:
+        return not _same_path(observed, replayed)
+    if observed is None and replayed is None:
+        return False
+    if isinstance(observed, ImportObjectRef) or isinstance(replayed, ImportObjectRef):
+        return None
+    return True
+
+
+def _string_locations(summary: SpecSummary) -> tuple[str, ...] | None:
+    locations = summary.submodule_search_locations
+    if locations is None or any(type(location) is not str for location in locations):
+        return None
+    return tuple(location for location in locations if type(location) is str)
+
+
+def _path_key(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
 
 
 def _structural_context(
@@ -639,9 +884,10 @@ def _replay_path_finder(name: str, search_path: tuple[str, ...]) -> ReplayResult
         spec = PathFinder.find_spec(name, search_path)
         if spec is None:
             return ReplayResult("not_found")
-        loader_type_name = None if spec.loader is None else type_name(spec.loader)
-        origin = spec.origin if isinstance(spec.origin, str) else None
-        return ReplayResult("found", loader_type_name, origin)
+        summary, _loader = summarize_spec(spec, iterate_foreign_locations=True)
+        loader_type_name = None if summary.loader is None else summary.loader.type_name
+        origin = summary.origin if type(summary.origin) is str else None
+        return ReplayResult("found", loader_type_name, origin, summary)
     except Exception as exc:  # A broken finder chain must not break the report.
         return ReplayResult("failed", exception_type_name=type_name(exc))
 
@@ -859,6 +1105,8 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
                 "loader_type_name": event.loader_type_name,
                 "origin": event.origin,
                 "search_path": list(event.search_path),
+                "search_path_kind": event.search_path_kind,
+                "spec": None if event.spec_summary is None else _json_spec_summary(event.spec_summary),
                 "thread_name": event.thread_name,
             }
         )
@@ -942,6 +1190,29 @@ def _json_import_object(reference: ImportObjectRef) -> dict[str, object]:
     }
 
 
+def _json_spec_value(value: str | ImportObjectRef | None) -> object:
+    if isinstance(value, ImportObjectRef):
+        return {"kind": "object", **_json_import_object(value)}
+    return value
+
+
+def _json_spec_summary(summary: SpecSummary) -> dict[str, object]:
+    locations = summary.submodule_search_locations
+    return {
+        "cached": _json_spec_value(summary.cached),
+        "is_namespace": summary.is_namespace,
+        "is_package": summary.is_package,
+        "loader": None if summary.loader is None else _json_import_object(summary.loader),
+        "locations_state": summary.locations_state,
+        "origin": _json_spec_value(summary.origin),
+        "spec": _json_import_object(summary.spec),
+        "submodule_search_locations": None
+        if locations is None
+        else [_json_spec_value(location) for location in locations],
+        "unavailable_fields": list(summary.unavailable_fields),
+    }
+
+
 def _json_importer_cache_entry(entry: ImporterCacheEntry) -> dict[str, object]:
     """Serialize one path and its cached finder or negative marker."""
     return {
@@ -975,6 +1246,8 @@ def _json_finding(finding: Finding) -> dict[str, object]:
             "loader_type_name": finding.claim.loader_type_name,
             "origin": finding.claim.origin,
             "search_path": list(finding.claim.search_path),
+            "search_path_kind": finding.claim.search_path_kind,
+            "spec": None if finding.claim.spec_summary is None else _json_spec_summary(finding.claim.spec_summary),
         }
     if finding.replay is not None:
         result["path_finder_replay"] = {
@@ -982,8 +1255,24 @@ def _json_finding(finding: Finding) -> dict[str, object]:
             "exception_type_name": finding.replay.exception_type_name,
             "loader_type_name": finding.replay.loader_type_name,
             "origin": finding.replay.origin,
+            "spec": None if finding.replay.spec_summary is None else _json_spec_summary(finding.replay.spec_summary),
             "state_phase": finding.replay.state_phase,
             "status": finding.replay.status,
+        }
+    if finding.spec_comparison is not None:
+        comparison = finding.spec_comparison
+        result["spec_comparison"] = {
+            "additional_locations": list(comparison.additional_locations),
+            "cached_changed": comparison.cached_changed,
+            "complete": comparison.complete,
+            "evidence_level": "captured_vs_live_replay",
+            "loader_type_changed": comparison.loader_type_changed,
+            "locations_reordered": comparison.locations_reordered,
+            "omitted_locations": list(comparison.omitted_locations),
+            "observed_locations_state": comparison.observed_locations_state,
+            "origin_changed": comparison.origin_changed,
+            "package_status_changed": comparison.package_status_changed,
+            "replayed_locations_state": comparison.replayed_locations_state,
         }
     if finding.structural_comparison is not None:
         comparison = finding.structural_comparison

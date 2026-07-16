@@ -377,12 +377,59 @@ def _finding_line(finding: Finding) -> str:
             "the current live PathFinder replay cannot find it: sys.path_hooks-based tools never see this module."
             f"\n    {_structural_comparison_line(finding)}"
         )
+    if finding.kind == "namespace_truncation":
+        comparison = finding.spec_comparison
+        omitted = "an unavailable location"
+        if comparison is not None:
+            omitted = ", ".join(repr(path) for path in comparison.omitted_locations)
+        return (
+            f"[namespace-truncation] '{finding.module}' was claimed by {claim.finder_type_name}; the captured "
+            f"namespace search locations omit {omitted}, which the current live PathFinder replay includes."
+            f"\n    {_spec_comparison_line(finding)}"
+            f"\n    {_structural_comparison_line(finding)}"
+        )
+    if finding.kind == "package_displacement":
+        label = "package-displacement"
+    elif finding.kind == "origin_displacement":
+        label = "origin-displacement"
+    elif finding.kind == "spec_difference":
+        label = "spec-difference"
+    else:
+        label = "bypass"
     return (
-        f"[bypass] '{finding.module}' was claimed by {claim.finder_type_name} "
+        f"[{label}] '{finding.module}' was claimed by {claim.finder_type_name} "
         f"(loader {claim.loader_type_name}, origin {claim.origin}); the current live PathFinder replay would use "
         f"loader {replay.loader_type_name} (origin {replay.origin}). sys.path_hooks-based tools were bypassed."
+        f"\n    {_spec_comparison_line(finding)}"
         f"\n    {_structural_comparison_line(finding)}"
     )
+
+
+def _spec_comparison_line(finding: Finding) -> str:
+    comparison = finding.spec_comparison
+    if comparison is None:
+        return "spec comparison unavailable."
+    differences: list[str] = []
+    if comparison.loader_type_changed:
+        differences.append("loader type differs")
+    if comparison.origin_changed:
+        differences.append("origin differs")
+    if comparison.cached_changed:
+        differences.append("cached path differs")
+    if comparison.package_status_changed:
+        differences.append("package/module status differs")
+    if comparison.omitted_locations:
+        differences.append(f"{len(comparison.omitted_locations)} standard search location(s) omitted")
+    if comparison.additional_locations:
+        differences.append(f"{len(comparison.additional_locations)} additional claimed search location(s)")
+    if comparison.locations_reordered:
+        differences.append("search locations reordered")
+    detail = "; ".join(differences) if differences else "no comparable semantic differences"
+    completeness = "complete" if comparison.complete else "partial"
+    observed_phase = (
+        "post-hoc claim locations" if comparison.observed_locations_state == "post_hoc" else "import-time claim capture"
+    )
+    return f"spec comparison ({completeness}, {observed_phase} vs current live replay): {detail}."
 
 
 def _structural_comparison_line(finding: Finding) -> str:

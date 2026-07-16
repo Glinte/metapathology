@@ -66,7 +66,7 @@ format.
 ### `render_report(*, format="text") -> str`
 
 Returns text or JSON, including its trailing newline. JSON currently uses the
-experimental `metapathology.report` schema version 0.7. Its shape may change
+experimental `metapathology.report` schema version 0.8. Its shape may change
 throughout schema 0.x; schema 1.0 will be reviewed once the evidence model stabilizes.
 Raises `RuntimeError` before the first installation and `ValueError` for an
 unknown format. Ordinary generation failures degrade to a valid failure
@@ -129,8 +129,17 @@ callable name. It never retains or stringifies the foreign object.
 ### `FindSpecCall`
 
 Records the module name, finder type and identity, whether the finder claimed
-the module, loader type, origin, captured search path, exception type if the
-finder raised, and thread name.
+the module, loader type, origin, captured search path and whether it represented
+`sys.path` or a parent package path, a `SpecSummary`, the exception type if the
+finder raised, and the thread name.
+
+### `SpecSummary`
+
+Contains only plain captured spec semantics: safe spec/loader identity,
+origin, cached path, package and namespace status, copied search locations,
+and explicit completeness state. Exact list and tuple locations are captured
+during the finder call. Foreign location sequences are not iterated inside an
+import.
 
 ### `ImporterCacheEntry` and `ImporterCacheReplacement`
 

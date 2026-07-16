@@ -75,11 +75,14 @@ separate hooks. Keep the three mechanisms independently toggleable.
    explain their roles, and distinguish them from nonstandard skipped finders.
    Suspicious custom claims get a post-hoc `PathFinder` replay.
 
-**Bypass detection** (the beartype#556 check): at report time, for each loaded
-module whose `spec.origin` ends in `.py`/`.pyc` and that was claimed by a
-finder other than `PathFinder`, replay
-`importlib.machinery.PathFinder.find_spec(name, parent_path)` and compare
-loader types. Mismatch ⇒ that finder short-circuited `sys.path_hooks`. Modules
+**Spec comparison and bypass detection** (the beartype#556 and
+scikit-build-core#1482 checks): claim records contain conservative, plain spec
+summaries captured before returning to importlib. At report time, suspicious
+custom claims are replayed through
+`importlib.machinery.PathFinder.find_spec(name, parent_path)` and compared by
+loader, origin, package status, cached path, and namespace search locations.
+Differences state the observed mechanics; they do not declare a third-party
+package defective. Modules
 in `sys.modules` with no recorded `find_spec` call are their own bucket
 (manual `exec_module`-style loads).
 

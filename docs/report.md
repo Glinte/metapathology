@@ -13,7 +13,7 @@ file output all use the same cutoff-based report document as the human
 renderer. The current experimental schema is identified by:
 
 ```json
-{"name": "metapathology.report", "major": 0, "minor": 6}
+{"name": "metapathology.report", "major": 0, "minor": 8}
 ```
 
 Its top-level sections are `tool`, `process`, `capture`, `snapshots`,
@@ -153,6 +153,13 @@ These findings are leads, not verdicts:
 - `[unfindable]` — a custom finder claimed a source module that the replay
   cannot find through the standard path machinery at all. This is the stronger
   bypass signal.
+- `[namespace-truncation]` — both claims describe namespace packages, but the
+  custom claim omits locations returned by standard path resolution.
+- `[package-displacement]` — package-versus-module status differs.
+- `[origin-displacement]` — both resolutions find concrete modules at
+  different origins.
+- `[spec-difference]` — another comparable spec field differs, such as cached
+  path or package-path ordering/extension.
 - `[no-spec]` — a new `sys.modules` entry has no
   [`__spec__`][module-spec] and no recorded finder claim. It was likely
   created manually or loaded through a route invisible to meta-path finders.
@@ -165,6 +172,15 @@ against the report-time filesystem, path hooks, and importer cache. It is
 labeled `live_replay` in JSON and as a "current live PathFinder replay" in the
 text report. A package can therefore produce an intentional or time-sensitive
 difference.
+
+Finder-call timeline records include import-time spec summaries. Exact string
+values and exact list/tuple package paths are copied before the spec is returned
+to importlib. Non-string values are represented only by safe type and identity
+metadata. A foreign package-path sequence is marked `deferred` rather than
+iterated in the import hot path. Namespace paths returned by the live replay
+are copied during reporting and marked `post_hoc`. Field comparisons expose
+omitted, additional, and reordered locations without presenting replay state
+as exact historical proof.
 
 Each replay-based finding separately includes historical structural evidence.
 This identity-only comparison says whether `sys.path_hooks` changed between

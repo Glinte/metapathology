@@ -173,6 +173,11 @@ The suspicious-findings section uses these labels:
 - `[unfindable]` means a custom finder claimed a source module that the current
   live `PathFinder` replay cannot find at all. This is a stronger form of
   bypass.
+- `[namespace-truncation]` means a custom namespace claim omitted one or more
+  locations found by the current live `PathFinder` replay.
+- `[package-displacement]` and `[origin-displacement]` identify package/module
+  or concrete-origin differences; `[spec-difference]` covers other semantic
+  spec changes such as reordered or extended package paths.
 - `[no-spec]` means a new `sys.modules` entry has neither a `__spec__` nor a
   recorded finder claim. It was probably created manually or loaded through
   an `exec_module()`-style path that is invisible to meta-path finders.
@@ -188,7 +193,8 @@ section and finding category.
 
 ## Resource use
 
-The monitor retains every recorded resolution start, finder call, mutation,
+The monitor retains every recorded resolution start, finder call (including
+copied spec and package-path summaries), mutation,
 reassignment, cache diff, and internal error so the final report is
 exhaustive. Its memory use therefore grows with import activity for as long as
 monitoring remains enabled; there is currently no event limit or silent

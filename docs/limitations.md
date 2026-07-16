@@ -61,8 +61,9 @@ state may have changed. The accompanying historical structural comparison is
 also bounded: it compares install and report snapshots plus passive cache-diff
 events, not a reconstructed import-time cache. Historical finder objects are
 identified but never called. A difference is a reason to investigate, not
-proof of a bug. Only `.py` and `.pyc` origins with a usable loader baseline are
-checked.
+proof of a bug. Source bypass findings still require `.py` or `.pyc` origins,
+while package, namespace, and other spec-semantic comparisons require both
+claims to expose comparable safe fields.
 Calling `PathFinder.find_spec()` can populate
 `sys.path_importer_cache`; replay therefore has that standard-library side
 effect even though metapathology suppresses its own event recording during
@@ -103,6 +104,9 @@ The monitor retains every import-audit start, finder call, mutation,
 reassignment, importer-cache diff, and internal error to keep the report
 exhaustive. Memory use grows with import activity for as long as monitoring
 remains enabled. There is no event limit and no silent dropped-record policy.
+Each successful finder call also retains its plain spec summary, including all
+exact string locations from list or tuple package paths. Foreign location
+sequences are not retained or iterated in the import hot path.
 
 One small slotted audit-start record is retained for each observed builtin
 import resolution. It copies the current meta-path finder type names; auxiliary
