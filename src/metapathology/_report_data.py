@@ -496,7 +496,9 @@ class CausalExplanation(_Record):
         "_finder_type_name",
         "_kind",
         "_next_observation",
+        "_observed_origin",
         "_omitted_location",
+        "_replayed_origin",
         "_subject",
     )
     _fields = (
@@ -509,6 +511,8 @@ class CausalExplanation(_Record):
         "finder_type_name",
         "omitted_location",
         "candidate_path",
+        "observed_origin",
+        "replayed_origin",
         "event_seqs",
         "next_observation",
     )
@@ -521,6 +525,8 @@ class CausalExplanation(_Record):
     finder_type_name = _ReadOnlyField[str]("_finder_type_name")
     omitted_location = _ReadOnlyField[str]("_omitted_location")
     candidate_path = _ReadOnlyField[str]("_candidate_path")
+    observed_origin = _ReadOnlyField[str | None]("_observed_origin")
+    replayed_origin = _ReadOnlyField[str | None]("_replayed_origin")
     event_seqs = _ReadOnlyField[tuple[int, ...]]("_event_seqs")
     next_observation = _ReadOnlyField[str | None]("_next_observation")
 
@@ -538,6 +544,8 @@ class CausalExplanation(_Record):
         candidate_path: str,
         event_seqs: tuple[int, ...],
         next_observation: str | None,
+        observed_origin: str | None = None,
+        replayed_origin: str | None = None,
     ) -> None:
         self._explanation_id = explanation_id
         self._kind = kind
@@ -547,6 +555,8 @@ class CausalExplanation(_Record):
         self._cause_finding_id = cause_finding_id
         self._finder_type_name = finder_type_name
         self._omitted_location = omitted_location
+        self._observed_origin = observed_origin
+        self._replayed_origin = replayed_origin
         self._candidate_path = candidate_path
         self._event_seqs = event_seqs
         self._next_observation = next_observation
@@ -1191,6 +1201,30 @@ def _causal_explanations(
                     next_observation=None if exact_failure else "enable_deep_import_outcomes",
                 )
             )
+    for finding in findings:
+        if (
+            finding.kind not in ("loader_displacement", "origin_displacement", "package_displacement")
+            or finding.claim is None
+            or finding.replay is None
+        ):
+            continue
+        explanations.append(
+            CausalExplanation(
+                explanation_id=f"explanation:{len(explanations) + 1}",
+                kind="custom_claim_displacement",
+                confidence="counterfactual",
+                subject=finding.module,
+                effect_status="custom_claim_selected",
+                cause_finding_id=finding.finding_id,
+                finder_type_name=finding.claim.finder_type_name,
+                omitted_location="",
+                candidate_path="",
+                event_seqs=(finding.claim.seq,),
+                next_observation=None,
+                observed_origin=finding.claim.origin,
+                replayed_origin=finding.replay.origin,
+            )
+        )
     return tuple(explanations)
 
 
@@ -2354,7 +2388,9 @@ def _json_explanation(explanation: CausalExplanation) -> dict[str, object]:
         "id": explanation.explanation_id,
         "kind": explanation.kind,
         "next_observation": explanation.next_observation,
+        "observed_origin": explanation.observed_origin,
         "omitted_location": explanation.omitted_location,
+        "replayed_origin": explanation.replayed_origin,
         "subject": explanation.subject,
     }
 

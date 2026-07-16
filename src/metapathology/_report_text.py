@@ -172,9 +172,10 @@ def render_lines(document: ReportDocument) -> list[str]:
     lines = _header_lines(document, context)
 
     if document.explanations:
+        shown_explanations = _primary_explanations(document.explanations)
         lines.append("")
-        lines.append(f"-- causal explanations ({len(document.explanations)}) --")
-        for explanation in document.explanations:
+        lines.append(f"-- causal explanations ({len(shown_explanations)}) --")
+        for explanation in shown_explanations:
             lines.extend(_explanation_lines(explanation, context))
 
     lines.append("")
@@ -289,7 +290,24 @@ def _explanation_lines(explanation: CausalExplanation, context: _RenderContext) 
                 "    next observation: enable deep import outcomes to confirm whether the descendant import failed"
             )
         return lines
+    if explanation.kind == "custom_claim_displacement":
+        return [
+            f"[counterfactual] {explanation.finder_type_name} claimed '{explanation.subject}' before PathFinder",
+            f"    captured origin: {_origin_display(explanation.observed_origin, context)}",
+            f"    PathFinder replay origin: {_origin_display(explanation.replayed_origin, context)}",
+            f"    cause: {explanation.cause_finding_id}; supporting events: "
+            + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
+        ]
     return [f"[{explanation.confidence}] {explanation.kind}: '{explanation.subject}'"]
+
+
+def _primary_explanations(explanations: tuple[CausalExplanation, ...]) -> tuple[CausalExplanation, ...]:
+    """Keep lower-value corroboration in JSON without crowding human diagnoses."""
+    namespace = tuple(item for item in explanations if item.kind == "namespace_truncation_failure")
+    if namespace:
+        return tuple(sorted(namespace, key=lambda item: item.effect_status != "failed"))
+    exact = tuple(item for item in explanations if item.confidence in ("captured", "correlated"))
+    return exact or explanations
 
 
 def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
