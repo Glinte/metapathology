@@ -54,7 +54,7 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 13
+_SCHEMA_MINOR = 14
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -153,6 +153,75 @@ class ImportAttempt(_Record):
         self._thread_name = thread_name
         self._progress = progress
         self._presence = presence
+
+
+class StandardResolution(_Record):
+    """Captured or conservatively inferred standard resolution evidence."""
+
+    __slots__ = (
+        "_attempt_id",
+        "_category",
+        "_component_event_seqs",
+        "_event_seq",
+        "_evidence_level",
+        "_finder_type_name",
+        "_fullname",
+        "_later_finders",
+        "_loader_type_name",
+        "_origin",
+        "_state_phase",
+    )
+    _fields = (
+        "attempt_id",
+        "fullname",
+        "finder_type_name",
+        "category",
+        "loader_type_name",
+        "origin",
+        "evidence_level",
+        "state_phase",
+        "event_seq",
+        "component_event_seqs",
+        "later_finders",
+    )
+    attempt_id = _ReadOnlyField[int]("_attempt_id")
+    fullname = _ReadOnlyField[str]("_fullname")
+    finder_type_name = _ReadOnlyField[str]("_finder_type_name")
+    category = _ReadOnlyField[str]("_category")
+    loader_type_name = _ReadOnlyField[str | None]("_loader_type_name")
+    origin = _ReadOnlyField[str | None]("_origin")
+    evidence_level = _ReadOnlyField[str]("_evidence_level")
+    state_phase = _ReadOnlyField[str]("_state_phase")
+    event_seq = _ReadOnlyField[int | None]("_event_seq")
+    component_event_seqs = _ReadOnlyField[tuple[int, ...]]("_component_event_seqs")
+    later_finders = _ReadOnlyField[tuple[str, ...]]("_later_finders")
+
+    def __init__(
+        self,
+        *,
+        attempt_id: int,
+        fullname: str,
+        finder_type_name: str,
+        category: str,
+        loader_type_name: str | None,
+        origin: str | None,
+        evidence_level: str,
+        state_phase: str,
+        event_seq: int | None,
+        component_event_seqs: tuple[int, ...],
+        later_finders: tuple[str, ...],
+    ) -> None:
+        self._attempt_id = attempt_id
+        self._fullname = fullname
+        self._finder_type_name = finder_type_name
+        self._category = category
+        self._loader_type_name = loader_type_name
+        self._origin = origin
+        self._evidence_level = evidence_level
+        self._state_phase = state_phase
+        self._event_seq = event_seq
+        self._component_event_seqs = component_event_seqs
+        self._later_finders = later_finders
 
 
 class ReplayResult(_Record):
@@ -432,6 +501,7 @@ class ReportDocument(_Record):
         "_path_hooks_enabled",
         "_report_errors",
         "_skipped_finders",
+        "_standard_resolutions",
     )
     _fields = (
         "generated_at",
@@ -458,6 +528,7 @@ class ReportDocument(_Record):
         "deep_diagnostics",
         "deep_import_outcomes_status",
         "skipped_finders",
+        "standard_resolutions",
         "findings",
         "report_errors",
         "cwd",
@@ -487,6 +558,7 @@ class ReportDocument(_Record):
     deep_diagnostics = _ReadOnlyField[tuple[str, ...]]("_deep_diagnostics")
     deep_import_outcomes_status = _ReadOnlyField[str]("_deep_import_outcomes_status")
     skipped_finders = _ReadOnlyField[tuple[SkippedFinder, ...]]("_skipped_finders")
+    standard_resolutions = _ReadOnlyField[tuple[StandardResolution, ...]]("_standard_resolutions")
     findings = _ReadOnlyField[tuple[Finding, ...]]("_findings")
     report_errors = _ReadOnlyField[tuple[ReportError, ...]]("_report_errors")
     cwd = _ReadOnlyField[str | None]("_cwd")
@@ -519,6 +591,7 @@ class ReportDocument(_Record):
         deep_diagnostics: tuple[str, ...],
         deep_import_outcomes_status: str,
         skipped_finders: tuple[SkippedFinder, ...],
+        standard_resolutions: tuple[StandardResolution, ...],
         findings: tuple[Finding, ...],
         report_errors: tuple[ReportError, ...],
         cwd: str | None,
@@ -548,6 +621,7 @@ class ReportDocument(_Record):
         self._deep_diagnostics = deep_diagnostics
         self._deep_import_outcomes_status = deep_import_outcomes_status
         self._skipped_finders = skipped_finders
+        self._standard_resolutions = standard_resolutions
         self._findings = findings
         self._report_errors = report_errors
         self._cwd = cwd
@@ -563,6 +637,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
     module_items = _module_items(report_errors)
     loader_inventory = _loader_inventory(module_items)
     attempts = _import_attempts(events, module_items)
+    standard_resolutions = _standard_resolutions(events, attempts, loader_inventory.entries)
     modules_since_install = _modules_since_install(monitor, module_items)
     skipped_finders = tuple(
         SkippedFinder(
@@ -632,6 +707,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         deep_diagnostics=monitor.deep_diagnostics,
         deep_import_outcomes_status=monitor.deep_import_outcomes_status,
         skipped_finders=skipped_finders,
+        standard_resolutions=standard_resolutions,
         findings=findings,
         report_errors=tuple(report_errors),
         cwd=cwd,
@@ -741,6 +817,95 @@ def _import_attempts(
             )
         )
     return tuple(attempts)
+
+
+def _standard_resolutions(
+    events: list[MonitorEvent],
+    attempts: tuple[ImportAttempt, ...],
+    inventory: tuple[ModuleMetadata, ...],
+) -> tuple[StandardResolution, ...]:
+    """Join exact aggregate results or conservative post-hoc standard evidence."""
+    by_seq = {event.seq: event for event in events}
+    audits = {event.attempt_id: event for event in events if isinstance(event, ImportAuditStart)}
+    captured = {event.attempt_id: event for event in events if isinstance(event, StandardFinderCall)}
+    metadata = {entry.name: entry for entry in inventory}
+    resolutions: list[StandardResolution] = []
+    for attempt in attempts:
+        audit = audits.get(attempt.attempt_id)
+        aggregate = captured.get(attempt.attempt_id)
+        summary = aggregate.spec_summary if aggregate is not None else None
+        if summary is None:
+            entry = metadata.get(attempt.fullname)
+            if entry is None or entry.inspection != "available":
+                continue
+            summary = entry.spec_summary
+        classified = _standard_spec_classification(summary)
+        if classified is None:
+            continue
+        finder_type_name, category, loader_type_name, origin = classified
+        event_values = tuple(by_seq[seq] for seq in attempt.event_seqs if seq in by_seq)
+        if aggregate is None and any(isinstance(event, FindSpecCall) and event.found for event in event_values):
+            continue
+        if audit is None or finder_type_name not in audit.meta_path_type_names:
+            if aggregate is None:
+                continue
+            later_finders: tuple[str, ...] = ()
+        else:
+            finder_index = audit.meta_path_type_names.index(finder_type_name)
+            later_finders = tuple(
+                name
+                for name in audit.meta_path_type_names[finder_index + 1 :]
+                if name not in ("BuiltinImporter", "FrozenImporter", "PathFinder")
+            )
+        components = tuple(
+            event.seq
+            for event in event_values
+            if isinstance(event, DeepDiagnosticCall)
+            and event.boundary == "path_entry_finder"
+            and event.fullname == attempt.fullname
+        )
+        resolutions.append(
+            StandardResolution(
+                attempt_id=attempt.attempt_id,
+                fullname=attempt.fullname,
+                finder_type_name=finder_type_name,
+                category=category,
+                loader_type_name=loader_type_name,
+                origin=origin,
+                evidence_level="captured" if aggregate is not None else "inferred",
+                state_phase="import" if aggregate is not None else "report",
+                event_seq=None if aggregate is None else aggregate.seq,
+                component_event_seqs=components,
+                later_finders=later_finders,
+            )
+        )
+    return tuple(resolutions)
+
+
+def _standard_spec_classification(
+    summary: SpecSummary | None,
+) -> tuple[str, str, str | None, str | None] | None:
+    """Classify only loader shapes owned by CPython's standard finders."""
+    if summary is None:
+        return None
+    loader_type_name = None if summary.loader is None else summary.loader.type_name
+    origin = summary.origin if type(summary.origin) is str else None
+    if summary.is_namespace:
+        return "PathFinder", "namespace", loader_type_name, origin
+    if loader_type_name == "BuiltinImporter":
+        return "BuiltinImporter", "built_in", loader_type_name, origin
+    if loader_type_name == "FrozenImporter":
+        return "FrozenImporter", "frozen", loader_type_name, origin
+    categories = {
+        "SourceFileLoader": "source",
+        "SourcelessFileLoader": "bytecode",
+        "ExtensionFileLoader": "extension",
+        "zipimporter": "zip",
+    }
+    category = categories.get(loader_type_name or "")
+    if category is None:
+        return None
+    return "PathFinder", category, loader_type_name, origin
 
 
 def _loader_inventory(module_items: list[tuple[object, object]] | None) -> LoaderInventory:
@@ -1267,6 +1432,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
         ],
         "loader_inventory": _json_loader_inventory(document.loader_inventory),
         "import_attempts": [_json_import_attempt(attempt) for attempt in document.attempts],
+        "standard_resolutions": [_json_standard_resolution(resolution) for resolution in document.standard_resolutions],
         "timeline": [_json_event(event) for event in document.events],
         "findings": [_json_finding(finding) for finding in document.findings],
         "diagnostics": {
@@ -1495,6 +1661,23 @@ def _json_import_attempt(attempt: ImportAttempt) -> dict[str, object]:
         "thread_name": attempt.thread_name,
         "progress": attempt.progress,
         "presence": attempt.presence,
+    }
+
+
+def _json_standard_resolution(resolution: StandardResolution) -> dict[str, object]:
+    """Serialize provenance without presenting inference as a raw event."""
+    return {
+        "attempt_ref": f"attempt:{resolution.attempt_id}",
+        "category": resolution.category,
+        "component_event_refs": [f"event:{seq}" for seq in resolution.component_event_seqs],
+        "evidence_level": resolution.evidence_level,
+        "event_ref": None if resolution.event_seq is None else f"event:{resolution.event_seq}",
+        "finder_type_name": resolution.finder_type_name,
+        "fullname": resolution.fullname,
+        "later_finders": list(resolution.later_finders),
+        "loader_type_name": resolution.loader_type_name,
+        "origin": resolution.origin,
+        "state_phase": resolution.state_phase,
     }
 
 
