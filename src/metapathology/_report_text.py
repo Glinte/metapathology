@@ -809,6 +809,12 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
             f"[path-hook-shadow] {context.quoted_path(finding.module)}: distinct hooks accepted this path",
             f"    captured acceptances: event #{finding.supporting_event_seqs[0]} and event #{call.seq}",
         ]
+    if finding.kind == "failed_after_mutation":
+        mutation, started, failed = finding.supporting_event_seqs
+        return [
+            f"[failed-after-mutation] '{finding.module}': exact import failure followed a recorded mutation",
+            f"    mutation event #{mutation}; import boundary events #{started} -> #{failed}; temporal correlation is not causation",
+        ]
     if finding.kind == "module_replacement" and finding.deep_call is not None:
         call = finding.deep_call
         transition = _module_transition(call.module_state_before, call.module_state_after)
@@ -848,6 +854,12 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
     if finding.kind == "loader_displacement":
         return [
             f"[loader-displacement] '{finding.module}': captured claim and live PathFinder replay chose different loader types",
+            f"    {_spec_comparison_line(finding)}",
+            f"    {_structural_comparison_line(finding)}",
+        ]
+    if finding.kind == "frozen_source_conflict":
+        return [
+            f"[frozen-source-conflict] '{finding.module}': source claim displaced a frozen or archive loader in replay",
             f"    {_spec_comparison_line(finding)}",
             f"    {_structural_comparison_line(finding)}",
         ]

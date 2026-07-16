@@ -1005,6 +1005,7 @@ def _suspicious_findings(
     baseline = monitor.baseline_modules
     if module_items is None:
         findings.extend(_path_hook_shadow_findings(events, len(findings)))
+        findings.extend(_failed_after_mutation_findings(events, len(findings)))
         findings.extend(_meta_bypass_findings(events, len(findings)))
         return tuple(findings)
     metadata_by_name = {entry.name: entry for entry in module_metadata}
@@ -1030,6 +1031,7 @@ def _suspicious_findings(
             )
     findings.extend(_structural_contention_findings(tuple(findings), len(findings)))
     findings.extend(_path_hook_shadow_findings(events, len(findings)))
+    findings.extend(_failed_after_mutation_findings(events, len(findings)))
     findings.extend(_meta_bypass_findings(events, len(findings)))
     return tuple(findings)
 
@@ -1106,6 +1108,22 @@ def _structural_contention_findings(existing: tuple[Finding, ...], offset: int) 
                     limitations=("replay_uses_report_time_importer_state",),
                 )
             )
+            if _is_source_loader(finding.claim.loader_type_name) and _is_frozen_or_archive_loader(
+                finding.replay.loader_type_name if finding.replay is not None else None
+            ):
+                findings.append(
+                    Finding(
+                        f"finding:{offset + len(findings) + 1}",
+                        "frozen_source_conflict",
+                        finding.module,
+                        finding.claim,
+                        finding.replay,
+                        comparison,
+                        finding.structural_comparison,
+                        evidence_level="live_replay",
+                        limitations=("replay_uses_report_time_importer_state",),
+                    )
+                )
         structural = finding.structural_comparison
         if structural is None or not structural.importer_cache_changed_paths or finding.claim is None:
             continue
@@ -1122,6 +1140,16 @@ def _structural_contention_findings(existing: tuple[Finding, ...], offset: int) 
             )
         )
     return findings
+
+
+def _is_source_loader(loader_type_name: str | None) -> bool:
+    return loader_type_name is not None and (
+        loader_type_name == "SourceFileLoader" or loader_type_name.endswith("SourceLoader")
+    )
+
+
+def _is_frozen_or_archive_loader(loader_type_name: str | None) -> bool:
+    return loader_type_name in ("FrozenImporter", "zipimporter")
 
 
 def _path_hook_shadow_findings(events: list[MonitorEvent], offset: int) -> list[Finding]:
@@ -1157,6 +1185,44 @@ def _path_hook_shadow_findings(events: list[MonitorEvent], offset: int) -> list[
                 limitations=("acceptance_was_captured_across_distinct_resolution_states",),
                 subject_kind="path",
                 supporting_event_seqs=(earlier.seq,),
+            )
+        )
+    return findings
+
+
+def _failed_after_mutation_findings(events: list[MonitorEvent], offset: int) -> list[Finding]:
+    """Pair exact failed completions with the nearest earlier structural mutation."""
+    mutation_seqs: list[int] = []
+    started: dict[int, DeepImportEvent] = {}
+    findings: list[Finding] = []
+    for event in events:
+        if isinstance(
+            event,
+            (MetaPathMutation, MetaPathReassignment, PathHooksMutation, PathHooksReassignment, ImporterCacheDiff),
+        ):
+            mutation_seqs.append(event.seq)
+            continue
+        if not isinstance(event, DeepImportEvent):
+            continue
+        if event.outcome == "started":
+            started[event.attempt_id] = event
+            continue
+        if event.outcome != "failed":
+            continue
+        start = started.get(event.attempt_id)
+        if start is None:
+            continue
+        mutation_seq = next((seq for seq in reversed(mutation_seqs) if seq < start.seq), None)
+        if mutation_seq is None:
+            continue
+        findings.append(
+            Finding(
+                f"finding:{offset + len(findings) + 1}",
+                "failed_after_mutation",
+                event.fullname,
+                evidence_level="structural_inference",
+                limitations=("temporal_correlation_does_not_prove_mutation_caused_failure",),
+                supporting_event_seqs=(mutation_seq, start.seq, event.seq),
             )
         )
     return findings

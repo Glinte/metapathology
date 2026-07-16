@@ -1,6 +1,7 @@
 """Human report content: bypass detection and the no-spec bucket."""
 
 import subprocess
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -61,6 +62,40 @@ def test_finder_shadowing_path_hooks_is_flagged_as_bypass(run_python: RunPython,
     assert proc.stdout.index("-- suspicious findings") < proc.stdout.index("-- chronological evidence timeline")
     assert "origin 'real_mod.py'" in proc.stdout
     assert f"paths shown relative to: {tmp_path}" in proc.stdout
+
+
+def test_source_claim_displacing_archive_loader_is_classified(run_python: RunPython, tmp_path: Path) -> None:
+    archive = tmp_path / "frozen-like.zip"
+    with zipfile.ZipFile(archive, "w") as zipped:
+        zipped.writestr("archive_conflict.py", "VALUE = 'archive'\n")
+    custom = tmp_path / "custom" / "archive_conflict.py"
+    custom.parent.mkdir()
+    custom.write_text("VALUE = 7\n", encoding="utf-8")
+    proc = run_python(
+        "import json, sys\n"
+        "from importlib.machinery import SourceFileLoader\n"
+        "from importlib.util import spec_from_file_location\n"
+        "import metapathology\n"
+        "class Finder:\n"
+        "    def find_spec(self, fullname, path=None, target=None):\n"
+        "        if fullname == 'archive_conflict':\n"
+        "            return spec_from_file_location(fullname, sys.argv[2], loader=SourceFileLoader(fullname, sys.argv[2]))\n"
+        "        return None\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "metapathology.install(report_at_exit=False)\n"
+        "sys.meta_path.insert(0, Finder())\n"
+        "import archive_conflict\n"
+        "document = json.loads(metapathology.render_report(format='json'))\n"
+        "finding = next(item for item in document['findings'] if item['kind'] == 'frozen_source_conflict')\n"
+        "assert finding['path_finder_replay']['loader_type_name'] == 'zipimporter'\n"
+        "assert finding['evidence']['level'] == 'live_replay'\n"
+        "assert '[frozen-source-conflict]' in metapathology.render_report()\n"
+        "print('OK')\n",
+        str(archive),
+        str(custom),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
 
 
 def test_module_invisible_to_path_machinery_is_flagged_as_unfindable(run_python: RunPython, tmp_path: Path) -> None:
