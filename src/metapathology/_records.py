@@ -201,6 +201,7 @@ class ImportAuditStart(_Record):
     """
 
     __slots__ = (
+        "_attempt_id",
         "_fullname",
         "_importer_cache_id",
         "_importer_cache_size",
@@ -208,10 +209,12 @@ class ImportAuditStart(_Record):
         "_meta_path_type_names",
         "_path_hooks_id",
         "_seq",
+        "_thread_id",
         "_thread_name",
     )
     _fields = (
         "seq",
+        "attempt_id",
         "fullname",
         "meta_path_id",
         "meta_path_type_names",
@@ -219,8 +222,10 @@ class ImportAuditStart(_Record):
         "importer_cache_id",
         "importer_cache_size",
         "thread_name",
+        "thread_id",
     )
     seq = _ReadOnlyField[int]("_seq")
+    attempt_id = _ReadOnlyField[int]("_attempt_id")
     fullname = _ReadOnlyField[str]("_fullname")
     meta_path_id = _ReadOnlyField[int]("_meta_path_id")
     meta_path_type_names = _ReadOnlyField[tuple[str, ...]]("_meta_path_type_names")
@@ -228,10 +233,12 @@ class ImportAuditStart(_Record):
     importer_cache_id = _ReadOnlyField[int | None]("_importer_cache_id")
     importer_cache_size = _ReadOnlyField[int | None]("_importer_cache_size")
     thread_name = _ReadOnlyField[str]("_thread_name")
+    thread_id = _ReadOnlyField[int]("_thread_id")
 
     def __init__(
         self,
         seq: int,
+        attempt_id: int,
         fullname: str,
         meta_path_id: int,
         meta_path_type_names: tuple[str, ...],
@@ -239,8 +246,10 @@ class ImportAuditStart(_Record):
         importer_cache_id: int | None,
         importer_cache_size: int | None,
         thread_name: str,
+        thread_id: int,
     ) -> None:
         self._seq = seq
+        self._attempt_id = attempt_id
         self._fullname = fullname
         self._meta_path_id = meta_path_id
         self._meta_path_type_names = meta_path_type_names
@@ -248,6 +257,7 @@ class ImportAuditStart(_Record):
         self._importer_cache_id = importer_cache_id
         self._importer_cache_size = importer_cache_size
         self._thread_name = thread_name
+        self._thread_id = thread_id
 
 
 class MetaPathMutation(_Record):
@@ -512,6 +522,7 @@ class FindSpecCall(_Record):
         "_search_path_kind",
         "_seq",
         "_spec_summary",
+        "_thread_id",
         "_thread_name",
     )
     _fields = (
@@ -527,6 +538,7 @@ class FindSpecCall(_Record):
         "spec_summary",
         "exception_type_name",
         "thread_name",
+        "thread_id",
     )
     seq = _ReadOnlyField[int]("_seq")
     fullname = _ReadOnlyField[str]("_fullname")
@@ -540,6 +552,7 @@ class FindSpecCall(_Record):
     spec_summary = _ReadOnlyField[SpecSummary | None]("_spec_summary")
     exception_type_name = _ReadOnlyField[str | None]("_exception_type_name")
     thread_name = _ReadOnlyField[str]("_thread_name")
+    thread_id = _ReadOnlyField[int]("_thread_id")
 
     def __init__(
         self,
@@ -555,6 +568,7 @@ class FindSpecCall(_Record):
         spec_summary: SpecSummary | None,
         exception_type_name: str | None,
         thread_name: str,
+        thread_id: int,
     ) -> None:
         self._seq = seq
         self._fullname = fullname
@@ -568,6 +582,7 @@ class FindSpecCall(_Record):
         self._spec_summary = spec_summary
         self._exception_type_name = exception_type_name
         self._thread_name = thread_name
+        self._thread_id = thread_id
 
 
 class DeepDiagnosticCall(_Record):
@@ -582,6 +597,7 @@ class DeepDiagnosticCall(_Record):
         "_outcome",
         "_path",
         "_seq",
+        "_thread_id",
         "_thread_name",
     )
     _fields = (
@@ -594,6 +610,7 @@ class DeepDiagnosticCall(_Record):
         "outcome",
         "exception_type_name",
         "thread_name",
+        "thread_id",
     )
     seq = _ReadOnlyField[int]("_seq")
     boundary = _ReadOnlyField[str]("_boundary")
@@ -604,6 +621,7 @@ class DeepDiagnosticCall(_Record):
     outcome = _ReadOnlyField[str]("_outcome")
     exception_type_name = _ReadOnlyField[str | None]("_exception_type_name")
     thread_name = _ReadOnlyField[str]("_thread_name")
+    thread_id = _ReadOnlyField[int]("_thread_id")
 
     def __init__(
         self,
@@ -616,6 +634,7 @@ class DeepDiagnosticCall(_Record):
         outcome: str,
         exception_type_name: str | None,
         thread_name: str,
+        thread_id: int,
     ) -> None:
         self._seq = seq
         self._boundary = boundary
@@ -626,6 +645,7 @@ class DeepDiagnosticCall(_Record):
         self._outcome = outcome
         self._exception_type_name = exception_type_name
         self._thread_name = thread_name
+        self._thread_id = thread_id
 
 
 class InternalError(_Record):

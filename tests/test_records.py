@@ -49,6 +49,7 @@ def test_importer_cache_values_distinguish_negative_entries_and_replacements() -
 def test_import_audit_start_contains_only_plain_capture_data() -> None:
     record = ImportAuditStart(
         seq=7,
+        attempt_id=3,
         fullname="example.module",
         meta_path_id=41,
         meta_path_type_names=("BuiltinImporter", "PathFinder"),
@@ -56,12 +57,13 @@ def test_import_audit_start_contains_only_plain_capture_data() -> None:
         importer_cache_id=43,
         importer_cache_size=5,
         thread_name="MainThread",
+        thread_id=1,
     )
 
     assert repr(record) == (
-        "ImportAuditStart(seq=7, fullname='example.module', meta_path_id=41, "
+        "ImportAuditStart(seq=7, attempt_id=3, fullname='example.module', meta_path_id=41, "
         "meta_path_type_names=('BuiltinImporter', 'PathFinder'), path_hooks_id=42, "
-        "importer_cache_id=43, importer_cache_size=5, thread_name='MainThread')"
+        "importer_cache_id=43, importer_cache_size=5, thread_name='MainThread', thread_id=1)"
     )
     assert not hasattr(record, "__dict__")
     with pytest.raises(AttributeError, match="read-only"):

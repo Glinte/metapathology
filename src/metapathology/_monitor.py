@@ -253,6 +253,8 @@ class Monitor:
         # One counter for all record types, so the report can interleave the
         # different event kinds chronologically.
         self._seq = 0
+        self._attempt_id = 0
+        self._thread_id = 0
         self._events: list[MonitorEvent] = []
         self._search_path_cache: list[tuple[str, ...]] = []
         # Master switch: hooks stay registered after uninstall() (audit hooks
@@ -775,6 +777,7 @@ class Monitor:
         """Append primitive-only deep evidence without holding a lock across delegation."""
         thread_name = threading.current_thread().name
         with self._record_lock:
+            thread_id = self._thread_id_locked()
             self._seq += 1
             self._events.append(
                 DeepDiagnosticCall(
@@ -787,8 +790,18 @@ class Monitor:
                     outcome,
                     exception_type_name,
                     thread_name,
+                    thread_id,
                 )
             )
+
+    def _thread_id_locked(self) -> int:
+        """Return this thread's monitor identity while ``_record_lock`` is held."""
+        thread_id = getattr(self._local, "thread_id", None)
+        if thread_id is None:
+            self._thread_id += 1
+            thread_id = self._thread_id
+            self._local.thread_id = thread_id
+        return thread_id
 
     def uninstall(self) -> None:
         """Restore plain import lists and unshadow all finders (idempotent)."""
@@ -918,10 +931,13 @@ class Monitor:
             if cache_fingerprint is not None and cache_fingerprint != self._importer_cache_fingerprint:
                 self._importer_cache_fingerprint = cache_fingerprint
                 self._importer_cache_dirty = True
+            thread_id = self._thread_id_locked()
+            self._attempt_id += 1
             self._seq += 1
             self._events.append(
                 ImportAuditStart(
                     seq=self._seq,
+                    attempt_id=self._attempt_id,
                     fullname=fullname,
                     meta_path_id=meta_path_id,
                     meta_path_type_names=meta_path_type_names,
@@ -929,6 +945,7 @@ class Monitor:
                     importer_cache_id=importer_cache_id,
                     importer_cache_size=importer_cache_size,
                     thread_name=thread_name,
+                    thread_id=thread_id,
                 )
             )
 
@@ -1336,6 +1353,7 @@ class Monitor:
             found = spec is not None
             thread_name = threading.current_thread().name
             with self._record_lock:
+                thread_id = self._thread_id_locked()
                 search_path = self._reuse_search_path(search_path)
                 self._seq += 1
                 self._events.append(
@@ -1352,6 +1370,7 @@ class Monitor:
                         spec_summary=spec_summary,
                         exception_type_name=exception_type_name,
                         thread_name=thread_name,
+                        thread_id=thread_id,
                     )
                 )
         except Exception as exc:

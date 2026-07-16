@@ -51,6 +51,8 @@ assert start.meta_path_type_names[0] == "DelegatingFinder"
 assert start.path_hooks_id == id(sys.path_hooks)
 assert start.importer_cache_id == id(sys.path_importer_cache)
 assert start.importer_cache_size is not None
+assert start.attempt_id > 0
+assert start.thread_id == claim.thread_id
 
 text = metapathology.render_report()
 timeline = text.split("-- chronological evidence timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
@@ -84,6 +86,49 @@ def test_timeline_interleaves_all_capture_mechanisms(run_python: RunPython, tmp_
     (tmp_path / "timeline_target.py").write_text("VALUE = 1\n", encoding="utf-8")
 
     proc = run_python(TIMELINE)
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+THREAD_IDENTITIES = r"""
+import threading
+
+import metapathology
+from metapathology import ImportAuditStart
+
+monitor = metapathology.install(report_at_exit=False)
+
+def import_first():
+    import thread_identity_first
+
+def import_second():
+    import thread_identity_second
+
+first = threading.Thread(target=import_first, name="duplicate-name")
+first.start()
+first.join()
+second = threading.Thread(target=import_second, name="duplicate-name")
+second.start()
+second.join()
+
+starts = {
+    event.fullname: event
+    for event in monitor.events()
+    if isinstance(event, ImportAuditStart) and event.fullname.startswith("thread_identity_")
+}
+assert starts["thread_identity_first"].thread_name == starts["thread_identity_second"].thread_name
+assert starts["thread_identity_first"].thread_id != starts["thread_identity_second"].thread_id
+assert starts["thread_identity_first"].attempt_id != starts["thread_identity_second"].attempt_id
+print("OK")
+"""
+
+
+def test_monitor_identities_do_not_join_threads_by_reused_name(run_python: RunPython, tmp_path: Path) -> None:
+    (tmp_path / "thread_identity_first.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "thread_identity_second.py").write_text("VALUE = 2\n", encoding="utf-8")
+
+    proc = run_python(THREAD_IDENTITIES)
 
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "OK"

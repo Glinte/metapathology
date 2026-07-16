@@ -21,7 +21,7 @@ def _summary(locations: list[str]) -> SpecSummary:
 
 
 def _winner(summary: SpecSummary, origin: str | None = None) -> FindSpecCall:
-    return FindSpecCall(1, "example", "Finder", 1, True, None, origin, (), "sys_path", summary, None, "MainThread")
+    return FindSpecCall(1, "example", "Finder", 1, True, None, origin, (), "sys_path", summary, None, "MainThread", 1)
 
 
 def test_location_comparison_distinguishes_truncation_extension_and_reordering() -> None:
