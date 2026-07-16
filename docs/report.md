@@ -107,17 +107,21 @@ recorded, so attribution may require elimination.
 
 ## Post-hoc loader inventory
 
-The loader inventory groups every safely inspectable string-keyed
-`sys.modules` entry by loader type and object identity. It prefers a non-`None`
-`module.__spec__.loader`, falls back to `module.__loader__`, and keeps modules
-without either value in a separate group. A disagreement between the two
-loader identities is labeled as metadata evidence, not as a package defect.
+The loader inventory covers every safely inspectable string-keyed
+`sys.modules` entry. It prefers a non-`None` `module.__spec__.loader`, falls
+back to `module.__loader__`, and keeps modules without either value in a
+separate group. A disagreement between the two loader identities is labeled
+as metadata evidence, not as a package defect.
 
 This is a report-time snapshot, not exact historical attribution: modules may
 have replaced their metadata or disappeared before reporting. The inventory
 includes modules that predate installation, unlike the separate
-`modules_since_install` list. Text output shows at most 25 modules per group;
-JSON retains every copied record.
+`modules_since_install` list. Text output groups modules by loader type name:
+custom loader groups list module names and origins (at most 25 per group),
+while groups whose type name matches a standard CPython loader are summarized
+as counts, always listing their metadata disagreements. Cached paths are
+omitted from text. JSON retains every copied record, grouped by loader type
+and object identity.
 
 Module metadata is read from real module dictionaries through the base
 `ModuleType` implementation. This bypasses module-subclass overrides and does

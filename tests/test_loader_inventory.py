@@ -41,6 +41,11 @@ registered("inventory_shared_b", shared, shared)
 registered("inventory_other", other, other)
 registered("inventory_mismatch", shared, other)
 registered("inventory_assertion", AssertionRewritingHook(), None)
+registered(
+    "inventory_std_mismatch",
+    importlib.machinery.SourceFileLoader("inventory_std_mismatch", "inventory_std_mismatch.py"),
+    other,
+)
 
 
 class HostileModule(types.ModuleType):
@@ -112,6 +117,12 @@ assert inventory["non_string_keys_omitted"] == 1
 assert any(item["name"] == "inventory_module_like" for item in inventory["unavailable"])
 assert "post-hoc loader inventory" in text
 assert "loader metadata disagreement" in text
+assert "InventoryLoader: 5 module(s)" in text, text
+assert "inventory_shared_a: origin 'inventory_shared_a.py'" in text, text
+assert "Standard CPython loader groups list only metadata disagreements" in text, text
+assert "inventory_std_mismatch: origin 'inventory_std_mismatch.py' [loader metadata disagreement]" in text, text
+assert "    json: origin" not in text, text
+assert ", cached" not in text, text
 assert not HostileModule.touched
 assert not ModuleLike.touched
 assert not lazy_source.with_suffix(".executed").exists()

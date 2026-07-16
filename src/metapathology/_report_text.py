@@ -16,7 +16,7 @@ from metapathology._records import (
     PathHooksMutation,
     PathHooksReassignment,
 )
-from metapathology._report_data import Finding, ReportDocument, _loader_inventory_groups
+from metapathology._report_data import Finding, ReportDocument
 
 TYPE_CHECKING = False
 
@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from traceback import StackSummary
     from typing import TypeVar
+
+    from metapathology._module_metadata import ModuleMetadata
 
     _EventT = TypeVar("_EventT")
 
@@ -36,6 +38,22 @@ _STACK_DISPLAY_FRAMES = 5
 # Max claimed modules listed per finder in the attribution section.
 _MAX_LISTED_MODULES = 25
 _MAX_CACHE_CHANGES_PER_DIFF = 25
+# Loader type names shipped by CPython's import machinery (zipimport
+# included). Their inventory groups are summarized as counts in text; a class
+# merely named like one of these still shows up because any metadata
+# disagreement is always listed.
+_STANDARD_LOADER_NAMES = frozenset(
+    (
+        "BuiltinImporter",
+        "ExtensionFileLoader",
+        "FrozenImporter",
+        "NamespaceLoader",
+        "SourceFileLoader",
+        "SourcelessFileLoader",
+        "_NamespaceLoader",
+        "zipimporter",
+    )
+)
 
 
 class _RenderContext:
@@ -478,35 +496,41 @@ def _names_line(names: tuple[str, ...]) -> str:
 
 
 def _loader_inventory_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
-    """Render a bounded view of the exhaustive post-hoc loader inventory."""
+    """Render a bounded view of the exhaustive post-hoc loader inventory.
+
+    Text groups modules by loader type name and summarizes standard CPython
+    loader groups as counts, listing only their metadata disagreements; the
+    JSON projection retains every entry grouped by loader identity.
+    """
     inventory = document.loader_inventory
     lines = [f"-- post-hoc loader inventory ({len(inventory.entries)} string-keyed entries) --"]
     lines.append("This is report-time metadata, not exact historical loader attribution.")
     if not inventory.available:
         lines.append("(sys.modules snapshot unavailable)")
         return lines
-    groups = _loader_inventory_groups(inventory)
-    labels = [None if loader is None else _ref_label(loader) for loader, _ in groups]
-    ambiguous = {label for label in labels if label is not None and labels.count(label) > 1}
-    for loader, entries in groups:
-        if loader is None:
-            loader_name = "no loader"
-        elif _ref_label(loader) in ambiguous:
-            loader_name = f"{_ref_label(loader)} id 0x{loader.object_id:x}"
-        else:
-            loader_name = _ref_label(loader)
-        lines.append(f"{loader_name}: {len(entries)} module(s)")
-        for entry in entries[:_MAX_LISTED_MODULES]:
-            summary = entry.spec_summary
-            origin = None if summary is None else summary.origin
-            cached = None if summary is None else summary.cached
-            disagreement = " [loader metadata disagreement]" if entry.loader_agreement is False else ""
-            lines.append(
-                f"    {entry.name}: origin {_metadata_value(origin, context)}, "
-                f"cached {_metadata_value(cached, context)}{disagreement}"
-            )
-        if len(entries) > _MAX_LISTED_MODULES:
-            lines.append(f"    ... and {len(entries) - _MAX_LISTED_MODULES} more")
+    groups: dict[str | None, list[ModuleMetadata]] = {}
+    for entry in inventory.entries:
+        if entry.inspection != "available":
+            continue
+        label = None if entry.loader is None else entry.loader.type_name
+        groups.setdefault(label, []).append(entry)
+    custom = sorted(label for label in groups if label is not None and label not in _STANDARD_LOADER_NAMES)
+    standard = sorted(label for label in groups if label is not None and label in _STANDARD_LOADER_NAMES)
+    if standard:
+        lines.append("Standard CPython loader groups list only metadata disagreements; JSON retains every module.")
+    for label in custom:
+        entries = groups[label]
+        lines.append(f"{label}: {len(entries)} module(s)")
+        lines.extend(_inventory_entry_lines(entries, context))
+    if None in groups:
+        entries = groups[None]
+        lines.append(f"no loader: {len(entries)} module(s)")
+        lines.extend(_inventory_entry_lines(entries, context))
+    for label in standard:
+        entries = groups[label]
+        lines.append(f"{label}: {len(entries)} module(s)")
+        disagreements = [entry for entry in entries if entry.loader_agreement is False]
+        lines.extend(_inventory_entry_lines(disagreements, context))
     unavailable = sorted(
         (entry for entry in inventory.entries if entry.inspection != "available"), key=lambda entry: entry.name
     )
@@ -519,6 +543,20 @@ def _loader_inventory_lines(document: ReportDocument, context: _RenderContext) -
             lines.append(f"    ... and {len(unavailable) - _MAX_LISTED_MODULES} more")
     if inventory.non_string_keys:
         lines.append(f"non-string sys.modules keys omitted: {inventory.non_string_keys}")
+    return lines
+
+
+def _inventory_entry_lines(entries: "list[ModuleMetadata]", context: _RenderContext) -> list[str]:
+    """List inventory modules with their origins, bounded per group."""
+    ordered = sorted(entries, key=lambda entry: entry.name)
+    lines: list[str] = []
+    for entry in ordered[:_MAX_LISTED_MODULES]:
+        summary = entry.spec_summary
+        origin = None if summary is None else summary.origin
+        disagreement = " [loader metadata disagreement]" if entry.loader_agreement is False else ""
+        lines.append(f"    {entry.name}: origin {_metadata_value(origin, context)}{disagreement}")
+    if len(ordered) > _MAX_LISTED_MODULES:
+        lines.append(f"    ... and {len(ordered) - _MAX_LISTED_MODULES} more")
     return lines
 
 
