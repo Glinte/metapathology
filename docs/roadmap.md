@@ -292,6 +292,46 @@ for compatibility where appropriate:
 
 Findings should describe mechanics, not declare a third-party package broken.
 
+**Implementation plan:** Deliver T7 as six independently reviewable stages:
+
+1. Extend the shared finding model with an evidence level, supporting event
+   references, and a concise limitations key. Keep the existing `kind` values
+   and text labels where they are already public compatibility signals; a
+   stronger finding is additive unless its evidence fully subsumes the older
+   one. JSON remains exhaustive while text groups related labels under one
+   lead.
+2. Classify custom meta-path claims as `[meta-bypass]` only when captured T16
+   evidence proves that `PathFinder` was not reached. Add
+   `[legacy-finder-contract]` from T12's immutable protocol observation. When
+   standard resolution is disabled or incomplete, retain `[bypass]` and say
+   that the short circuit is inferred rather than captured.
+3. Derive `[path-hook-shadow]`, `[path-cache-displacement]`, and
+   `[loader-displacement]` from T1, T2, and T6 structural comparisons. Link the
+   exact mutation/cache events that support the result. Current-state replay
+   may corroborate a finding but cannot upgrade historical structural evidence
+   to captured evidence.
+4. Derive `[finder-side-effect]` and `[module-replacement]` only from T14
+   before/after states. Derive `[failed-after-mutation]` only from a T13 exact
+   failed completion paired with an earlier relevant mutation. Derive
+   `[loader-reentry]` only from nested T13 attempt boundaries plus T14
+   partially initialized identity evidence; the deliberately unobserved
+   re-entrant deep callback is a limitation, not proof of recursion.
+5. Add `[frozen-source-conflict]` when captured or structurally replayed loader
+   states show source displacing a frozen or archive loader. Record which side
+   is historical, captured, or replayed, and preserve a narrower loader/spec
+   displacement when the loader family cannot be classified safely.
+6. Stabilize semantic fixture assertions for beartype#556 and #638, add focused
+   synthetic coverage for every new label and degraded mode, document evidence
+   and false-positive boundaries, then mark T7 implemented. The future
+   beartype#599 fixture remains a T9 deliverable, but its lower-level frozen
+   conflict classifier is completed and tested here.
+
+Every finding carries one primary evidence level from the closed vocabulary
+`captured`, `post_hoc`, `live_replay`, `structural_inference`, or
+`speculative_replay`. Supporting evidence may have weaker levels, but the
+headline uses the weakest evidence necessary for the claim. Event references
+are emitted only for retained records at or before the report cutoff.
+
 These labels are enabled only when their required evidence exists. In
 particular, T13 owns failed-import evidence, T14 owns finder side effects and
 module replacement, and T16 owns standard-finder attribution. An audit start
