@@ -270,8 +270,9 @@ duplicating importlib or mutating global hook/cache state to exclude one hook.
 failure mechanisms into a small vocabulary. A meta-path short circuit, a
 path-hook shadow, and importer-cache displacement need different remedies.
 
-**Recommendation:** Introduce precise findings while retaining existing labels
-for compatibility where appropriate:
+**Implementation:** Introduce precise canonical findings. The 0.x report has no
+backward-compatibility requirement, so remove ambiguous legacy labels instead
+of emitting them beside their replacements:
 
 - `[meta-bypass]`: a meta-path finder prevented `PathFinder` from running;
 - `[path-hook-shadow]`: an earlier path hook accepted a path another hook could
@@ -294,22 +295,20 @@ Findings should describe mechanics, not declare a third-party package broken.
 
 **Implementation plan:** Deliver T7 as six independently reviewable stages:
 
-1. Extend the shared finding model with an evidence level, supporting event
-   references, and a concise limitations key. Keep the existing `kind` values
-   and text labels where they are already public compatibility signals; a
-   stronger finding is additive unless its evidence fully subsumes the older
-   one. JSON remains exhaustive while text groups related labels under one
-   lead.
-2. Classify custom meta-path claims as `[meta-bypass]` only when captured T16
-   evidence proves that `PathFinder` was not reached. Add
+1. Extend the shared finding model with severity, an evidence level, supporting
+   event references, corroborating signals, and a concise limitations key.
+   JSON remains exhaustive while text renders one primary block per subject
+   and claim.
+2. Record a meta-path short circuit as a corroborating signal when captured
+   ordering proves that `PathFinder` was not reached. Add
    `[legacy-finder-contract]` from T12's immutable protocol observation. When
-   standard resolution is disabled or incomplete, retain `[bypass]` and say
-   that the short circuit is inferred rather than captured.
-3. Derive `[path-hook-shadow]`, `[path-cache-displacement]`, and
-   `[loader-displacement]` from T1, T2, and T6 structural comparisons. Link the
-   exact mutation/cache events that support the result. Current-state replay
-   may corroborate a finding but cannot upgrade historical structural evidence
-   to captured evidence.
+   standard resolution is disabled or incomplete, omit that signal rather
+   than infer it.
+3. Derive `[path-hook-shadow]` and `[loader-displacement]` from T1, T2, and T6
+   comparisons. Relevant cache displacement is a corroborating signal on the
+   primary claim, not another suspicious block. Link the exact mutation/cache
+   events that support it. Current-state replay may corroborate a finding but
+   cannot upgrade historical structural evidence to captured evidence.
 4. Derive `[finder-side-effect]` and `[module-replacement]` only from T14
    before/after states. Derive `[failed-after-mutation]` only from a T13 exact
    failed completion paired with an earlier relevant mutation. Derive
@@ -320,7 +319,11 @@ Findings should describe mechanics, not declare a third-party package broken.
    states show source displacing a frozen or archive loader. Record which side
    is historical, captured, or replayed, and preserve a narrower loader/spec
    displacement when the loader family cannot be classified safely.
-6. Stabilize semantic fixture assertions for beartype#556 and #638, add focused
+6. Choose the most specific primary finding for a claim: namespace truncation,
+   package/origin displacement, frozen/source conflict, loader displacement,
+   then generic spec difference. Recognized editable-install redirection is
+   informational unless namespace/package loss or exact failure evidence makes
+   it actionable. Stabilize semantic fixture assertions for beartype#556 and #638, add focused
    synthetic coverage for every new label and degraded mode, document evidence
    and false-positive boundaries, then mark T7 implemented. The future
    beartype#599 fixture remains a T9 deliverable, but its lower-level frozen
