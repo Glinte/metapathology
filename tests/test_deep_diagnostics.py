@@ -193,9 +193,15 @@ assert finding["evidence"]["event_refs"] == ["event:" + str(events[1].seq)]
 assert finding["deep_call"]["event_ref"] == "event:" + str(events[1].seq)
 assert finding["deep_call"]["module_state_before"]["object_id"] == hex(id(first))
 assert finding["deep_call"]["module_state_after"]["object_id"] == hex(id(second))
+explanation = next(item for item in document["explanations"] if item["kind"] == "module_replacement")
+assert explanation["confidence"] == "captured"
+assert explanation["cause_finding_ref"] == finding["id"]
+assert explanation["state_before"]["object_id"] == hex(id(first))
+assert explanation["state_after"]["object_id"] == hex(id(second))
 text = metapathology.render_report()
 assert "[module-replacement] 'deep_identity_ext'" in text, text
 assert "internal steps and temporary objects are unknown" in text, text
+assert "[captured] ReplacingLoader replaced the module identity for 'deep_identity_ext'" in text, text
 metapathology.uninstall()
 print("OK")
 """

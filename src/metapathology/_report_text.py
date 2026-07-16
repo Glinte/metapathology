@@ -310,6 +310,19 @@ def _explanation_lines(explanation: CausalExplanation, context: _RenderContext) 
         if explanation.next_observation == "enable_deep_import_outcomes":
             lines.append("    next observation: enable deep import outcomes to capture the standard winner")
         return lines
+    if explanation.kind == "finder_side_effect":
+        outcome = "raised" if explanation.effect_status == "finder_raised" else "returned None"
+        return [
+            f"[captured] {explanation.finder_type_name} {outcome} after changing sys.modules['{explanation.subject}']",
+            f"    {explanation.boundary} boundary: {_module_transition(explanation.state_before, explanation.state_after)}",
+            "    nested activity was not observed; the boundary delta does not identify the internal cause",
+        ]
+    if explanation.kind == "module_replacement":
+        return [
+            f"[captured] {explanation.finder_type_name} replaced the module identity for '{explanation.subject}'",
+            f"    {explanation.boundary} boundary: {_module_transition(explanation.state_before, explanation.state_after)}",
+            "    both endpoint identities are exact; intermediate steps remain unknown",
+        ]
     return [f"[{explanation.confidence}] {explanation.kind}: '{explanation.subject}'"]
 
 

@@ -487,6 +487,7 @@ class CausalExplanation(_Record):
     """Deterministic synthesis joining a primary finding to its likely effect."""
 
     __slots__ = (
+        "_boundary",
         "_candidate_path",
         "_cause_finding_id",
         "_confidence",
@@ -501,9 +502,12 @@ class CausalExplanation(_Record):
         "_omitted_location",
         "_replayed_origin",
         "_standard_attempt_id",
+        "_state_after",
+        "_state_before",
         "_subject",
     )
     _fields = (
+        "boundary",
         "explanation_id",
         "kind",
         "confidence",
@@ -517,9 +521,12 @@ class CausalExplanation(_Record):
         "observed_origin",
         "replayed_origin",
         "standard_attempt_id",
+        "state_before",
+        "state_after",
         "event_seqs",
         "next_observation",
     )
+    boundary = _ReadOnlyField[str | None]("_boundary")
     explanation_id = _ReadOnlyField[str]("_explanation_id")
     kind = _ReadOnlyField[str]("_kind")
     confidence = _ReadOnlyField[str]("_confidence")
@@ -533,6 +540,8 @@ class CausalExplanation(_Record):
     observed_origin = _ReadOnlyField[str | None]("_observed_origin")
     replayed_origin = _ReadOnlyField[str | None]("_replayed_origin")
     standard_attempt_id = _ReadOnlyField[int | None]("_standard_attempt_id")
+    state_before = _ReadOnlyField[ModuleCacheState | None]("_state_before")
+    state_after = _ReadOnlyField[ModuleCacheState | None]("_state_after")
     event_seqs = _ReadOnlyField[tuple[int, ...]]("_event_seqs")
     next_observation = _ReadOnlyField[str | None]("_next_observation")
 
@@ -554,7 +563,11 @@ class CausalExplanation(_Record):
         replayed_origin: str | None = None,
         standard_attempt_id: int | None = None,
         later_finders: tuple[str, ...] = (),
+        boundary: str | None = None,
+        state_before: ModuleCacheState | None = None,
+        state_after: ModuleCacheState | None = None,
     ) -> None:
+        self._boundary = boundary
         self._explanation_id = explanation_id
         self._kind = kind
         self._later_finders = later_finders
@@ -567,6 +580,8 @@ class CausalExplanation(_Record):
         self._observed_origin = observed_origin
         self._replayed_origin = replayed_origin
         self._standard_attempt_id = standard_attempt_id
+        self._state_before = state_before
+        self._state_after = state_after
         self._candidate_path = candidate_path
         self._event_seqs = event_seqs
         self._next_observation = next_observation
@@ -1259,6 +1274,48 @@ def _causal_explanations(
                 later_finders=resolution.later_finders,
             )
         )
+    for finding in findings:
+        if finding.kind == "finder_side_effect" and finding.claim is not None:
+            claim = finding.claim
+            outcome = "finder_raised" if claim.exception_type_name is not None else "finder_returned_none"
+            explanations.append(
+                CausalExplanation(
+                    explanation_id=f"explanation:{len(explanations) + 1}",
+                    kind="finder_side_effect",
+                    confidence="captured",
+                    subject=finding.module,
+                    effect_status=outcome,
+                    cause_finding_id=finding.finding_id,
+                    finder_type_name=claim.finder_type_name,
+                    omitted_location="",
+                    candidate_path="",
+                    event_seqs=(claim.seq,),
+                    next_observation=None,
+                    boundary="find_spec",
+                    state_before=claim.module_state_before,
+                    state_after=claim.module_state_after,
+                )
+            )
+        elif finding.kind == "module_replacement" and finding.deep_call is not None:
+            call = finding.deep_call
+            explanations.append(
+                CausalExplanation(
+                    explanation_id=f"explanation:{len(explanations) + 1}",
+                    kind="module_replacement",
+                    confidence="captured",
+                    subject=finding.module,
+                    effect_status="module_identity_replaced",
+                    cause_finding_id=finding.finding_id,
+                    finder_type_name=call.object_type_name,
+                    omitted_location="",
+                    candidate_path="",
+                    event_seqs=(call.seq,),
+                    next_observation=None,
+                    boundary=call.boundary,
+                    state_before=call.module_state_before,
+                    state_after=call.module_state_after,
+                )
+            )
     return tuple(explanations)
 
 
@@ -2414,6 +2471,7 @@ def _json_explanation(explanation: CausalExplanation) -> dict[str, object]:
     """Serialize causal joins without making human prose a schema contract."""
     return {
         "candidate_path": explanation.candidate_path,
+        "boundary": explanation.boundary,
         "cause_finding_ref": explanation.cause_finding_id,
         "confidence": explanation.confidence,
         "effect_status": explanation.effect_status,
@@ -2430,6 +2488,8 @@ def _json_explanation(explanation: CausalExplanation) -> dict[str, object]:
         "standard_attempt_ref": (
             None if explanation.standard_attempt_id is None else f"attempt:{explanation.standard_attempt_id}"
         ),
+        "state_after": _json_module_state(explanation.state_after),
+        "state_before": _json_module_state(explanation.state_before),
     }
 
 

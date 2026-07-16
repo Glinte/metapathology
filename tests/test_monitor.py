@@ -256,10 +256,18 @@ assert {item["module"] for item in findings} == set(calls)
 raised = next(item for item in findings if item["module"] == "identity_raised")
 assert raised["evidence"]["level"] == "captured"
 assert raised["evidence"]["outcome"] == "raised:RuntimeError"
+explanation = next(
+    item for item in document["explanations"]
+    if item["kind"] == "finder_side_effect" and item["subject"] == "identity_replaced"
+)
+assert explanation["confidence"] == "captured"
+assert explanation["state_before"]["object_id"] == hex(id(original))
+assert explanation["state_after"]["object_id"] == hex(id(replacement))
 text = metapathology.render_report()
 assert "[finder-side-effect] 'identity_replaced'" in text, text
 assert "nested activity was not observed" in text, text
 assert "sys.modules object at" in text, text
+assert "[captured] SideEffectFinder returned None after changing sys.modules['identity_replaced']" in text, text
 
 for name in tuple(calls):
     sys.modules.pop(name, None)
