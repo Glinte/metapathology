@@ -153,14 +153,14 @@ object inspection while an import is active or while the state lock is held.
 - Existing structured event consumers retain backward-compatible access to
   mechanism-specific records.
 
-## T4: Add a loader inventory
+## T4: Add a loader inventory (implemented)
 
 **Weakness:** Loader types appear only inside individual findings. There is no
 process-wide view of which loaders actually produced loaded modules, and
 successful imports through `PathFinder` are not attributed to their path-entry
 finders.
 
-**Recommendation:** At report time, inventory copied `sys.modules` entries by
+**Implementation:** At report time, inventory copied `sys.modules` entries by
 `module.__spec__.loader`, `module.__loader__`, origin, and cached path. Group
 modules by loader type and identity where safe. Flag disagreement between
 `__spec__.loader` and `__loader__` without assuming it is a defect.
@@ -175,6 +175,12 @@ subclasses that cannot be inspected without foreign dispatch as unavailable.
 
 This is post-hoc evidence only. A module may replace its metadata, and failed
 imports leave no stable module to inventory.
+
+The report copies `sys.modules.items()` once and reuses that snapshot for the
+inventory, the since-install module list, and suspicious findings. Text output
+caps module names per loader while experimental JSON retains the exhaustive
+grouping. The inventory adds report-time work proportional to the current
+module cache but no lifetime event producer.
 
 **Dependencies:** None.
 
@@ -418,6 +424,14 @@ constant-size event per observed boundary for the process lifetime; there is
 no queue, retry, or silent dropping. Mutable path-entry finders and loaders
 are shadowed in place, while path-hook identity replacement is confined to
 the explicitly selected mode and reversed on uninstall.
+
+Mutable modern loaders have their existing `create_module` and `exec_module`
+methods shadowed independently; absent methods are never synthesized. Loader
+calls obtain the module name from the actual spec or module namespace, so a
+shared loader is not permanently attributed to the first spec that exposed
+it. The T4 safe metadata accessors avoid foreign module dispatch, and partial
+method patching is rolled back transactionally. Legacy `load_module` remains
+outside deep instrumentation.
 
 ## T11: Compare spec semantics and namespace search locations (implemented)
 

@@ -104,7 +104,7 @@ monitor = metapathology.install()  # as early as possible
 ```
 
 Opt-in deep diagnostics can capture delegated path-hook, path-entry finder,
-and loader calls when passive evidence is insufficient:
+and modern loader creation/execution calls when passive evidence is insufficient:
 
 ```console
 python -m metapathology --deep-path-hooks --deep-path-entry-finders --deep-loaders myscript.py
@@ -114,6 +114,8 @@ These mechanisms are disabled by default because they put monitor code inline
 with imports and path-hook wrapping changes callable identity. Enable only the
 needed switches in a controlled reproduction; the report warns when any are
 active.
+Loader instrumentation shadows existing `create_module` and `exec_module`
+methods only; it never adds missing methods or wraps legacy `load_module`.
 
 `install()` is idempotent and returns the process-wide `Monitor`. By default,
 it prints a report to standard error when Python exits. To control when or
@@ -164,6 +166,10 @@ starts, import-list changes, importer-cache diffs, and finder calls using the
 monitor's shared sequence numbers. Sequence is deterministic capture order,
 not a global wall-clock order across threads. Detailed sections then show how
 finder precedence changed and group recorded `find_spec()` calls by finder.
+The post-hoc loader inventory separately groups all modules present at report
+time by safe loader type and identity, including modules that predate
+installation. It flags disagreement between `__spec__.loader` and
+`__loader__` as metadata evidence and does not materialize lazy modules.
 The suspicious-findings section uses these labels:
 
 - `[bypass]` means a custom finder claimed a source module, but a report-time

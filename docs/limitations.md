@@ -37,6 +37,13 @@ builtin import audit boundary on supported CPython versions. Finder wrappers
 may still record instrumented custom finders, but there will be no corresponding
 `ImportAuditStart`.
 
+The loader inventory observes only modules still present at report time and
+metadata they retain then. It cannot prove which loader originally executed a
+module, recover removed modules, or distinguish metadata replaced after load.
+Real module dictionaries are read without subclass dispatch so lazy modules
+are not materialized; arbitrary module-like cache values are labeled
+unavailable instead of probed dynamically.
+
 [audit-events]: https://docs.python.org/3/library/audit_events.html#audit-events
 [site-pth]: https://docs.python.org/3/library/site.html
 [spec-from-file]: https://docs.python.org/3/library/importlib.html#importlib.util.spec_from_file_location

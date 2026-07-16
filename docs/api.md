@@ -66,7 +66,7 @@ format.
 ### `render_report(*, format="text") -> str`
 
 Returns text or JSON, including its trailing newline. JSON currently uses the
-experimental `metapathology.report` schema version 0.8. Its shape may change
+experimental `metapathology.report` schema version 0.9. Its shape may change
 throughout schema 0.x; schema 1.0 will be reviewed once the evidence model stabilizes.
 Raises `RuntimeError` before the first installation and `ValueError` for an
 unknown format. Ordinary generation failures degrade to a valid failure
@@ -111,7 +111,9 @@ across record types. `MonitorEvent` includes the event classes below.
 Records one opt-in delegated boundary with the mechanism, safe object
 identity/type, module or path, outcome, exception type, and thread. The
 `unobserved_reentrant` outcome means a nested call delegated normally while
-the per-thread guard suppressed exact nested instrumentation.
+the per-thread guard suppressed exact nested instrumentation. Modern mutable
+loaders use `loader_create_module` and `loader_exec_module`; absent methods are
+not added, and legacy `load_module` is not wrapped.
 
 ### `ImportAuditStart`
 

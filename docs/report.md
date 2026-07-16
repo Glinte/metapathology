@@ -13,10 +13,10 @@ file output all use the same cutoff-based report document as the human
 renderer. The current experimental schema is identified by:
 
 ```json
-{"name": "metapathology.report", "major": 0, "minor": 8}
+{"name": "metapathology.report", "major": 0, "minor": 9}
 ```
 
-Its top-level sections are `tool`, `process`, `capture`, `snapshots`,
+Its top-level sections are `tool`, `process`, `capture`, `snapshots`, `loader_inventory`,
 `timeline`, `findings`, and `diagnostics`. Timeline events retain their shared
 sequence number and receive an `event:<seq>` identifier. Findings contain
 structured claim and replay evidence rather than requiring consumers to parse
@@ -46,6 +46,10 @@ lines in text. Their evidence level is `deep_delegation`. A returned, found,
 not-found, or raised outcome describes the exact wrapped boundary;
 `unobserved_reentrant` explicitly marks a nested call that delegated under the
 guard without reconstructing an exact nested trace.
+Mutable loaders expose separate `loader_create_module` and
+`loader_exec_module` boundaries when those methods already exist. Names come
+from each call's actual spec or module metadata, so one loader shared by
+multiple modules remains distinguishable.
 
 An import-audit line proves only that uncached resolution started. It includes
 the copied `sys.meta_path` identity and finder type names plus constant-size
@@ -79,6 +83,26 @@ fresh `PathFinder` call when checking suspicious custom-finder claims.
 Any nonstandard entries that could not be wrapped appear separately under
 "other finders observed but not instrumented." Their calls are not directly
 recorded, so attribution may require elimination.
+
+## Post-hoc loader inventory
+
+The loader inventory groups every safely inspectable string-keyed
+`sys.modules` entry by loader type and object identity. It prefers a non-`None`
+`module.__spec__.loader`, falls back to `module.__loader__`, and keeps modules
+without either value in a separate group. A disagreement between the two
+loader identities is labeled as metadata evidence, not as a package defect.
+
+This is a report-time snapshot, not exact historical attribution: modules may
+have replaced their metadata or disappeared before reporting. The inventory
+includes modules that predate installation, unlike the separate
+`modules_since_install` list. Text output shows at most 25 modules per group;
+JSON retains every copied record.
+
+Module metadata is read from real module dictionaries through the base
+`ModuleType` implementation. This bypasses module-subclass overrides and does
+not materialize `LazyLoader` modules. Arbitrary module-like values, inaccessible
+module subclasses, malformed metadata, and non-string keys are reported as
+unavailable or omitted without dynamic attribute access.
 
 ## `sys.meta_path` mutations
 

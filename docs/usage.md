@@ -74,7 +74,9 @@ cache dictionary in either mode.
 
 Deep diagnostics are disabled by default. The three `--deep-*` options are
 independent and capture exact-delegating path-hook calls, path-entry finder
-decisions, and loader execution respectively. This puts metapathology inline
+decisions, and modern loader creation/execution respectively. Existing
+`create_module` and `exec_module` methods are observed; absent methods and
+legacy `load_module` are not added or wrapped. This puts metapathology inline
 with foreign import code: path-hook wrappers change callable identity and can
 affect membership checks. Reports display a warning whenever any deep
 mechanism is active. Use this mode only in a diagnostic reproduction after

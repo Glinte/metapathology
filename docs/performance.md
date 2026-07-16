@@ -142,10 +142,17 @@ long capture.
 
 Deep diagnostics retain one constant-size record for every observed delegated
 boundary for the lifetime of the monitor. This is exhaustive and unbounded in
-the number of calls: no events are silently dropped. Path-hook, path-entry
+the number of calls: a modern loader can produce separate creation and
+execution records, and no events are silently dropped. Path-hook, path-entry
 finder, and loader wrappers also add one Python call boundary to the selected
 foreign operations, so their overhead is intentionally outside the default
 mode's performance guarantee.
+
+The post-hoc loader inventory is not a lifetime producer. Each report copies
+`sys.modules.items()` once and retains plain metadata proportional to the
+number of string-keyed entries for the lifetime of that report document. Text
+output caps displayed module names per loader; JSON intentionally projects the
+complete copied inventory.
 
 ## Run the environment matrix
 
