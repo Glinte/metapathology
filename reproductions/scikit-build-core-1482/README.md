@@ -20,4 +20,7 @@ the other distribution's contribution to that namespace.
 The monitored run preserves that result and attributes the `mqt` namespace,
 `mqt.ddsim`, and its installed leaf module to
 `ScikitBuildRedirectingFinder`. The namespace truncation explains the failed
-import, while the two concrete modules are also reported as path-hook bypasses.
+import. With exact import outcomes enabled, the causal explanation verifies
+that the omitted namespace location contains `mqt.core` and links that path to
+the failed import boundary. The two expected concrete editable redirects remain
+visible as informational findings.

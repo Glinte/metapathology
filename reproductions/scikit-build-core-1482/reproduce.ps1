@@ -8,7 +8,7 @@ try {
     uv run --no-sync python invoke.py
 
     Write-Host "`n=== Same imports under metapathology ==="
-    uv run --no-sync metapathology invoke.py
+    uv run --no-sync metapathology --deep-import-outcomes invoke.py
 } finally {
     Pop-Location
 }
