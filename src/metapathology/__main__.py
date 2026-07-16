@@ -88,7 +88,7 @@ def _make_parser() -> _ArgumentParser:
     deep.add_argument(
         "--deep-path-entry-finders", action="store_true", help="capture delegated path-entry finder decisions"
     )
-    deep.add_argument("--deep-loaders", action="store_true", help="capture delegated loader execution")
+    deep.add_argument("--deep-loaders", action="store_true", help="capture delegated loader creation and execution")
     parser.add_argument("-m", dest="is_module", action="store_true", help="run TARGET as a module")
     parser.add_argument("target", metavar="TARGET", help="script path, or module name with -m")
     parser.add_argument("target_args", metavar="ARG", nargs=argparse.REMAINDER, help="arguments passed to TARGET")
@@ -171,7 +171,7 @@ def _run(
             ``sys.path_importer_cache``.
         deep_path_hooks: Capture path-hook calls through replacement delegates.
         deep_path_entry_finders: Capture path-entry finder calls.
-        deep_loaders: Capture loader execution.
+        deep_loaders: Capture modern loader creation and execution.
 
     Returns:
         The exit code a direct invocation of the target would produce.

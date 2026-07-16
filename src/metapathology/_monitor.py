@@ -18,6 +18,7 @@ from contextlib import suppress
 from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 
 from metapathology import _report
+from metapathology._module_metadata import safe_module_name, safe_spec_loader, safe_spec_name
 from metapathology._records import (
     DeepDiagnosticCall,
     FindSpecCall,
@@ -309,7 +310,7 @@ class Monitor:
         self._deep_loaders = False
         self._deep_hook_wrappers: dict[int, tuple[object, object]] = {}
         self._deep_finder_patches: dict[int, tuple[object, object]] = {}
-        self._deep_loader_patches: dict[int, tuple[object, object]] = {}
+        self._deep_loader_patches: dict[int, tuple[object, tuple[tuple[str, object], ...]]] = {}
 
     @property
     def enabled(self) -> bool:
@@ -630,7 +631,7 @@ class Monitor:
                         None,
                     )
                     if spec is not None:
-                        self._instrument_deep_loader(getattr(spec, "loader", None), fullname)
+                        self._instrument_deep_loader(safe_spec_loader(spec))
                     return spec
                 finally:
                     self._deep_local.active = False
@@ -640,45 +641,125 @@ class Monitor:
         except Exception as exc:
             self._record_internal_error("deep_path_entry_finder", exc)
 
-    def _instrument_deep_loader(self, loader: object, fullname: str) -> None:
-        """Shadow one mutable loader's exec_module when requested."""
+    def _instrument_deep_loader(self, loader: object) -> None:
+        """Shadow one mutable loader's modern lifecycle methods when requested."""
         if loader is None or not self._deep_loaders or id(loader) in self._deep_loader_patches:
             return
+        patches: list[tuple[str, object]] = []
+        instance_dict: dict[str, object] | None = None
         try:
-            instance_dict = loader.__dict__
-            original = getattr(loader, "exec_module")
-            previous = instance_dict.get("exec_module", _MISSING)
+            raw_instance_dict = object.__getattribute__(loader, "__dict__")
+            if type(raw_instance_dict) is not dict:
+                raise TypeError("loader instance dictionary is unavailable")
+            instance_dict = raw_instance_dict
             loader_id = id(loader)
             loader_name = type_name(loader)
 
-            @functools.wraps(original, assigned=(), updated=())
-            def wrapped(module: object) -> object:
-                if not self._enabled:
-                    return original(module)
-                if self._deep_local.active:
-                    self._record_deep_call(
-                        "loader_exec_module", loader_id, loader_name, fullname, None, "unobserved_reentrant", None
-                    )
-                    return original(module)
-                self._deep_local.active = True
-                try:
-                    try:
-                        result = original(module)
-                    except BaseException as exc:
-                        self._record_deep_call(
-                            "loader_exec_module", loader_id, loader_name, fullname, None, "raised", type(exc).__name__
-                        )
-                        raise
-                    self._record_deep_call(
-                        "loader_exec_module", loader_id, loader_name, fullname, None, "returned", None
-                    )
-                    return result
-                finally:
-                    self._deep_local.active = False
+            try:
+                original_create = getattr(loader, "create_module")
+            except AttributeError:
+                original_create = None
+            if callable(original_create):
+                previous_create = instance_dict.get("create_module", _MISSING)
 
-            instance_dict["exec_module"] = wrapped
-            self._deep_loader_patches[id(loader)] = (loader, previous)
-        except Exception as exc:
+                @functools.wraps(original_create, assigned=(), updated=())
+                def wrapped_create(spec: object) -> object:
+                    fullname = safe_spec_name(spec)
+                    if not self._enabled:
+                        return original_create(spec)
+                    if self._deep_local.active:
+                        self._record_deep_call(
+                            "loader_create_module",
+                            loader_id,
+                            loader_name,
+                            fullname,
+                            None,
+                            "unobserved_reentrant",
+                            None,
+                        )
+                        return original_create(spec)
+                    self._deep_local.active = True
+                    try:
+                        try:
+                            result = original_create(spec)
+                        except BaseException as exc:
+                            self._record_deep_call(
+                                "loader_create_module",
+                                loader_id,
+                                loader_name,
+                                fullname,
+                                None,
+                                "raised",
+                                type(exc).__name__,
+                            )
+                            raise
+                        self._record_deep_call(
+                            "loader_create_module", loader_id, loader_name, fullname, None, "returned", None
+                        )
+                        return result
+                    finally:
+                        self._deep_local.active = False
+
+                instance_dict["create_module"] = wrapped_create
+                patches.append(("create_module", previous_create))
+
+            try:
+                original_exec = getattr(loader, "exec_module")
+            except AttributeError:
+                original_exec = None
+            if callable(original_exec):
+                previous_exec = instance_dict.get("exec_module", _MISSING)
+
+                @functools.wraps(original_exec, assigned=(), updated=())
+                def wrapped_exec(module: object) -> object:
+                    fullname = safe_module_name(module)
+                    if not self._enabled:
+                        return original_exec(module)
+                    if self._deep_local.active:
+                        self._record_deep_call(
+                            "loader_exec_module",
+                            loader_id,
+                            loader_name,
+                            fullname,
+                            None,
+                            "unobserved_reentrant",
+                            None,
+                        )
+                        return original_exec(module)
+                    self._deep_local.active = True
+                    try:
+                        try:
+                            result = original_exec(module)
+                        except BaseException as exc:
+                            self._record_deep_call(
+                                "loader_exec_module",
+                                loader_id,
+                                loader_name,
+                                fullname,
+                                None,
+                                "raised",
+                                type(exc).__name__,
+                            )
+                            raise
+                        self._record_deep_call(
+                            "loader_exec_module", loader_id, loader_name, fullname, None, "returned", None
+                        )
+                        return result
+                    finally:
+                        self._deep_local.active = False
+
+                instance_dict["exec_module"] = wrapped_exec
+                patches.append(("exec_module", previous_exec))
+
+            if patches:
+                self._deep_loader_patches[id(loader)] = (loader, tuple(patches))
+        except BaseException as exc:
+            if instance_dict is not None:
+                for name, previous in reversed(patches):
+                    if previous is _MISSING:
+                        instance_dict.pop(name, None)
+                    else:
+                        instance_dict[name] = previous
             self._record_internal_error("deep_loader", exc)
 
     def _record_deep_call(
@@ -729,8 +810,9 @@ class Monitor:
                 self._instrumented_path_hooks = None
             for finder, previous in list(self._deep_finder_patches.values()):
                 self._restore_attribute(finder, "find_spec", previous)
-            for loader, previous in list(self._deep_loader_patches.values()):
-                self._restore_attribute(loader, "exec_module", previous)
+            for loader, patches in list(self._deep_loader_patches.values()):
+                for name, previous in reversed(patches):
+                    self._restore_attribute(loader, name, previous)
             if self._deep_hook_wrappers:
                 try:
                     originals = self._deep_hook_wrappers
@@ -762,12 +844,14 @@ class Monitor:
     def _restore_attribute(obj: object, name: str, previous: object) -> None:
         """Restore an instance-dict shadow without invoking foreign setters."""
         try:
-            instance_dict = obj.__dict__
+            instance_dict = object.__getattribute__(obj, "__dict__")
+            if type(instance_dict) is not dict:
+                return
             if previous is _MISSING:
                 del instance_dict[name]
             else:
                 instance_dict[name] = previous
-        except (AttributeError, KeyError, TypeError):
+        except BaseException:
             pass
 
     def _audit(self, event: str, args: tuple[object, ...]) -> None:
@@ -1246,7 +1330,7 @@ class Monitor:
                 spec_summary, loader = summarize_spec(spec, iterate_foreign_locations=False)
                 if loader is not None:
                     loader_type_name = type_name(loader)
-                    self._instrument_deep_loader(loader, fullname)
+                    self._instrument_deep_loader(loader)
                 if type(spec_summary.origin) is str:
                     origin = spec_summary.origin
             found = spec is not None
@@ -1715,7 +1799,7 @@ def install(
             mechanism.
         deep_path_hooks: Replace path hooks with call-capturing delegates.
         deep_path_entry_finders: Shadow path-entry finder calls as they appear.
-        deep_loaders: Shadow loader execution reached through captured finders.
+        deep_loaders: Shadow modern loader creation and execution reached through captured finders.
     """
     global _monitor_singleton
     with _singleton_lock:
