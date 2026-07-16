@@ -15,8 +15,10 @@ From the repository root on Windows:
 .\reproductions\pytest-12179\reproduce.ps1
 ```
 
-Both runs are expected to fail during collection. The monitored run should
-also show the insertion of `_SixMetaPathImporter` in the mutation log and list
-it as a nonstandard finder that could not be instrumented. This is not a
+Both runs are expected to fail during collection. The monitored harness also
+asserts that `_SixMetaPathImporter` is classified as legacy-only, links it to
+the insertion mutation, and verifies that mutation's stack names boto's
+vendored `six.py`. It prints the text report after checking the JSON evidence.
+This is not a
 finder-winner or `sys.path_hooks` bypass bug; the diagnostic value is identifying
 which third party installed the incompatible meta-path entry and when.

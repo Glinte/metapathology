@@ -8,7 +8,7 @@ try {
     uv run --no-sync pytest -c pyproject.toml --import-mode=importlib tests/repro_pkg/test_value.py
 
     Write-Host "`n=== Same collection under metapathology ==="
-    uv run --no-sync metapathology -m pytest -c pyproject.toml --import-mode=importlib tests/repro_pkg/test_value.py
+    uv run --no-sync python invoke.py
 } finally {
     Pop-Location
 }
