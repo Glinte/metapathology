@@ -533,14 +533,14 @@ this inventory for a precise `[legacy-finder-contract]` finding.
 - The JSON report exposes protocol availability and its evidence source.
 - Installing, reporting, and uninstalling leave every finder object unchanged.
 
-## T13: Correlate import attempts with outcomes
+## T13: Correlate import attempts with outcomes (implemented)
 
 **Weakness:** The audit hook records that an uncached import started, while
 finder wrappers record only instrumentable custom-finder calls. Neither is an
 import completion callback. Failed resolution, loader exceptions, cache hits,
 and modules removed after a successful import are therefore easy to conflate.
 
-**Recommendation:** Implement this in two stages. The default stage adds
+**Implementation:** Delivered in two stages. The default stage adds
 conservative correlation over evidence that already exists. A separate opt-in
 deep stage is gated on a CPython-version feasibility spike and is omitted if no
 stable boundary can prove both entry and exit without changing import behavior.
@@ -599,51 +599,44 @@ projection grows with audit starts and linked evidence. Text output is bounded
 and summarizes ambiguous/unlinked evidence, while experimental JSON retains
 the exhaustive projection and links back to raw event ids.
 
-### Exact deep outcomes feasibility gate
+### Exact deep outcomes
 
-Exact `loaded` and `failed` outcomes require opt-in deep evidence. Prototype a
+Exact `loaded` and `failed` outcomes require opt-in deep evidence. The monitor uses a
 scoped observer around importlib's complete import boundary; T10 loader
 delegates alone are insufficient because they do not observe resolution
-failure, cache hits, or every standard loader. Evaluate profiling first and
-tracing only if profiling is insufficient, with an explicit CPython 3.10--3.14
-compatibility matrix. Profiling is preferable because callback return values
+failure or every standard loader. Profiling was selected after an explicit
+CPython 3.10--3.14 compatibility matrix. It is preferable because callback return values
 do not create per-frame local-hook state that must also be chained. Match the
 frozen `_find_and_load` boundary by the code object captured during
 installation, never by filename or function name.
 
-The spike must demonstrate all of the following before implementation:
+Compatibility tests demonstrate all of the following:
 
 - paired entry and return/exception observation for successful resolution,
   missing modules, and loader exceptions;
 - visibility or explicit non-visibility of cache hits;
 - correct nesting for recursive imports and isolation between concurrent
   threads;
-- chaining and exact restoration of pre-existing current-thread and
-  newly-created-thread tracing/profiling callbacks, or conservative refusal to
-  activate when exact composition cannot be demonstrated;
+- conservative refusal when a current-thread or future-thread profiler is
+  already installed, plus exact restoration of the profiler slots it owns;
 - inert behavior after uninstall, including callbacks that cannot themselves
   be removed globally; and
 - no imports, foreign formatting, or lock-held delegation inside the callback.
 
 Only a paired deep boundary may maintain a thread-local attempt stack. Deep
 completion records link to an attempt id and use `loaded` or `failed` only for
-the import invocation whose exit was directly observed. The feasibility probe
-must also record its thread coverage: CPython 3.10 and 3.11 cannot retrofit a
-profile callback into every already-running thread, and low-level threads may
-fall outside `threading` defaults. Never turn a successfully observed outcome
-into a claim that every process thread was covered. If the supported versions
-require different private boundaries, version-gate them explicitly and decline
-activation with a recorded diagnostic on unknown versions. If no sufficiently
-safe and stable CPython mechanism exists, keep exact failure diagnosis
-unsupported and remove findings that require it rather than approximating from
-module absence.
+the import invocation whose exit was directly observed. Reports state the
+actual scope: the installing thread and future `threading` threads are covered,
+while already-running and low-level threads are not claimed. The same captured
+boundary works across the supported versions; an unavailable boundary causes
+activation to decline with a recorded status.
 
 Capacity follows the existing exhaustive event policy: one retained record per
 observed audit start plus linked outcome records, with documented lifetime
 growth and no silent dropping. Shutdown first makes callbacks inert, then
 restores removable state, and finally reports from a fixed event cutoff. Import
-cache hits remain invisible unless the feasibility spike proves a safe deep
-boundary that sees them.
+cache hits remain invisible because the ordinary import fast path bypasses the
+observed boundary.
 
 **Dependencies:** T3 supplies ordering and T5 supplies the structured identity
 model. Exact outcomes additionally depend on T10.
