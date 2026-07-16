@@ -1,6 +1,11 @@
 """Conservative meta-path finder protocol inspection."""
 
+import subprocess
+from collections.abc import Callable
+
 from metapathology._monitor import _inspect_finder_protocol
+
+RunPython = Callable[..., "subprocess.CompletedProcess[str]"]
 
 
 class ModernFinder:
@@ -71,3 +76,48 @@ def test_protocol_inspection_preserves_instance_dictionary_evidence() -> None:
 
     assert protocol.availability == "callable"
     assert protocol.evidence == "instance_dict"
+
+
+CONTRACT_REPORT = r"""
+import json
+import sys
+
+import metapathology
+
+class LegacyFinder:
+    def find_module(self, fullname, path=None):
+        return None
+
+finder = LegacyFinder()
+before = dict(finder.__dict__)
+metapathology.install(report_at_exit=False)
+sys.meta_path.append(finder)
+document = json.loads(metapathology.render_report(format="json"))
+contract = next(item for item in document["finder_contracts"] if item["finder_type_name"] == "LegacyFinder")
+assert contract["category"] == "legacy_only", contract
+assert contract["find_spec"] == {
+    "availability": "absent",
+    "defined_by": None,
+    "evidence": "class_mro",
+}
+assert contract["find_module"]["availability"] == "callable"
+assert contract["observation"] == "mutation"
+assert contract["observation_event_ref"].startswith("event:")
+event_id = contract["observation_event_ref"]
+mutation = next(event for event in document["timeline"] if event["id"] == event_id)
+assert mutation["kind"] == "meta_path_mutation"
+assert mutation["added"] == ["LegacyFinder"]
+text = metapathology.render_report()
+assert "[legacy-only] LegacyFinder" in text, text
+assert "CPython 3.12+" in text, text
+metapathology.uninstall()
+assert finder.__dict__ == before
+print("OK")
+"""
+
+
+def test_contract_report_links_mutation_and_restores_finder(run_python: RunPython) -> None:
+    proc = run_python(CONTRACT_REPORT)
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"

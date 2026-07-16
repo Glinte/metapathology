@@ -55,7 +55,7 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 14
+_SCHEMA_MINOR = 15
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -1458,6 +1458,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
             },
         ],
         "loader_inventory": _json_loader_inventory(document.loader_inventory),
+        "finder_contracts": [_json_finder_contract(contract) for contract in document.finder_contracts],
         "import_attempts": [_json_import_attempt(attempt) for attempt in document.attempts],
         "standard_resolutions": [_json_standard_resolution(resolution) for resolution in document.standard_resolutions],
         "timeline": [_json_event(event) for event in document.events],
@@ -1492,6 +1493,39 @@ def _mechanism(name: str, enabled: bool, retained: int, completeness: str) -> di
         "name": name,
         "overflow_policy": "retain_all",
         "retained": retained,
+    }
+
+
+def _finder_contract_category(contract: FinderContract) -> str:
+    """Summarize the two independently inspected protocol states."""
+    modern = contract.find_spec.availability
+    legacy = contract.find_module.availability
+    if "indeterminate" in (modern, legacy):
+        return "indeterminate"
+    if modern == "callable":
+        return "modern_and_legacy" if legacy == "callable" else "modern"
+    return "legacy_only" if legacy == "callable" else "protocol_less"
+
+
+def _json_finder_contract(contract: FinderContract) -> dict[str, object]:
+    """Project one finder contract without consulting the live finder."""
+    return {
+        "category": _finder_contract_category(contract),
+        "finder_id": f"0x{contract.finder_id:x}",
+        "finder_type_name": contract.finder_type_name,
+        "find_module": {
+            "availability": contract.find_module.availability,
+            "defined_by": contract.find_module.defined_by,
+            "evidence": contract.find_module.evidence,
+        },
+        "find_spec": {
+            "availability": contract.find_spec.availability,
+            "defined_by": contract.find_spec.defined_by,
+            "evidence": contract.find_spec.evidence,
+        },
+        "observation": contract.observation,
+        "observation_event_ref": None if contract.observation_seq is None else f"event:{contract.observation_seq}",
+        "position": contract.position,
     }
 
 
@@ -1921,6 +1955,7 @@ def failed_json_document(error_name: str) -> dict[str, object]:
             "phase": "report",
             "unavailable": [],
         },
+        "finder_contracts": [],
         "import_attempts": [],
         "timeline": [],
         "findings": [],

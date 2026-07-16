@@ -1,10 +1,12 @@
 """Human-readable projection of a cutoff-based report document."""
 
 import os
+from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 
 from metapathology._records import (
     DeepDiagnosticCall,
     DeepImportEvent,
+    FinderContract,
     FindSpecCall,
     ImportAuditStart,
     ImporterCacheDiff,
@@ -39,6 +41,8 @@ _PACKAGE_DIR = os.path.normcase(os.path.dirname(os.path.abspath(__file__)))
 # Max non-noise frames shown per stack in the report.
 _STACK_DISPLAY_FRAMES = 5
 _STANDARD_RESOLUTION_DISPLAY_LIMIT = 50
+_FINDER_CONTRACT_DISPLAY_LIMIT = 50
+_STANDARD_FINDER_IDS = frozenset((id(BuiltinImporter), id(FrozenImporter), id(PathFinder)))
 # Max claimed modules listed per finder in the attribution section.
 _MAX_LISTED_MODULES = 25
 _MAX_CACHE_CHANGES_PER_DIFF = 25
@@ -177,6 +181,9 @@ def render_lines(document: ReportDocument) -> list[str]:
     lines.append("")
     lines.append("-- finder attribution (instrumented finders only) --")
     lines.extend(_attribution_lines(calls, context))
+
+    lines.append("")
+    lines.extend(_finder_contract_lines(document.finder_contracts))
 
     lines.append("")
     lines.extend(_standard_resolution_lines(document.standard_resolutions, context))
@@ -353,6 +360,55 @@ def _internal_error_line(error: InternalError) -> str:
     """Format an internal error without requiring captured foreign exception text."""
     line = f"#{error.seq} in {error.where}: {error.exception_type_name}"
     return line if error.message is None else f"{line}: {error.message}"
+
+
+def _contract_category(contract: FinderContract) -> str:
+    """Summarize modern and legacy protocol availability for text."""
+    modern = contract.find_spec.availability
+    legacy = contract.find_module.availability
+    if "indeterminate" in (modern, legacy):
+        return "indeterminate"
+    if modern == "callable":
+        return "modern + legacy" if legacy == "callable" else "modern"
+    return "legacy-only" if legacy == "callable" else "protocol-less"
+
+
+def _finder_contract_lines(contracts: tuple[FinderContract, ...]) -> list[str]:
+    """Render compatibility risks first, with a fixed text-output bound."""
+    risky = [
+        contract
+        for contract in contracts
+        if contract.finder_id not in _STANDARD_FINDER_IDS
+        and _contract_category(contract) in {"legacy-only", "protocol-less", "indeterminate"}
+    ]
+    standard = [contract for contract in contracts if contract.finder_id in _STANDARD_FINDER_IDS]
+    shown = (risky + standard)[:_FINDER_CONTRACT_DISPLAY_LIMIT]
+    lines = [f"-- finder API contracts ({len(contracts)} observed entries) --"]
+    if not shown:
+        lines.append("(no compatibility risks or standard class entries observed)")
+        return lines
+    for contract in shown:
+        category = _contract_category(contract)
+        location = (
+            "at install" if contract.observation_seq is None else f"at mutation event #{contract.observation_seq}"
+        )
+        if contract.finder_id in _STANDARD_FINDER_IDS:
+            lines.append(f"{contract.finder_type_name}: {category} ({location}; standard CPython finder)")
+            continue
+        lines.append(f"[{category}] {contract.finder_type_name} ({location}, position {contract.position})")
+        if category == "legacy-only":
+            lines.append(
+                "    compatibility risk: CPython 3.12+ has no legacy find_module fallback; "
+                "direct meta-path consumers may require find_spec on every supported version"
+            )
+        elif category == "protocol-less":
+            lines.append("    compatibility risk: neither finder protocol is callable")
+        else:
+            lines.append("    compatibility could not be determined without binding a descriptor or dynamic attribute")
+    omitted = len(risky) + len(standard) - len(shown)
+    if omitted:
+        lines.append(f"... {omitted} more risk/standard entries omitted from text; JSON is exhaustive")
+    return lines
 
 
 def _standard_resolution_lines(resolutions: tuple[StandardResolution, ...], context: _RenderContext) -> list[str]:
