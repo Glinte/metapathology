@@ -532,6 +532,8 @@ class FindSpecCall(_Record):
         "_found",
         "_fullname",
         "_loader_type_name",
+        "_module_state_after",
+        "_module_state_before",
         "_origin",
         "_search_path",
         "_search_path_kind",
@@ -548,6 +550,8 @@ class FindSpecCall(_Record):
         "found",
         "loader_type_name",
         "origin",
+        "module_state_before",
+        "module_state_after",
         "search_path",
         "search_path_kind",
         "spec_summary",
@@ -562,6 +566,8 @@ class FindSpecCall(_Record):
     found = _ReadOnlyField[bool]("_found")
     loader_type_name = _ReadOnlyField[str | None]("_loader_type_name")
     origin = _ReadOnlyField[str | None]("_origin")
+    module_state_before = _ReadOnlyField[ModuleCacheState | None]("_module_state_before")
+    module_state_after = _ReadOnlyField[ModuleCacheState | None]("_module_state_after")
     search_path = _ReadOnlyField[tuple[str, ...]]("_search_path")
     search_path_kind = _ReadOnlyField[str]("_search_path_kind")
     spec_summary = _ReadOnlyField[SpecSummary | None]("_spec_summary")
@@ -584,6 +590,8 @@ class FindSpecCall(_Record):
         exception_type_name: str | None,
         thread_name: str,
         thread_id: int,
+        module_state_before: ModuleCacheState | None = None,
+        module_state_after: ModuleCacheState | None = None,
     ) -> None:
         self._seq = seq
         self._fullname = fullname
@@ -592,6 +600,8 @@ class FindSpecCall(_Record):
         self._found = found
         self._loader_type_name = loader_type_name
         self._origin = origin
+        self._module_state_before = module_state_before
+        self._module_state_after = module_state_after
         self._search_path = search_path
         self._search_path_kind = search_path_kind
         self._spec_summary = spec_summary

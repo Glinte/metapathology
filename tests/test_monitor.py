@@ -130,6 +130,10 @@ assert wins, calls
 assert wins[-1].finder_type_name == "DummyFinder"
 assert wins[-1].loader_type_name == "DummyLoader"
 assert wins[-1].origin is None
+assert wins[-1].module_state_before is not None
+assert wins[-1].module_state_after is not None
+assert wins[-1].module_state_before.state == "missing"
+assert wins[-1].module_state_after.state == "missing"
 
 # A claim without a filesystem origin must not be flagged as a bypass.
 text = metapathology.render_report()
@@ -189,6 +193,69 @@ def test_find_spec_records_preserve_metadata_and_path_snapshots(run_python: RunP
     proc = run_python(FIND_SPEC_METADATA_SNAPSHOTS)
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout
+
+
+FINDER_MODULE_TRANSITIONS = """
+import sys
+
+import metapathology
+from metapathology import FindSpecCall
+
+class SideEffectFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "identity_added":
+            sys.modules[fullname] = object()
+        elif fullname == "identity_none":
+            sys.modules[fullname] = None
+        elif fullname == "identity_removed":
+            del sys.modules[fullname]
+        elif fullname == "identity_replaced":
+            sys.modules[fullname] = replacement
+        elif fullname == "identity_raised":
+            sys.modules[fullname] = object()
+            raise RuntimeError("expected")
+        return None
+
+finder = SideEffectFinder()
+sys.meta_path.insert(0, finder)
+monitor = metapathology.install(report_at_exit=False)
+original = object()
+replacement = object()
+sys.modules["identity_removed"] = original
+sys.modules["identity_replaced"] = original
+
+for name in ("identity_added", "identity_none", "identity_removed", "identity_replaced"):
+    finder.find_spec(name)
+try:
+    finder.find_spec("identity_raised")
+except RuntimeError:
+    pass
+
+calls = {
+    event.fullname: event
+    for event in monitor.events()
+    if isinstance(event, FindSpecCall) and event.fullname.startswith("identity_")
+}
+assert calls["identity_added"].module_state_before.state == "missing"
+assert calls["identity_added"].module_state_after.state == "object"
+assert calls["identity_none"].module_state_after.state == "none"
+assert calls["identity_removed"].module_state_before.object_id == id(original)
+assert calls["identity_removed"].module_state_after.state == "missing"
+assert calls["identity_replaced"].module_state_before.object_id == id(original)
+assert calls["identity_replaced"].module_state_after.object_id == id(replacement)
+assert calls["identity_raised"].exception_type_name == "RuntimeError"
+assert calls["identity_raised"].module_state_after.state == "object"
+
+for name in tuple(calls):
+    sys.modules.pop(name, None)
+print("OK")
+"""
+
+
+def test_find_spec_records_target_module_transitions(run_python: RunPython) -> None:
+    proc = run_python(FINDER_MODULE_TRANSITIONS)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
 
 
 REASSIGNMENT = """

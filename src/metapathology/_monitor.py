@@ -19,7 +19,7 @@ from contextlib import suppress
 from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 
 from metapathology import _report
-from metapathology._module_metadata import safe_module_name, safe_spec_loader, safe_spec_name
+from metapathology._module_metadata import module_cache_state, safe_module_name, safe_spec_loader, safe_spec_name
 from metapathology._records import (
     DeepDiagnosticCall,
     DeepImportEvent,
@@ -32,6 +32,7 @@ from metapathology._records import (
     InternalError,
     MetaPathMutation,
     MetaPathReassignment,
+    ModuleCacheState,
     MonitorEvent,
     PathHooksMutation,
     PathHooksReassignment,
@@ -1377,6 +1378,7 @@ class Monitor:
             self._local.active = True
             spec = None
             exception_type_name: str | None = None
+            module_state_before = module_cache_state(sys.modules, fullname)
             try:
                 search_path = self._snapshot_search_path(path)
                 try:
@@ -1385,6 +1387,7 @@ class Monitor:
                     exception_type_name = type(exc).__name__
                     raise
                 finally:
+                    module_state_after = module_cache_state(sys.modules, fullname)
                     self._record_find_spec(
                         finder_type_name,
                         finder_id,
@@ -1393,6 +1396,8 @@ class Monitor:
                         search_path,
                         "sys_path" if path is None else "parent_path",
                         exception_type_name,
+                        module_state_before,
+                        module_state_after,
                     )
             finally:
                 self._local.active = False
@@ -1444,6 +1449,8 @@ class Monitor:
         search_path: tuple[str, ...],
         search_path_kind: str,
         exception_type_name: str | None,
+        module_state_before: ModuleCacheState,
+        module_state_after: ModuleCacheState,
     ) -> None:
         """Record one ``find_spec`` call, reducing the spec to primitives before taking the lock.
 
@@ -1487,6 +1494,8 @@ class Monitor:
                         exception_type_name=exception_type_name,
                         thread_name=thread_name,
                         thread_id=thread_id,
+                        module_state_before=module_state_before,
+                        module_state_after=module_state_after,
                     )
                 )
         except Exception as exc:
