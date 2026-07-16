@@ -50,3 +50,5 @@ rewriter claims pytest-cov modules that claw's path-hook loader would otherwise
 handle. The three recorded meta-path mutations are pytest installing and later
 removing `AssertionRewritingHook`, plus `key_value` installing its
 `_DeprecatedModuleFinder`.
+The script also validates captured `AssertionRewritingHook` meta-bypass
+evidence and a compatible replay-based finding in the generated JSON report.
