@@ -540,34 +540,110 @@ finder wrappers record only instrumentable custom-finder calls. Neither is an
 import completion callback. Failed resolution, loader exceptions, cache hits,
 and modules removed after a successful import are therefore easy to conflate.
 
-**Recommendation:** Introduce an import-attempt record keyed by a generated
-attempt id and thread identity. Default mode records only the plain fields
-supplied safely by the `import` audit event and correlates later instrumented
-finder calls by name, thread, and capture order. That correlation is not a
-nested-import stack because a start-only signal provides no event with which to
-pop such a stack. Its outcome vocabulary is deliberately partial:
+**Recommendation:** Implement this in two stages. The default stage adds
+conservative correlation over evidence that already exists. A separate opt-in
+deep stage is gated on a CPython-version feasibility spike and is omitted if no
+stable boundary can prove both entry and exit without changing import behavior.
+
+### Default correlation
+
+Introduce an import-attempt record keyed by a monotonically generated attempt
+id and a monitor-assigned numeric thread id captured at the audit boundary.
+Assign the thread id once in thread-local state; do not use
+`threading.get_ident()` as the durable report key because CPython may recycle
+it after a thread exits. Retain the thread name for display only: names are
+neither unique nor stable identifiers. The audit record remains the canonical
+chronological event and gains its attempt id rather than being duplicated by a
+second start event.
+
+Finder and deep-call records gain the same numeric thread identity. Correlate a
+call only when the latest earlier audit start on that thread has the same exact
+module name; any intervening audit start ends the correlation window. This is a
+best-effort ordered join, not a nested-import stack: the audit signal has no
+matching exit with which to retire an active attempt. The derived projection,
+not the raw call record, carries the attempt link. Ambiguous calls remain
+unlinked instead of being attached to a plausible attempt. In particular, do
+not link by name alone across threads, and do not infer parent/child attempts
+from dotted module names.
+
+Build one report-time attempt projection from the immutable event snapshot.
+Each projection links the start event and any conservatively correlated finder
+or deep events by their existing event ids. Keep the raw chronological events
+as the compatibility and forensic layer; the attempt projection is a derived
+index, not a replacement event stream. Post-hoc module presence comes from the
+same single copied `sys.modules.items()` snapshot used by T4, so inventory,
+findings, and attempts share one report-time cutoff.
+
+The default outcome vocabulary is deliberately partial and separates captured
+progress from post-hoc state:
 
 - `started`: the audit event fired, with no later captured outcome;
 - `finder_claimed`: an instrumented finder returned a spec;
 - `finder_raised`: an instrumented finder raised;
 - `present_at_report` / `absent_at_report`: post-hoc state, never aliases for
   success or failure;
-- `unknown`: evidence cannot distinguish the alternatives.
+- `unknown`: evidence is missing, ambiguous, or contradictory.
+
+An attempt may have one captured progress value and one independent post-hoc
+presence value. For example, `finder_claimed` plus `absent_at_report` does not
+mean the loader failed: the module may have loaded successfully and later been
+removed. A finder exception proves only that the instrumented finder call
+raised; it is an import failure only when an exact deep completion boundary
+separately proves that outcome. Calls from standard class entries remain
+unobserved until T16, and cache hits remain invisible in default mode.
+
+Correlation runs over the copied event list at report time rather than keeping
+an unbounded mutable lookup in the import hot path. Capture adds constant-size
+attempt and thread identity fields to existing records; the exhaustive attempt
+projection grows with audit starts and linked evidence. Text output is bounded
+and summarizes ambiguous/unlinked evidence, while experimental JSON retains
+the exhaustive projection and links back to raw event ids.
+
+### Exact deep outcomes feasibility gate
 
 Exact `loaded` and `failed` outcomes require opt-in deep evidence. Prototype a
-scoped observer around importlib's load boundary or T10 loader delegates. That
-observer may maintain a thread-local attempt stack only because it observes
-both entry and exit. It must chain and restore an existing tracing/profiling
-callback, remain thread-aware, and prove that it sees resolution failures as
-well as loader exceptions on every supported Python version. If no sufficiently
+scoped observer around importlib's complete import boundary; T10 loader
+delegates alone are insufficient because they do not observe resolution
+failure, cache hits, or every standard loader. Evaluate profiling first and
+tracing only if profiling is insufficient, with an explicit CPython 3.10--3.14
+compatibility matrix. Profiling is preferable because callback return values
+do not create per-frame local-hook state that must also be chained. Match the
+frozen `_find_and_load` boundary by the code object captured during
+installation, never by filename or function name.
+
+The spike must demonstrate all of the following before implementation:
+
+- paired entry and return/exception observation for successful resolution,
+  missing modules, and loader exceptions;
+- visibility or explicit non-visibility of cache hits;
+- correct nesting for recursive imports and isolation between concurrent
+  threads;
+- chaining and exact restoration of pre-existing current-thread and
+  newly-created-thread tracing/profiling callbacks, or conservative refusal to
+  activate when exact composition cannot be demonstrated;
+- inert behavior after uninstall, including callbacks that cannot themselves
+  be removed globally; and
+- no imports, foreign formatting, or lock-held delegation inside the callback.
+
+Only a paired deep boundary may maintain a thread-local attempt stack. Deep
+completion records link to an attempt id and use `loaded` or `failed` only for
+the import invocation whose exit was directly observed. The feasibility probe
+must also record its thread coverage: CPython 3.10 and 3.11 cannot retrofit a
+profile callback into every already-running thread, and low-level threads may
+fall outside `threading` defaults. Never turn a successfully observed outcome
+into a claim that every process thread was covered. If the supported versions
+require different private boundaries, version-gate them explicitly and decline
+activation with a recorded diagnostic on unknown versions. If no sufficiently
 safe and stable CPython mechanism exists, keep exact failure diagnosis
 unsupported and remove findings that require it rather than approximating from
 module absence.
 
 Capacity follows the existing exhaustive event policy: one retained record per
 observed audit start plus linked outcome records, with documented lifetime
-growth and no silent dropping. Import cache hits remain invisible unless deep
-mode establishes a safe boundary that sees them.
+growth and no silent dropping. Shutdown first makes callbacks inert, then
+restores removable state, and finally reports from a fixed event cutoff. Import
+cache hits remain invisible unless the feasibility spike proves a safe deep
+boundary that sees them.
 
 **Dependencies:** T3 supplies ordering and T5 supplies the structured identity
 model. Exact outcomes additionally depend on T10.
@@ -577,6 +653,10 @@ model. Exact outcomes additionally depend on T10.
 - Default reports distinguish starts, claims, finder exceptions, post-hoc
   presence, and unknown outcomes without calling any of them successful or
   failed imports.
+- Every attempt and linked event carries a numeric thread identity; thread
+  names remain display metadata only. Ambiguous finder calls remain unlinked.
+- The JSON attempt projection links to raw event ids and uses the same copied
+  module snapshot as loader inventory and findings; text output is bounded.
 - Deep mode, if implemented, has subprocess tests for successful resolution,
   missing modules, loader exceptions, cache hits, recursive imports, deletion
   after load, and concurrent imports.
