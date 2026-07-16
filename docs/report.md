@@ -65,6 +65,17 @@ Mutable loaders expose separate `loader_create_module` and
 from each call's actual spec or module metadata, so one loader shared by
 multiple modules remains distinguishable.
 
+`--deep-import-outcomes` adds paired `deep_import_event` records around
+CPython's `_find_and_load` invocation. A directly observed completion may say
+`loaded` or `failed`; this is stronger than finder or post-hoc module-cache
+evidence. The header and JSON `deep_import_outcomes` mechanism always report
+the runtime coverage or refusal reason. On CPython 3.10--3.14 the observer
+covers the installing thread and future `threading` threads. It cannot cover
+already-running threads or guarantee low-level `_thread` coverage, and normal
+cache hits remain invisible because they bypass `_find_and_load`. If either
+the current-thread or future-thread profiler slot is occupied, activation is
+refused without replacing or chaining that callback.
+
 An import-audit line proves only that uncached resolution started. The record
 still captures the copied `sys.meta_path` identity and finder type names plus
 constant-size identities/fingerprints for enabled auxiliary mechanisms; text

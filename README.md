@@ -107,7 +107,7 @@ Opt-in deep diagnostics can capture delegated path-hook, path-entry finder,
 and modern loader creation/execution calls when passive evidence is insufficient:
 
 ```console
-python -m metapathology --deep-path-hooks --deep-path-entry-finders --deep-loaders myscript.py
+python -m metapathology --deep-import-outcomes --deep-path-hooks --deep-path-entry-finders --deep-loaders myscript.py
 ```
 
 These mechanisms are disabled by default because they put monitor code inline
@@ -116,6 +116,12 @@ needed switches in a controlled reproduction; the report warns when any are
 active.
 Loader instrumentation shadows existing `create_module` and `exec_module`
 methods only; it never adds missing methods or wraps legacy `load_module`.
+Exact import outcomes profile CPython's private `_find_and_load` boundary and
+are supported on CPython 3.10--3.14. They cover the installing thread and
+threads subsequently created through `threading`, but not already-running or
+low-level `_thread` threads. Ordinary `sys.modules` cache hits bypass this
+boundary and remain unobserved. Activation is refused when a profiler is
+already installed; every report states the applied coverage or refusal reason.
 
 `install()` is idempotent and returns the process-wide `Monitor`. By default,
 it prints a report to standard error when Python exits. To control when or
