@@ -1,6 +1,7 @@
 import json
 import subprocess
 from collections.abc import Callable
+from pathlib import Path
 
 RunPython = Callable[..., "subprocess.CompletedProcess[str]"]
 
@@ -256,3 +257,76 @@ def test_partial_deep_install_and_hostile_cleanup_are_isolated(run_python: RunPy
         "assert 'uninstall_deep_path_hooks' in where\n"
     )
     assert proc.returncode == 0, proc.stderr
+
+
+IMPORT_OUTCOMES = r"""
+import json
+import sys
+import threading
+from importlib.machinery import ModuleSpec
+import metapathology
+
+class BrokenLoader:
+    def create_module(self, spec): return None
+    def exec_module(self, module): raise RuntimeError("broken")
+class BrokenFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        return ModuleSpec(fullname, BrokenLoader()) if fullname == "deep_outcome_broken" else None
+
+monitor = metapathology.install(report_at_exit=False, deep_import_outcomes=True)
+sys.meta_path.insert(0, BrokenFinder())
+import deep_outcome_loaded
+del sys.modules["deep_outcome_loaded"]
+try: import deep_outcome_missing
+except ModuleNotFoundError: pass
+try: import deep_outcome_broken
+except RuntimeError: pass
+import deep_outcome_cached
+__import__("deep_outcome_cached")
+thread = threading.Thread(target=lambda: __import__("deep_outcome_threaded"))
+thread.start(); thread.join()
+
+document = json.loads(metapathology.render_report(format="json"))
+by_name = {}
+for attempt in document["import_attempts"]:
+    by_name.setdefault(attempt["fullname"], []).append(attempt)
+assert by_name["deep_outcome_loaded"][0]["progress"] == "loaded"
+assert by_name["deep_outcome_loaded"][0]["presence"] == "absent_at_report"
+assert by_name["deep_outcome_nested"][0]["progress"] == "loaded"
+assert by_name["deep_outcome_missing"][0]["progress"] == "failed"
+assert by_name["deep_outcome_broken"][0]["progress"] == "failed"
+assert by_name["deep_outcome_threaded"][0]["progress"] == "loaded"
+assert len(by_name["deep_outcome_cached"]) == 1
+mechanism = next(item for item in document["capture"]["mechanisms"] if item["name"] == "deep_import_outcomes")
+assert mechanism["completeness"].endswith("cache_hits_not_observed")
+assert "deep import outcome coverage:" in metapathology.render_report()
+metapathology.uninstall()
+assert sys.getprofile() is None and threading.getprofile() is None
+print("OK")
+"""
+
+
+def test_exact_import_outcomes_and_runtime_coverage(run_python: RunPython, tmp_path: Path) -> None:
+    for name in ("deep_outcome_nested", "deep_outcome_cached", "deep_outcome_threaded"):
+        (tmp_path / f"{name}.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "deep_outcome_loaded.py").write_text("import deep_outcome_nested\nVALUE = 1\n", encoding="utf-8")
+    proc = run_python(IMPORT_OUTCOMES)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+def test_exact_outcomes_refuse_an_existing_profiler(run_python: RunPython) -> None:
+    proc = run_python(
+        "import sys, metapathology\n"
+        "profile = lambda frame, event, arg: None\n"
+        "sys.setprofile(profile)\n"
+        "monitor = metapathology.install(report_at_exit=False, deep_import_outcomes=True)\n"
+        "assert monitor.deep_import_outcomes_status == 'refused_existing_profiler'\n"
+        "assert sys.getprofile() is profile\n"
+        "metapathology.uninstall()\n"
+        "assert sys.getprofile() is profile\n"
+        "sys.setprofile(None)\n"
+        "print('OK')\n"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
