@@ -789,20 +789,43 @@ can show that a later editable finder was never called but cannot directly say
 that `PathFinder` first returned a namespace-package spec. Loader inventory is
 useful post-hoc evidence, not exact winner attribution.
 
-**Recommendation:** Provide progressively stronger evidence without mutating
-shared stdlib classes:
+**Plan:** Provide progressively stronger evidence without mutating shared
+stdlib classes. Project all three levels into one standard-resolution record
+linked to its T13 attempt, while preserving the provenance of each input:
 
-1. Default mode combines the T4 loader inventory, recorded meta-path order,
-   import-time search path, and absence of an earlier custom claim. Label the
-   result `inferred standard resolution`, never a captured finder call.
-2. Current replay uses T11 semantic spec summaries and remains explicitly
-   counterfactual.
-3. Deep mode uses T10 path-entry finder and loader delegates to capture the
-   path-based search components. Add a CPython-version-gated feasibility spike
-   for observing `PathFinder`'s aggregate result without replacing the shared
-   class entry. If exact aggregate attribution cannot preserve `isinstance`,
-   identity, and import outcomes, retain component evidence and keep the final
-   winner labeled inferred.
+1. Default mode joins an audit start to T4 metadata for the same module. Infer
+   `BuiltinImporter`, `FrozenImporter`, or `PathFinder` only when the loader or
+   namespace shape belongs to that standard route, the recorded meta-path
+   ordering contains the corresponding standard class entry, and no captured
+   earlier custom claim contradicts it. Record the inventory entry as post-hoc
+   input and label the result `inferred`; later removal, replacement, or
+   malformed metadata degrades to unknown rather than being reconstructed.
+2. Classify standard outcomes as built-in, frozen, source, bytecode,
+   extension, zip, or namespace from conservative spec and loader summaries.
+   Keep unknown loader types unclassified. A later custom finder present in
+   the import-time meta-path snapshot but absent from the attempt's calls may
+   be reported as unreachable only after an inferred or captured earlier
+   standard result.
+3. Keep T11 `PathFinder` replay in its existing `live_replay` report-time
+   phase. It may corroborate an inference but never upgrades historical
+   evidence or becomes an event reference.
+4. In deep mode, extend the existing reversible profiling observer to the
+   runtime-discovered Python code object for `PathFinder.find_spec`. Its return
+   event records an import-safe semantic spec summary and exact attempt/thread
+   linkage. Discovery, rather than a hard-coded filename or line number, gates
+   CPython 3.10--3.14 support. A missing code object, an occupied profiler, or
+   an unsafe result becomes an explicit availability status and leaves the
+   standard result inferred.
+5. Correlate T10 path-entry finder calls as component evidence only when their
+   fullname, thread, and enclosing T13 attempt agree. Existing wrappers cannot
+   always identify the cache path for a pre-existing finder, so unknown paths
+   remain null; do not infer them from report-time importer-cache state.
+
+The aggregate deep producer adds constant-size records to the existing
+exhaustive event log. It has the same unbounded lifetime cost and synchronous
+shutdown behavior already documented for deep and attempt evidence; no second
+queue, cache, or retry path is introduced. Text output remains bounded while
+experimental JSON retains exact event and attempt references.
 
 Do not proxy or replace the standard class entries merely to turn inference
 into capture. The tool's compatibility invariant is more important than an
