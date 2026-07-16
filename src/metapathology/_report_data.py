@@ -51,7 +51,7 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 9
+_SCHEMA_MINOR = 10
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -97,6 +97,59 @@ class LoaderInventory(_Record):
         self._available = available
         self._entries = entries
         self._non_string_keys = non_string_keys
+
+
+class ImportAttempt(_Record):
+    """Conservative report-time correlation of one import audit start."""
+
+    __slots__ = (
+        "_attempt_id",
+        "_event_seqs",
+        "_fullname",
+        "_presence",
+        "_progress",
+        "_start_event_seq",
+        "_thread_id",
+        "_thread_name",
+    )
+    _fields = (
+        "attempt_id",
+        "fullname",
+        "start_event_seq",
+        "event_seqs",
+        "thread_id",
+        "thread_name",
+        "progress",
+        "presence",
+    )
+    attempt_id = _ReadOnlyField[int]("_attempt_id")
+    fullname = _ReadOnlyField[str]("_fullname")
+    start_event_seq = _ReadOnlyField[int]("_start_event_seq")
+    event_seqs = _ReadOnlyField[tuple[int, ...]]("_event_seqs")
+    thread_id = _ReadOnlyField[int]("_thread_id")
+    thread_name = _ReadOnlyField[str]("_thread_name")
+    progress = _ReadOnlyField[str]("_progress")
+    presence = _ReadOnlyField[str]("_presence")
+
+    def __init__(
+        self,
+        attempt_id: int,
+        fullname: str,
+        start_event_seq: int,
+        event_seqs: tuple[int, ...],
+        thread_id: int,
+        thread_name: str,
+        progress: str,
+        presence: str,
+    ) -> None:
+        self._attempt_id = attempt_id
+        self._fullname = fullname
+        self._start_event_seq = start_event_seq
+        self._event_seqs = event_seqs
+        self._thread_id = thread_id
+        self._thread_name = thread_name
+        self._progress = progress
+        self._presence = presence
 
 
 class ReplayResult(_Record):
@@ -336,6 +389,7 @@ class ReportDocument(_Record):
 
     __slots__ = (
         "_argv",
+        "_attempts",
         "_baseline_module_count",
         "_current_importer_cache",
         "_current_importer_cache_non_string_keys",
@@ -364,6 +418,7 @@ class ReportDocument(_Record):
     )
     _fields = (
         "generated_at",
+        "attempts",
         "cutoff_seq",
         "monitor_enabled",
         "baseline_module_count",
@@ -391,6 +446,7 @@ class ReportDocument(_Record):
         "argv",
     )
     generated_at = _ReadOnlyField[str]("_generated_at")
+    attempts = _ReadOnlyField[tuple[ImportAttempt, ...]]("_attempts")
     cutoff_seq = _ReadOnlyField[int]("_cutoff_seq")
     monitor_enabled = _ReadOnlyField[bool]("_monitor_enabled")
     baseline_module_count = _ReadOnlyField[int]("_baseline_module_count")
@@ -421,6 +477,7 @@ class ReportDocument(_Record):
         self,
         *,
         generated_at: str,
+        attempts: tuple[ImportAttempt, ...],
         cutoff_seq: int,
         monitor_enabled: bool,
         baseline_module_count: int,
@@ -448,6 +505,7 @@ class ReportDocument(_Record):
         argv: tuple[str, ...],
     ) -> None:
         self._generated_at = generated_at
+        self._attempts = attempts
         self._cutoff_seq = cutoff_seq
         self._monitor_enabled = monitor_enabled
         self._baseline_module_count = baseline_module_count
@@ -483,6 +541,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
     current_path_hooks = _current_path_hooks(monitor, report_errors)
     module_items = _module_items(report_errors)
     loader_inventory = _loader_inventory(module_items)
+    attempts = _import_attempts(events, module_items)
     modules_since_install = _modules_since_install(monitor, module_items)
     skipped_finders = tuple(
         SkippedFinder(
@@ -529,6 +588,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
     )
     return ReportDocument(
         generated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        attempts=attempts,
         cutoff_seq=cutoff_seq,
         monitor_enabled=monitor.enabled,
         baseline_module_count=len(monitor.baseline_modules),
@@ -584,6 +644,54 @@ def _module_items(report_errors: list[ReportError]) -> list[tuple[object, object
     except BaseException as exc:
         report_errors.append(ReportError("snapshot.sys_modules", type_name(exc)))
         return None
+
+
+def _import_attempts(
+    events: list[MonitorEvent], module_items: list[tuple[object, object]] | None
+) -> tuple[ImportAttempt, ...]:
+    """Join calls only to the matching latest audit start on their thread."""
+    present = None if module_items is None else {name for name, _module in module_items if type(name) is str}
+    starts: list[ImportAuditStart] = []
+    latest_by_thread: dict[int, ImportAuditStart] = {}
+    linked: dict[int, list[FindSpecCall | DeepDiagnosticCall]] = {}
+    for event in events:
+        if isinstance(event, ImportAuditStart):
+            starts.append(event)
+            latest_by_thread[event.thread_id] = event
+            linked[event.attempt_id] = []
+        elif isinstance(event, (FindSpecCall, DeepDiagnosticCall)):
+            start = latest_by_thread.get(event.thread_id)
+            if start is not None and event.fullname == start.fullname:
+                linked[start.attempt_id].append(event)
+    attempts: list[ImportAttempt] = []
+    for start in starts:
+        evidence = linked[start.attempt_id]
+        claimed = any(isinstance(event, FindSpecCall) and event.found for event in evidence)
+        raised = any(isinstance(event, FindSpecCall) and event.exception_type_name is not None for event in evidence)
+        if claimed and raised:
+            progress = "unknown"
+        elif claimed:
+            progress = "finder_claimed"
+        elif raised:
+            progress = "finder_raised"
+        else:
+            progress = "started"
+        presence = (
+            "unknown" if present is None else "present_at_report" if start.fullname in present else "absent_at_report"
+        )
+        attempts.append(
+            ImportAttempt(
+                start.attempt_id,
+                start.fullname,
+                start.seq,
+                tuple(event.seq for event in evidence),
+                start.thread_id,
+                start.thread_name,
+                progress,
+                presence,
+            )
+        )
+    return tuple(attempts)
 
 
 def _loader_inventory(module_items: list[tuple[object, object]] | None) -> LoaderInventory:
@@ -1052,6 +1160,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
             },
         ],
         "loader_inventory": _json_loader_inventory(document.loader_inventory),
+        "import_attempts": [_json_import_attempt(attempt) for attempt in document.attempts],
         "timeline": [_json_event(event) for event in document.events],
         "findings": [_json_finding(finding) for finding in document.findings],
         "diagnostics": {
@@ -1114,12 +1223,14 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
                     "size": event.importer_cache_size,
                 },
                 "kind": "import_audit_start",
+                "attempt_id": event.attempt_id,
                 "meta_path": {
                     "entries": list(event.meta_path_type_names),
                     "object_id": f"0x{event.meta_path_id:x}",
                 },
                 "path_hooks_id": None if event.path_hooks_id is None else f"0x{event.path_hooks_id:x}",
                 "thread_name": event.thread_name,
+                "thread_id": event.thread_id,
             }
         )
     elif isinstance(event, DeepDiagnosticCall):
@@ -1135,6 +1246,7 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
                 "outcome": event.outcome,
                 "path": event.path,
                 "thread_name": event.thread_name,
+                "thread_id": event.thread_id,
             }
         )
     elif isinstance(event, FindSpecCall):
@@ -1152,6 +1264,7 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
                 "search_path_kind": event.search_path_kind,
                 "spec": None if event.spec_summary is None else _json_spec_summary(event.spec_summary),
                 "thread_name": event.thread_name,
+                "thread_id": event.thread_id,
             }
         )
     elif isinstance(event, ImporterCacheDiff):
@@ -1223,6 +1336,20 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
             }
         )
     return result
+
+
+def _json_import_attempt(attempt: ImportAttempt) -> dict[str, object]:
+    """Serialize one derived attempt while retaining links to raw evidence."""
+    return {
+        "id": f"attempt:{attempt.attempt_id}",
+        "fullname": attempt.fullname,
+        "start_event_ref": f"event:{attempt.start_event_seq}",
+        "evidence_event_refs": [f"event:{seq}" for seq in attempt.event_seqs],
+        "thread_id": attempt.thread_id,
+        "thread_name": attempt.thread_name,
+        "progress": attempt.progress,
+        "presence": attempt.presence,
+    }
 
 
 def _json_import_object(reference: ImportObjectRef) -> dict[str, object]:
@@ -1418,6 +1545,7 @@ def failed_json_document(error_name: str) -> dict[str, object]:
             "phase": "report",
             "unavailable": [],
         },
+        "import_attempts": [],
         "timeline": [],
         "findings": [],
         "diagnostics": {

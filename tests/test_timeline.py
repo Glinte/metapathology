@@ -63,17 +63,25 @@ assert "the audit event has no outcome or winner signal" in timeline
 assert "capture order; concurrent events are not a global wall-clock order" in timeline
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 0, "minor": 9, "name": "metapathology.report"}
+assert document["schema"] == {"major": 0, "minor": 10, "name": "metapathology.report"}
 audit = next(
     event
     for event in document["timeline"]
     if event["kind"] == "import_audit_start" and event["fullname"] == "timeline_target"
 )
 assert audit["evidence"] == "resolution_started"
+assert audit["attempt_id"] == start.attempt_id
+assert audit["thread_id"] == start.thread_id
 assert audit["meta_path"]["entries"][0] == "DelegatingFinder"
 assert audit["meta_path"]["object_id"].startswith("0x")
 assert audit["path_hooks_id"].startswith("0x")
 assert audit["importer_cache"]["size"] >= 1
+attempt = next(item for item in document["import_attempts"] if item["fullname"] == "timeline_target")
+assert attempt["id"] == f"attempt:{start.attempt_id}"
+assert attempt["start_event_ref"] == f"event:{start.seq}"
+assert attempt["evidence_event_refs"] == [f"event:{claim.seq}"]
+assert attempt["progress"] == "finder_claimed"
+assert attempt["presence"] == "present_at_report"
 mechanisms = {item["name"]: item for item in document["capture"]["mechanisms"]}
 assert mechanisms["import_audit_starts"]["overflow_policy"] == "retain_all"
 assert mechanisms["import_audit_starts"]["completeness"] == "resolution_starts"
