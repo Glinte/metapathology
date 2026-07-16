@@ -298,6 +298,18 @@ def _explanation_lines(explanation: CausalExplanation, context: _RenderContext) 
             f"    cause: {explanation.cause_finding_id}; supporting events: "
             + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
         ]
+    if explanation.kind == "standard_winner_precedence":
+        later = ", ".join(explanation.later_finders)
+        qualifier = "produced" if explanation.confidence == "captured" else "likely produced"
+        lines = [
+            f"[{explanation.confidence}] {explanation.finder_type_name} {qualifier} {explanation.effect_status} for '{explanation.subject}' before later finders",
+            f"    later unreachable finders: {later}; origin: {_origin_display(explanation.observed_origin, context)}",
+        ]
+        if explanation.standard_attempt_id is not None:
+            lines.append(f"    attempt: attempt:{explanation.standard_attempt_id}")
+        if explanation.next_observation == "enable_deep_import_outcomes":
+            lines.append("    next observation: enable deep import outcomes to capture the standard winner")
+        return lines
     return [f"[{explanation.confidence}] {explanation.kind}: '{explanation.subject}'"]
 
 

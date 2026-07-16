@@ -114,3 +114,5 @@ def test_distributed_7782_fixture_explains_unreachable_editable_finder() -> None
     assert "editable marker: None" in proc.stdout
     assert "[inferred standard resolution] 'distributed': PathFinder produced namespace" in proc.stderr
     assert "later meta-path entries were unreachable: [_EditableFinder]" in proc.stderr
+    assert "[inferred] PathFinder likely produced namespace for 'distributed' before later finders" in proc.stderr
+    assert "next observation: enable deep import outcomes to capture the standard winner" in proc.stderr

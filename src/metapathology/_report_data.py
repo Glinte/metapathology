@@ -495,10 +495,12 @@ class CausalExplanation(_Record):
         "_explanation_id",
         "_finder_type_name",
         "_kind",
+        "_later_finders",
         "_next_observation",
         "_observed_origin",
         "_omitted_location",
         "_replayed_origin",
+        "_standard_attempt_id",
         "_subject",
     )
     _fields = (
@@ -511,8 +513,10 @@ class CausalExplanation(_Record):
         "finder_type_name",
         "omitted_location",
         "candidate_path",
+        "later_finders",
         "observed_origin",
         "replayed_origin",
+        "standard_attempt_id",
         "event_seqs",
         "next_observation",
     )
@@ -521,12 +525,14 @@ class CausalExplanation(_Record):
     confidence = _ReadOnlyField[str]("_confidence")
     subject = _ReadOnlyField[str]("_subject")
     effect_status = _ReadOnlyField[str]("_effect_status")
-    cause_finding_id = _ReadOnlyField[str]("_cause_finding_id")
+    cause_finding_id = _ReadOnlyField[str | None]("_cause_finding_id")
     finder_type_name = _ReadOnlyField[str]("_finder_type_name")
     omitted_location = _ReadOnlyField[str]("_omitted_location")
     candidate_path = _ReadOnlyField[str]("_candidate_path")
+    later_finders = _ReadOnlyField[tuple[str, ...]]("_later_finders")
     observed_origin = _ReadOnlyField[str | None]("_observed_origin")
     replayed_origin = _ReadOnlyField[str | None]("_replayed_origin")
+    standard_attempt_id = _ReadOnlyField[int | None]("_standard_attempt_id")
     event_seqs = _ReadOnlyField[tuple[int, ...]]("_event_seqs")
     next_observation = _ReadOnlyField[str | None]("_next_observation")
 
@@ -538,7 +544,7 @@ class CausalExplanation(_Record):
         confidence: str,
         subject: str,
         effect_status: str,
-        cause_finding_id: str,
+        cause_finding_id: str | None,
         finder_type_name: str,
         omitted_location: str,
         candidate_path: str,
@@ -546,9 +552,12 @@ class CausalExplanation(_Record):
         next_observation: str | None,
         observed_origin: str | None = None,
         replayed_origin: str | None = None,
+        standard_attempt_id: int | None = None,
+        later_finders: tuple[str, ...] = (),
     ) -> None:
         self._explanation_id = explanation_id
         self._kind = kind
+        self._later_finders = later_finders
         self._confidence = confidence
         self._subject = subject
         self._effect_status = effect_status
@@ -557,6 +566,7 @@ class CausalExplanation(_Record):
         self._omitted_location = omitted_location
         self._observed_origin = observed_origin
         self._replayed_origin = replayed_origin
+        self._standard_attempt_id = standard_attempt_id
         self._candidate_path = candidate_path
         self._event_seqs = event_seqs
         self._next_observation = next_observation
@@ -801,7 +811,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         )
     finally:
         monitor._end_report_analysis(previously_active)
-    explanations = _causal_explanations(findings, attempts)
+    explanations = _causal_explanations(findings, attempts, standard_resolutions)
     try:
         cwd: str | None = os.getcwd()
     except Exception as exc:
@@ -1161,7 +1171,9 @@ def _finder_contract_findings(contracts: list[FinderContract]) -> list[Finding]:
 
 
 def _causal_explanations(
-    findings: tuple[Finding, ...], attempts: tuple[ImportAttempt, ...]
+    findings: tuple[Finding, ...],
+    attempts: tuple[ImportAttempt, ...],
+    standard_resolutions: tuple[StandardResolution, ...],
 ) -> tuple[CausalExplanation, ...]:
     """Join namespace loss to descendant attempts and report-time path evidence."""
     explanations: list[CausalExplanation] = []
@@ -1223,6 +1235,28 @@ def _causal_explanations(
                 next_observation=None,
                 observed_origin=finding.claim.origin,
                 replayed_origin=finding.replay.origin,
+            )
+        )
+    for resolution in standard_resolutions:
+        if not resolution.later_finders:
+            continue
+        event_seqs = (() if resolution.event_seq is None else (resolution.event_seq,)) + resolution.component_event_seqs
+        explanations.append(
+            CausalExplanation(
+                explanation_id=f"explanation:{len(explanations) + 1}",
+                kind="standard_winner_precedence",
+                confidence="captured" if resolution.evidence_level == "captured" else "inferred",
+                subject=resolution.fullname,
+                effect_status=resolution.category,
+                cause_finding_id=None,
+                finder_type_name=resolution.finder_type_name,
+                omitted_location="",
+                candidate_path="",
+                event_seqs=event_seqs,
+                next_observation=(None if resolution.evidence_level == "captured" else "enable_deep_import_outcomes"),
+                observed_origin=resolution.origin,
+                standard_attempt_id=resolution.attempt_id,
+                later_finders=resolution.later_finders,
             )
         )
     return tuple(explanations)
@@ -2387,11 +2421,15 @@ def _json_explanation(explanation: CausalExplanation) -> dict[str, object]:
         "finder_type_name": explanation.finder_type_name,
         "id": explanation.explanation_id,
         "kind": explanation.kind,
+        "later_finders": list(explanation.later_finders),
         "next_observation": explanation.next_observation,
         "observed_origin": explanation.observed_origin,
         "omitted_location": explanation.omitted_location,
         "replayed_origin": explanation.replayed_origin,
         "subject": explanation.subject,
+        "standard_attempt_ref": (
+            None if explanation.standard_attempt_id is None else f"attempt:{explanation.standard_attempt_id}"
+        ),
     }
 
 
