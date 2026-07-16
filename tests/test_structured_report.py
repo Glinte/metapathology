@@ -31,7 +31,7 @@ import observed_mod
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 0, "minor": 8, "name": "metapathology.report"}
+assert document["schema"] == {"major": 0, "minor": 9, "name": "metapathology.report"}
 assert document["capture"]["early_site_bootstrap"] is None
 assert document["capture"]["cutoff_seq"] == max(event["seq"] for event in document["timeline"])
 assert document["snapshots"][0]["id"] == "snapshot:install"
@@ -64,6 +64,9 @@ no_spec = next(finding for finding in document["findings"] if finding["kind"] ==
 assert no_spec["module"] == "ghost_mod"
 assert no_spec["evidence"] == {"finder_claim": "not_recorded", "module_spec": "missing"}
 assert document["diagnostics"]["report_errors"] == []
+assert document["loader_inventory"]["evidence"] == "post_hoc"
+assert document["loader_inventory"]["phase"] == "report"
+assert document["loader_inventory"]["available"] is True
 print("OK")
 """
 
@@ -136,7 +139,7 @@ def test_explicit_file_failure_is_recorded_and_raised(run_python: RunPython, tmp
 
 def test_report_document_uses_hand_written_slots(run_python: RunPython) -> None:
     proc = run_python(
-        "from metapathology._report_data import ReportDocument\n"
+        "from metapathology._report_data import LoaderInventory, ReportDocument\n"
         "assert '__dataclass_fields__' not in ReportDocument.__dict__\n"
         "assert '__slots__' in ReportDocument.__dict__\n"
         "document = ReportDocument(\n"
@@ -147,6 +150,7 @@ def test_report_document_uses_hand_written_slots(run_python: RunPython) -> None:
         "    initial_importer_cache_non_string_keys=0, current_importer_cache=None,\n"
         "    current_importer_cache_non_string_keys=None, importer_cache_observations=0,\n"
         "    importer_cache_coalesced=0,\n"
+        "    loader_inventory=LoaderInventory(True, (), 0),\n"
         "    modules_since_install=(), events=(), skipped_finders=(), findings=(),\n"
         "    early_site_bootstrap=None,\n"
         "    deep_diagnostics=(),\n"

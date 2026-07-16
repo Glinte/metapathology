@@ -16,7 +16,7 @@ from metapathology._records import (
     PathHooksMutation,
     PathHooksReassignment,
 )
-from metapathology._report_data import Finding, ReportDocument
+from metapathology._report_data import Finding, ReportDocument, _loader_inventory_groups
 
 TYPE_CHECKING = False
 
@@ -101,6 +101,9 @@ def render_lines(document: ReportDocument) -> list[str]:
         lines.extend(f"    {item.finder_type_name}: {item.reason}" for item in other_skipped)
     module_count = 0 if document.modules_since_install is None else len(document.modules_since_install)
     lines.append(f"modules imported since install: {module_count}")
+
+    lines.append("")
+    lines.extend(_loader_inventory_lines(document))
 
     lines.append("")
     lines.append(f"-- chronological evidence timeline ({len(document.events)}) --")
@@ -253,6 +256,49 @@ def _ref_name(reference: ImportObjectRef) -> str:
 def _refs_line(references: tuple[ImportObjectRef, ...]) -> str:
     """Format a path-hook snapshot."""
     return "[" + ", ".join(_ref_name(reference) for reference in references) + "]"
+
+
+def _loader_inventory_lines(document: ReportDocument) -> list[str]:
+    """Render a bounded view of the exhaustive post-hoc loader inventory."""
+    inventory = document.loader_inventory
+    lines = [f"-- post-hoc loader inventory ({len(inventory.entries)} string-keyed entries) --"]
+    lines.append("This is report-time metadata, not exact historical loader attribution.")
+    if not inventory.available:
+        lines.append("(sys.modules snapshot unavailable)")
+        return lines
+    for loader, entries in _loader_inventory_groups(inventory):
+        loader_name = "no loader" if loader is None else _ref_name(loader)
+        lines.append(f"{loader_name}: {len(entries)} module(s)")
+        for entry in entries[:_MAX_LISTED_MODULES]:
+            summary = entry.spec_summary
+            origin = None if summary is None else summary.origin
+            cached = None if summary is None else summary.cached
+            disagreement = " [loader metadata disagreement]" if entry.loader_agreement is False else ""
+            lines.append(
+                f"    {entry.name}: origin {_metadata_value(origin)}, cached {_metadata_value(cached)}{disagreement}"
+            )
+        if len(entries) > _MAX_LISTED_MODULES:
+            lines.append(f"    ... and {len(entries) - _MAX_LISTED_MODULES} more")
+    unavailable = sorted(
+        (entry for entry in inventory.entries if entry.inspection != "available"), key=lambda entry: entry.name
+    )
+    if unavailable:
+        lines.append(f"metadata unavailable for {len(unavailable)} module-cache entries:")
+        lines.extend(
+            f"    {entry.name}: {entry.reason or 'unavailable'}" for entry in unavailable[:_MAX_LISTED_MODULES]
+        )
+        if len(unavailable) > _MAX_LISTED_MODULES:
+            lines.append(f"    ... and {len(unavailable) - _MAX_LISTED_MODULES} more")
+    if inventory.non_string_keys:
+        lines.append(f"non-string sys.modules keys omitted: {inventory.non_string_keys}")
+    return lines
+
+
+def _metadata_value(value: str | ImportObjectRef | None) -> str:
+    """Format already-reduced metadata without consulting live objects."""
+    if isinstance(value, ImportObjectRef):
+        return f"<{_ref_name(value)}>"
+    return repr(value)
 
 
 def _mutation_lines(mutation: MetaPathMutation) -> list[str]:

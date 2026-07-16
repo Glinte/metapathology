@@ -193,24 +193,24 @@ import sys
 import metapathology
 
 class HostileModule:
+    touched = False
     def __getattribute__(self, name):
-        if name == "__spec__":
-            raise SystemExit(94)
+        type(self).touched = True
+        raise SystemExit(94)
         return super().__getattribute__(name)
 
 metapathology.install(report_at_exit=False)
-sys.modules["hostile_module"] = HostileModule()
-try:
-    metapathology.render_report()
-except SystemExit as exc:
-    assert exc.code == 94
-else:
-    raise AssertionError("SystemExit from a foreign module was swallowed")
+hostile = HostileModule()
+sys.modules["hostile_module"] = hostile
+text = metapathology.render_report()
+assert "metadata unavailable" in text, text
+del sys.modules["hostile_module"]
+assert not HostileModule.touched
 print("OK")
 """
 
 
-def test_report_does_not_swallow_base_exception_from_foreign_module(run_python: RunPython) -> None:
+def test_report_does_not_dispatch_to_foreign_module_like_objects(run_python: RunPython) -> None:
     proc = run_python(HOSTILE_MODULE_SPEC)
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout

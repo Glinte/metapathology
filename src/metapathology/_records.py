@@ -12,6 +12,7 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     from traceback import StackSummary
     from typing import Generic, NoReturn, TypeVar, overload
+    from typing import cast as _cast
 
     _FieldT = TypeVar("_FieldT")
 
@@ -34,6 +35,9 @@ if TYPE_CHECKING:
         def __set__(self, instance: object, value: NoReturn) -> NoReturn: ...
 
 else:
+
+    def _cast(_type: object, value: object) -> object:
+        return value
 
     class _ReadOnlyField:
         """Expose a private slot without permitting assignment through its public name."""
@@ -73,7 +77,10 @@ class _Record:
 
 def type_name(obj: object) -> str:
     """Best-effort display name: ``__name__`` for class entries (e.g. ``PathFinder``), type name otherwise."""
-    cls = obj if isinstance(obj, type) else type(obj)
+    obj_type = type(obj)
+    # ``isinstance(obj, type)`` may read a foreign object's spoofed
+    # ``__class__`` attribute. Inspect the actual type hierarchy instead.
+    cls = _cast("type[object]", obj) if issubclass(obj_type, type) else obj_type
     # Calling ``cls.__name__`` normally dispatches through a custom metaclass.
     # Finder names are captured inside imports, so bypass foreign overrides.
     return type.__getattribute__(cls, "__name__")

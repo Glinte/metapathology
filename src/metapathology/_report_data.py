@@ -13,6 +13,7 @@ import types
 from importlib.machinery import PathFinder
 
 from metapathology import __version__
+from metapathology._module_metadata import ModuleMetadata, inspect_module
 from metapathology._records import (
     DeepDiagnosticCall,
     FindSpecCall,
@@ -50,7 +51,7 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 8
+_SCHEMA_MINOR = 9
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -81,6 +82,21 @@ class SkippedFinder(_Record):
         self._finder_type_name = finder_type_name
         self._reason = reason
         self._expected = expected
+
+
+class LoaderInventory(_Record):
+    """Post-hoc metadata copied from one ``sys.modules`` snapshot."""
+
+    __slots__ = ("_available", "_entries", "_non_string_keys")
+    _fields = ("available", "entries", "non_string_keys")
+    available = _ReadOnlyField[bool]("_available")
+    entries = _ReadOnlyField[tuple[ModuleMetadata, ...]]("_entries")
+    non_string_keys = _ReadOnlyField[int]("_non_string_keys")
+
+    def __init__(self, available: bool, entries: tuple[ModuleMetadata, ...], non_string_keys: int) -> None:
+        self._available = available
+        self._entries = entries
+        self._non_string_keys = non_string_keys
 
 
 class ReplayResult(_Record):
@@ -339,6 +355,7 @@ class ReportDocument(_Record):
         "_initial_importer_cache_non_string_keys",
         "_initial_meta_path",
         "_initial_path_hooks",
+        "_loader_inventory",
         "_modules_since_install",
         "_monitor_enabled",
         "_path_hooks_enabled",
@@ -362,6 +379,7 @@ class ReportDocument(_Record):
         "current_importer_cache_non_string_keys",
         "importer_cache_observations",
         "importer_cache_coalesced",
+        "loader_inventory",
         "modules_since_install",
         "events",
         "early_site_bootstrap",
@@ -388,6 +406,7 @@ class ReportDocument(_Record):
     current_importer_cache_non_string_keys = _ReadOnlyField[int | None]("_current_importer_cache_non_string_keys")
     importer_cache_observations = _ReadOnlyField[int]("_importer_cache_observations")
     importer_cache_coalesced = _ReadOnlyField[int]("_importer_cache_coalesced")
+    loader_inventory = _ReadOnlyField[LoaderInventory]("_loader_inventory")
     modules_since_install = _ReadOnlyField[tuple[str, ...] | None]("_modules_since_install")
     events = _ReadOnlyField[tuple[MonitorEvent, ...]]("_events")
     early_site_bootstrap = _ReadOnlyField[EarlySiteBootstrap | None]("_early_site_bootstrap")
@@ -417,6 +436,7 @@ class ReportDocument(_Record):
         current_importer_cache_non_string_keys: int | None,
         importer_cache_observations: int,
         importer_cache_coalesced: int,
+        loader_inventory: LoaderInventory,
         modules_since_install: tuple[str, ...] | None,
         events: tuple[MonitorEvent, ...],
         early_site_bootstrap: EarlySiteBootstrap | None,
@@ -443,6 +463,7 @@ class ReportDocument(_Record):
         self._current_importer_cache_non_string_keys = current_importer_cache_non_string_keys
         self._importer_cache_observations = importer_cache_observations
         self._importer_cache_coalesced = importer_cache_coalesced
+        self._loader_inventory = loader_inventory
         self._modules_since_install = modules_since_install
         self._events = events
         self._early_site_bootstrap = early_site_bootstrap
@@ -460,7 +481,9 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
     report_errors: list[ReportError] = []
     current_meta_path = _current_meta_path_names(report_errors)
     current_path_hooks = _current_path_hooks(monitor, report_errors)
-    modules_since_install = _modules_since_install(monitor, report_errors)
+    module_items = _module_items(report_errors)
+    loader_inventory = _loader_inventory(module_items)
+    modules_since_install = _modules_since_install(monitor, module_items)
     skipped_finders = tuple(
         SkippedFinder(
             type_name(finder),
@@ -478,6 +501,8 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
             current_path_hooks,
             importer_cache.initial_entries,
             importer_cache.latest_entries,
+            module_items,
+            loader_inventory.entries,
             report_errors,
         )
     finally:
@@ -519,6 +544,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         current_importer_cache_non_string_keys=importer_cache.latest_non_string_keys,
         importer_cache_observations=importer_cache.observations,
         importer_cache_coalesced=importer_cache.coalesced,
+        loader_inventory=loader_inventory,
         modules_since_install=modules_since_install,
         events=tuple(events),
         early_site_bootstrap=early_site_bootstrap,
@@ -551,14 +577,37 @@ def _current_path_hooks(monitor: "Monitor", report_errors: list[ReportError]) ->
         return None
 
 
-def _modules_since_install(monitor: "Monitor", report_errors: list[ReportError]) -> tuple[str, ...] | None:
-    """List module names added after monitor installation."""
-    baseline = monitor.baseline_modules
+def _module_items(report_errors: list[ReportError]) -> list[tuple[object, object]] | None:
+    """Copy the module cache once for all report-time consumers."""
     try:
-        return tuple(name for name in list(sys.modules) if isinstance(name, str) and name not in baseline)
-    except Exception as exc:
+        return list(sys.modules.items())
+    except BaseException as exc:
         report_errors.append(ReportError("snapshot.sys_modules", type_name(exc)))
         return None
+
+
+def _loader_inventory(module_items: list[tuple[object, object]] | None) -> LoaderInventory:
+    """Build a safe post-hoc loader inventory from the copied cache."""
+    if module_items is None:
+        return LoaderInventory(False, (), 0)
+    entries: list[ModuleMetadata] = []
+    non_string_keys = 0
+    for name, module in module_items:
+        if type(name) is not str:
+            non_string_keys += 1
+            continue
+        entries.append(inspect_module(name, module))
+    return LoaderInventory(True, tuple(entries), non_string_keys)
+
+
+def _modules_since_install(
+    monitor: "Monitor", module_items: list[tuple[object, object]] | None
+) -> tuple[str, ...] | None:
+    """List module names added after monitor installation."""
+    if module_items is None:
+        return None
+    baseline = monitor.baseline_modules
+    return tuple(name for name, _module in module_items if type(name) is str and name not in baseline)
 
 
 def _suspicious_findings(
@@ -568,6 +617,8 @@ def _suspicious_findings(
     current_path_hooks: tuple[ImportObjectRef, ...] | None,
     initial_importer_cache: tuple[ImporterCacheEntry, ...],
     current_importer_cache: tuple[ImporterCacheEntry, ...] | None,
+    module_items: list[tuple[object, object]] | None,
+    module_metadata: tuple[ModuleMetadata, ...],
     report_errors: list[ReportError],
 ) -> tuple[Finding, ...]:
     """Cross-reference copied calls against a best-effort module snapshot."""
@@ -581,13 +632,11 @@ def _suspicious_findings(
     )
     findings: list[Finding] = []
     baseline = monitor.baseline_modules
-    try:
-        module_items = list(sys.modules.items())
-    except Exception as exc:
-        report_errors.append(ReportError("findings.sys_modules", type_name(exc)))
+    if module_items is None:
         return ()
+    metadata_by_name = {entry.name: entry for entry in module_metadata}
     for name, module in module_items:
-        if not isinstance(name, str) or name in baseline or name == "__main__":
+        if type(name) is not str or name in baseline or name == "__main__":
             continue
         winner = winners.get(name)
         if winner is not None:
@@ -595,14 +644,8 @@ def _suspicious_findings(
             if finding is not None:
                 findings.append(finding)
             continue
-        # Preserve the existing BaseException boundary: ordinary hostile
-        # metadata becomes a no-spec lead, while process-control exceptions
-        # raised by foreign objects continue to propagate.
-        try:
-            spec = getattr(module, "__spec__", None)
-        except Exception:
-            spec = None
-        if spec is None:
+        metadata = metadata_by_name.get(name)
+        if metadata is not None and metadata.inspection == "available" and metadata.spec_is_none:
             findings.append(Finding(f"finding:{len(findings) + 1}", "no_spec", name))
     return tuple(findings)
 
@@ -1008,6 +1051,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
                 "phase": "report",
             },
         ],
+        "loader_inventory": _json_loader_inventory(document.loader_inventory),
         "timeline": [_json_event(event) for event in document.events],
         "findings": [_json_finding(finding) for finding in document.findings],
         "diagnostics": {
@@ -1213,6 +1257,67 @@ def _json_spec_summary(summary: SpecSummary) -> dict[str, object]:
     }
 
 
+def _loader_inventory_groups(
+    inventory: LoaderInventory,
+) -> tuple[tuple[ImportObjectRef | None, tuple[ModuleMetadata, ...]], ...]:
+    """Group available module records by effective loader identity."""
+    groups: dict[int | None, tuple[ImportObjectRef | None, list[ModuleMetadata]]] = {}
+    for entry in inventory.entries:
+        if entry.inspection != "available":
+            continue
+        loader = entry.loader
+        key = None if loader is None else loader.object_id
+        group = groups.get(key)
+        if group is None:
+            group = (loader, [])
+            groups[key] = group
+        group[1].append(entry)
+    ordered = sorted(
+        groups.values(),
+        key=lambda group: (
+            group[0] is None,
+            "" if group[0] is None else group[0].type_name,
+            -1 if group[0] is None else group[0].object_id,
+        ),
+    )
+    return tuple((loader, tuple(sorted(entries, key=lambda entry: entry.name))) for loader, entries in ordered)
+
+
+def _json_module_metadata(entry: ModuleMetadata) -> dict[str, object]:
+    """Serialize one safely reduced module-cache entry."""
+    return {
+        "inspection": entry.inspection,
+        "loader_agreement": entry.loader_agreement,
+        "loader_source": entry.loader_source,
+        "module": _json_import_object(entry.module),
+        "module_loader": None if entry.module_loader is None else _json_import_object(entry.module_loader),
+        "module_loader_available": entry.module_loader_available,
+        "name": entry.name,
+        "reason": entry.reason,
+        "spec": None if entry.spec_summary is None else _json_spec_summary(entry.spec_summary),
+        "spec_present": entry.spec_present,
+    }
+
+
+def _json_loader_inventory(inventory: LoaderInventory) -> dict[str, object]:
+    """Serialize the exhaustive post-hoc module grouping."""
+    unavailable = [entry for entry in inventory.entries if entry.inspection != "available"]
+    return {
+        "available": inventory.available,
+        "evidence": "post_hoc",
+        "groups": [
+            {
+                "loader": None if loader is None else _json_import_object(loader),
+                "modules": [_json_module_metadata(entry) for entry in entries],
+            }
+            for loader, entries in _loader_inventory_groups(inventory)
+        ],
+        "non_string_keys_omitted": inventory.non_string_keys,
+        "phase": "report",
+        "unavailable": [_json_module_metadata(entry) for entry in sorted(unavailable, key=lambda item: item.name)],
+    }
+
+
 def _json_importer_cache_entry(entry: ImporterCacheEntry) -> dict[str, object]:
     """Serialize one path and its cached finder or negative marker."""
     return {
@@ -1305,6 +1410,14 @@ def failed_json_document(error_name: str) -> dict[str, object]:
         "process": {"pid": os.getpid()},
         "capture": {"cutoff_seq": None, "enabled": False, "mechanisms": []},
         "snapshots": [],
+        "loader_inventory": {
+            "available": False,
+            "evidence": "post_hoc",
+            "groups": [],
+            "non_string_keys_omitted": 0,
+            "phase": "report",
+            "unavailable": [],
+        },
         "timeline": [],
         "findings": [],
         "diagnostics": {
