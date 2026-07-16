@@ -20,7 +20,7 @@ file output all use the same cutoff-based report document as the human
 renderer. The current experimental schema is identified by:
 
 ```json
-{"name": "metapathology.report", "major": 0, "minor": 16}
+{"name": "metapathology.report", "major": 0, "minor": 17}
 ```
 
 Its top-level sections are `tool`, `process`, `capture`, `snapshots`, `loader_inventory`,

@@ -21,7 +21,7 @@ from metapathology._records import (
     PathHooksReassignment,
     StandardFinderCall,
 )
-from metapathology._report_data import Finding, ReportDocument, StandardResolution
+from metapathology._report_data import CausalExplanation, Finding, ReportDocument, StandardResolution
 
 TYPE_CHECKING = False
 
@@ -171,6 +171,12 @@ def render_lines(document: ReportDocument) -> list[str]:
 
     lines = _header_lines(document, context)
 
+    if document.explanations:
+        lines.append("")
+        lines.append(f"-- causal explanations ({len(document.explanations)}) --")
+        for explanation in document.explanations:
+            lines.extend(_explanation_lines(explanation, context))
+
     lines.append("")
     counts = {severity: 0 for severity in ("actionable", "warning", "informational")}
     for finding in document.findings:
@@ -266,6 +272,24 @@ def render_lines(document: ReportDocument) -> list[str]:
         lines.append("nothing recorded: " + ", ".join(empty_sections))
     lines.append("")
     return lines
+
+
+def _explanation_lines(explanation: CausalExplanation, context: _RenderContext) -> list[str]:
+    """Render one deterministic evidence join before its atomic findings."""
+    if explanation.kind == "namespace_truncation_failure":
+        status = "failed" if explanation.effect_status == "failed" else "was attempted with outcome unknown"
+        lines = [
+            f"[{explanation.confidence}] '{explanation.subject}' {status} after {explanation.finder_type_name} truncated its parent namespace",
+            f"    omitted location {context.quoted_path(explanation.omitted_location)} contains {context.quoted_path(explanation.candidate_path)}",
+            f"    cause: {explanation.cause_finding_id}; supporting events: "
+            + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
+        ]
+        if explanation.next_observation == "enable_deep_import_outcomes":
+            lines.append(
+                "    next observation: enable deep import outcomes to confirm whether the descendant import failed"
+            )
+        return lines
+    return [f"[{explanation.confidence}] {explanation.kind}: '{explanation.subject}'"]
 
 
 def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str]:

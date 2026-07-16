@@ -50,12 +50,13 @@ if TYPE_CHECKING:
 # Only claims with these origin suffixes get the bypass check; extension
 # modules, builtins, and synthetic origins have no PathFinder baseline.
 _SOURCE_SUFFIXES = (".py", ".pyc")
+_MODULE_FILE_SUFFIXES = (".py", ".pyc", ".pyd", ".so")
 _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # The JSON contract remains experimental until the observation mechanisms in
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 16
+_SCHEMA_MINOR = 17
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -482,6 +483,75 @@ class Finding(_Record):
         self._structural_comparison = structural_comparison
 
 
+class CausalExplanation(_Record):
+    """Deterministic synthesis joining a primary finding to its likely effect."""
+
+    __slots__ = (
+        "_candidate_path",
+        "_cause_finding_id",
+        "_confidence",
+        "_effect_status",
+        "_event_seqs",
+        "_explanation_id",
+        "_finder_type_name",
+        "_kind",
+        "_next_observation",
+        "_omitted_location",
+        "_subject",
+    )
+    _fields = (
+        "explanation_id",
+        "kind",
+        "confidence",
+        "subject",
+        "effect_status",
+        "cause_finding_id",
+        "finder_type_name",
+        "omitted_location",
+        "candidate_path",
+        "event_seqs",
+        "next_observation",
+    )
+    explanation_id = _ReadOnlyField[str]("_explanation_id")
+    kind = _ReadOnlyField[str]("_kind")
+    confidence = _ReadOnlyField[str]("_confidence")
+    subject = _ReadOnlyField[str]("_subject")
+    effect_status = _ReadOnlyField[str]("_effect_status")
+    cause_finding_id = _ReadOnlyField[str]("_cause_finding_id")
+    finder_type_name = _ReadOnlyField[str]("_finder_type_name")
+    omitted_location = _ReadOnlyField[str]("_omitted_location")
+    candidate_path = _ReadOnlyField[str]("_candidate_path")
+    event_seqs = _ReadOnlyField[tuple[int, ...]]("_event_seqs")
+    next_observation = _ReadOnlyField[str | None]("_next_observation")
+
+    def __init__(
+        self,
+        *,
+        explanation_id: str,
+        kind: str,
+        confidence: str,
+        subject: str,
+        effect_status: str,
+        cause_finding_id: str,
+        finder_type_name: str,
+        omitted_location: str,
+        candidate_path: str,
+        event_seqs: tuple[int, ...],
+        next_observation: str | None,
+    ) -> None:
+        self._explanation_id = explanation_id
+        self._kind = kind
+        self._confidence = confidence
+        self._subject = subject
+        self._effect_status = effect_status
+        self._cause_finding_id = cause_finding_id
+        self._finder_type_name = finder_type_name
+        self._omitted_location = omitted_location
+        self._candidate_path = candidate_path
+        self._event_seqs = event_seqs
+        self._next_observation = next_observation
+
+
 class EarlySiteBootstrap(_Record):
     """Report-safe provenance for generated early site activation."""
 
@@ -522,6 +592,7 @@ class ReportDocument(_Record):
         "_deep_import_outcomes_status",
         "_early_site_bootstrap",
         "_events",
+        "_explanations",
         "_finder_contracts",
         "_findings",
         "_generated_at",
@@ -562,6 +633,7 @@ class ReportDocument(_Record):
         "loader_inventory",
         "modules_since_install",
         "events",
+        "explanations",
         "early_site_bootstrap",
         "deep_diagnostics",
         "deep_import_outcomes_status",
@@ -594,6 +666,7 @@ class ReportDocument(_Record):
     loader_inventory = _ReadOnlyField[LoaderInventory]("_loader_inventory")
     modules_since_install = _ReadOnlyField[tuple[str, ...] | None]("_modules_since_install")
     events = _ReadOnlyField[tuple[MonitorEvent, ...]]("_events")
+    explanations = _ReadOnlyField[tuple[CausalExplanation, ...]]("_explanations")
     early_site_bootstrap = _ReadOnlyField[EarlySiteBootstrap | None]("_early_site_bootstrap")
     deep_diagnostics = _ReadOnlyField[tuple[str, ...]]("_deep_diagnostics")
     deep_import_outcomes_status = _ReadOnlyField[str]("_deep_import_outcomes_status")
@@ -629,6 +702,7 @@ class ReportDocument(_Record):
         loader_inventory: LoaderInventory,
         modules_since_install: tuple[str, ...] | None,
         events: tuple[MonitorEvent, ...],
+        explanations: tuple[CausalExplanation, ...],
         early_site_bootstrap: EarlySiteBootstrap | None,
         deep_diagnostics: tuple[str, ...],
         deep_import_outcomes_status: str,
@@ -661,6 +735,7 @@ class ReportDocument(_Record):
         self._loader_inventory = loader_inventory
         self._modules_since_install = modules_since_install
         self._events = events
+        self._explanations = explanations
         self._early_site_bootstrap = early_site_bootstrap
         self._deep_diagnostics = deep_diagnostics
         self._deep_import_outcomes_status = deep_import_outcomes_status
@@ -716,6 +791,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         )
     finally:
         monitor._end_report_analysis(previously_active)
+    explanations = _causal_explanations(findings, attempts)
     try:
         cwd: str | None = os.getcwd()
     except Exception as exc:
@@ -757,6 +833,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         loader_inventory=loader_inventory,
         modules_since_install=modules_since_install,
         events=tuple(events),
+        explanations=explanations,
         early_site_bootstrap=early_site_bootstrap,
         deep_diagnostics=monitor.deep_diagnostics,
         deep_import_outcomes_status=monitor.deep_import_outcomes_status,
@@ -1071,6 +1148,66 @@ def _finder_contract_findings(contracts: list[FinderContract]) -> list[Finding]:
             )
         )
     return findings
+
+
+def _causal_explanations(
+    findings: tuple[Finding, ...], attempts: tuple[ImportAttempt, ...]
+) -> tuple[CausalExplanation, ...]:
+    """Join namespace loss to descendant attempts and report-time path evidence."""
+    explanations: list[CausalExplanation] = []
+    for finding in findings:
+        if finding.kind != "namespace_truncation" or finding.spec_comparison is None or finding.claim is None:
+            continue
+        prefix = finding.module + "."
+        descendant_groups: dict[str, list[ImportAttempt]] = {}
+        for attempt in attempts:
+            if attempt.fullname.startswith(prefix) and attempt.presence != "present_at_report":
+                descendant_groups.setdefault(attempt.fullname, []).append(attempt)
+        descendants = [
+            next((attempt for attempt in group if attempt.progress == "failed"), group[0])
+            for group in descendant_groups.values()
+            if not any(attempt.progress == "loaded" for attempt in group)
+        ]
+        for attempt in descendants:
+            relative_parts = attempt.fullname[len(prefix) :].split(".")
+            match = _omitted_module_candidate(finding.spec_comparison.omitted_locations, relative_parts)
+            if match is None:
+                continue
+            omitted_location, candidate_path = match
+            exact_failure = attempt.progress == "failed"
+            event_seqs = (finding.claim.seq, attempt.start_event_seq, *attempt.event_seqs)
+            explanations.append(
+                CausalExplanation(
+                    explanation_id=f"explanation:{len(explanations) + 1}",
+                    kind="namespace_truncation_failure",
+                    confidence="correlated" if exact_failure else "counterfactual",
+                    subject=attempt.fullname,
+                    effect_status="failed" if exact_failure else "outcome_unknown",
+                    cause_finding_id=finding.finding_id,
+                    finder_type_name=finding.claim.finder_type_name,
+                    omitted_location=omitted_location,
+                    candidate_path=candidate_path,
+                    event_seqs=tuple(dict.fromkeys(event_seqs)),
+                    next_observation=None if exact_failure else "enable_deep_import_outcomes",
+                )
+            )
+    return tuple(explanations)
+
+
+def _omitted_module_candidate(omitted_locations: tuple[str, ...], relative_parts: list[str]) -> tuple[str, str] | None:
+    """Find a report-time child directory or module file under an omitted path."""
+    for location in omitted_locations:
+        stem = os.path.join(location, *relative_parts)
+        try:
+            if os.path.isdir(stem):
+                return location, stem
+            for suffix in _MODULE_FILE_SUFFIXES:
+                candidate = stem + suffix
+                if os.path.isfile(candidate):
+                    return location, candidate
+        except OSError:
+            continue
+    return None
 
 
 def _meta_short_circuit_claim_seqs(events: list[MonitorEvent]) -> set[int]:
@@ -1704,6 +1841,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
         "standard_resolutions": [_json_standard_resolution(resolution) for resolution in document.standard_resolutions],
         "timeline": [_json_event(event) for event in document.events],
         "findings": [_json_finding(finding) for finding in document.findings],
+        "explanations": [_json_explanation(explanation) for explanation in document.explanations],
         "diagnostics": {
             "internal_error_refs": [
                 f"event:{event.seq}" for event in document.events if isinstance(event, InternalError)
@@ -2202,6 +2340,23 @@ def _json_finding(finding: Finding) -> dict[str, object]:
     return result
 
 
+def _json_explanation(explanation: CausalExplanation) -> dict[str, object]:
+    """Serialize causal joins without making human prose a schema contract."""
+    return {
+        "candidate_path": explanation.candidate_path,
+        "cause_finding_ref": explanation.cause_finding_id,
+        "confidence": explanation.confidence,
+        "effect_status": explanation.effect_status,
+        "event_refs": [f"event:{seq}" for seq in explanation.event_seqs],
+        "finder_type_name": explanation.finder_type_name,
+        "id": explanation.explanation_id,
+        "kind": explanation.kind,
+        "next_observation": explanation.next_observation,
+        "omitted_location": explanation.omitted_location,
+        "subject": explanation.subject,
+    }
+
+
 def failed_json_document(error_name: str) -> dict[str, object]:
     """Return valid JSON structure when ordinary report generation fails."""
     return {
@@ -2223,6 +2378,7 @@ def failed_json_document(error_name: str) -> dict[str, object]:
         "import_attempts": [],
         "timeline": [],
         "findings": [],
+        "explanations": [],
         "diagnostics": {
             "internal_error_refs": [],
             "report_errors": [{"exception_type_name": error_name, "where": "report_generation"}],
