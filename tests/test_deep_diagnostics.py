@@ -410,6 +410,7 @@ def test_exact_outcomes_refuse_an_existing_profiler(run_python: RunPython) -> No
         "sys.setprofile(profile)\n"
         "monitor = metapathology.install(report_at_exit=False, deep_import_outcomes=True)\n"
         "assert monitor.deep_import_outcomes_status == 'refused_existing_profiler'\n"
+        "assert monitor.standard_finder_status == 'unavailable_existing_profiler'\n"
         "assert sys.getprofile() is profile\n"
         "metapathology.uninstall()\n"
         "assert sys.getprofile() is profile\n"

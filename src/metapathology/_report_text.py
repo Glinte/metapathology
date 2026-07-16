@@ -19,7 +19,7 @@ from metapathology._records import (
     PathHooksReassignment,
     StandardFinderCall,
 )
-from metapathology._report_data import Finding, ReportDocument
+from metapathology._report_data import Finding, ReportDocument, StandardResolution
 
 TYPE_CHECKING = False
 
@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 _PACKAGE_DIR = os.path.normcase(os.path.dirname(os.path.abspath(__file__)))
 # Max non-noise frames shown per stack in the report.
 _STACK_DISPLAY_FRAMES = 5
+_STANDARD_RESOLUTION_DISPLAY_LIMIT = 50
 # Max claimed modules listed per finder in the attribution section.
 _MAX_LISTED_MODULES = 25
 _MAX_CACHE_CHANGES_PER_DIFF = 25
@@ -178,6 +179,9 @@ def render_lines(document: ReportDocument) -> list[str]:
     lines.extend(_attribution_lines(calls, context))
 
     lines.append("")
+    lines.extend(_standard_resolution_lines(document.standard_resolutions, context))
+
+    lines.append("")
     lines.extend(_timeline_lines(document, context))
 
     empty_sections: list[str] = []
@@ -251,6 +255,8 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
         lines.append(f"deep mechanisms enabled: {', '.join(document.deep_diagnostics)}")
     if document.deep_import_outcomes_status != "disabled":
         lines.append(f"deep import outcome coverage: {document.deep_import_outcomes_status}")
+    if document.standard_finder_status != "disabled":
+        lines.append(f"standard finder aggregate coverage: {document.standard_finder_status}")
     bootstrap = document.early_site_bootstrap
     if bootstrap is not None:
         lines.append(f"early site bootstrap: {context.display_path(bootstrap.path)}")
@@ -347,6 +353,33 @@ def _internal_error_line(error: InternalError) -> str:
     """Format an internal error without requiring captured foreign exception text."""
     line = f"#{error.seq} in {error.where}: {error.exception_type_name}"
     return line if error.message is None else f"{line}: {error.message}"
+
+
+def _standard_resolution_lines(resolutions: tuple[StandardResolution, ...], context: _RenderContext) -> list[str]:
+    """Render a bounded projection without hiding evidence provenance."""
+    lines = [f"-- standard resolution outcomes ({len(resolutions)}) --"]
+    if not resolutions:
+        lines.append("(none)")
+        return lines
+    for resolution in resolutions[:_STANDARD_RESOLUTION_DISPLAY_LIMIT]:
+        origin = "None" if resolution.origin is None else context.quoted_path(resolution.origin)
+        line = (
+            f"[{resolution.evidence_level} standard resolution] {resolution.fullname!r}: "
+            f"{resolution.finder_type_name} produced {resolution.category} "
+            f"(loader {resolution.loader_type_name}, origin {origin})"
+        )
+        lines.append(line)
+        if resolution.later_finders:
+            lines.append(f"    later meta-path entries were unreachable: {_names_line(resolution.later_finders)}")
+        if resolution.component_event_seqs:
+            references = ", ".join(f"#{seq}" for seq in resolution.component_event_seqs)
+            lines.append(f"    captured path-entry components: {references}")
+        if resolution.evidence_level == "inferred":
+            lines.append("    based on import-time ordering and post-hoc loader inventory; no finder call was captured")
+    omitted = len(resolutions) - _STANDARD_RESOLUTION_DISPLAY_LIMIT
+    if omitted > 0:
+        lines.append(f"... {omitted} additional standard outcomes omitted from text; JSON remains exhaustive")
+    return lines
 
 
 def _timeline_lines(document: ReportDocument, context: _RenderContext) -> list[str]:

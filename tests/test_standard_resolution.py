@@ -26,6 +26,9 @@ def test_default_report_infers_namespace_before_later_finder(run_python: RunPyth
         "assert not any(event['kind'] == 'find_spec_call' "
         "and event['fullname'] == 'standard_namespace' "
         "and event['finder_type_name'] == 'LaterFinder' for event in document['timeline'])\n"
+        "text = metapathology.render_report()\n"
+        "assert '[inferred standard resolution]' in text\n"
+        "assert 'later meta-path entries were unreachable: [LaterFinder]' in text\n"
         "print('OK')\n"
     )
     assert proc.returncode == 0, proc.stderr
@@ -53,6 +56,9 @@ def test_deep_report_captures_source_resolution(run_python: RunPython, tmp_path:
         "component = next(event for event in document['timeline'] "
         "if event['id'] == resolution['component_event_refs'][0])\n"
         f"assert component['path'] == {str(module_dir)!r}\n"
+        "text = metapathology.render_report()\n"
+        "assert 'standard finder aggregate coverage: active_path_finder_aggregate' in text\n"
+        "assert '[captured standard resolution]' in text\n"
         "print('OK')\n"
     )
     assert proc.returncode == 0, proc.stderr

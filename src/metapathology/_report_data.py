@@ -501,6 +501,7 @@ class ReportDocument(_Record):
         "_path_hooks_enabled",
         "_report_errors",
         "_skipped_finders",
+        "_standard_finder_status",
         "_standard_resolutions",
     )
     _fields = (
@@ -529,6 +530,7 @@ class ReportDocument(_Record):
         "deep_import_outcomes_status",
         "skipped_finders",
         "standard_resolutions",
+        "standard_finder_status",
         "findings",
         "report_errors",
         "cwd",
@@ -559,6 +561,7 @@ class ReportDocument(_Record):
     deep_import_outcomes_status = _ReadOnlyField[str]("_deep_import_outcomes_status")
     skipped_finders = _ReadOnlyField[tuple[SkippedFinder, ...]]("_skipped_finders")
     standard_resolutions = _ReadOnlyField[tuple[StandardResolution, ...]]("_standard_resolutions")
+    standard_finder_status = _ReadOnlyField[str]("_standard_finder_status")
     findings = _ReadOnlyField[tuple[Finding, ...]]("_findings")
     report_errors = _ReadOnlyField[tuple[ReportError, ...]]("_report_errors")
     cwd = _ReadOnlyField[str | None]("_cwd")
@@ -592,6 +595,7 @@ class ReportDocument(_Record):
         deep_import_outcomes_status: str,
         skipped_finders: tuple[SkippedFinder, ...],
         standard_resolutions: tuple[StandardResolution, ...],
+        standard_finder_status: str,
         findings: tuple[Finding, ...],
         report_errors: tuple[ReportError, ...],
         cwd: str | None,
@@ -622,6 +626,7 @@ class ReportDocument(_Record):
         self._deep_import_outcomes_status = deep_import_outcomes_status
         self._skipped_finders = skipped_finders
         self._standard_resolutions = standard_resolutions
+        self._standard_finder_status = standard_finder_status
         self._findings = findings
         self._report_errors = report_errors
         self._cwd = cwd
@@ -708,6 +713,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         deep_import_outcomes_status=monitor.deep_import_outcomes_status,
         skipped_finders=skipped_finders,
         standard_resolutions=standard_resolutions,
+        standard_finder_status=monitor.standard_finder_status,
         findings=findings,
         report_errors=tuple(report_errors),
         cwd=cwd,
@@ -1325,6 +1331,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
     calls = sum(isinstance(event, FindSpecCall) for event in document.events)
     deep_calls = sum(isinstance(event, DeepDiagnosticCall) for event in document.events)
     deep_import_events = sum(isinstance(event, DeepImportEvent) for event in document.events)
+    standard_finder_calls = sum(isinstance(event, StandardFinderCall) for event in document.events)
     version = sys.version_info
     return {
         "schema": {"major": _SCHEMA_MAJOR, "minor": _SCHEMA_MINOR, "name": _SCHEMA_NAME},
@@ -1356,6 +1363,12 @@ def json_document(document: ReportDocument) -> dict[str, object]:
                     "import_outcomes" in document.deep_diagnostics,
                     deep_import_events,
                     document.deep_import_outcomes_status,
+                ),
+                _mechanism(
+                    "standard_finder_aggregate",
+                    document.standard_finder_status.startswith("active_"),
+                    standard_finder_calls,
+                    document.standard_finder_status,
                 ),
                 _mechanism("path_hooks_mutations", document.path_hooks_enabled, path_hook_mutations, "best_effort"),
                 _mechanism(

@@ -325,6 +325,7 @@ class Monitor:
         self._deep_loaders = False
         self._deep_import_outcomes = False
         self._deep_import_outcomes_status = "disabled"
+        self._standard_finder_status = "disabled"
         self._deep_import_code: types.CodeType | None = None
         self._path_finder_code: types.CodeType | None = None
         self._deep_hook_wrappers: dict[int, tuple[object, object]] = {}
@@ -374,6 +375,11 @@ class Monitor:
     def deep_import_outcomes_status(self) -> str:
         """Activation state and thread scope of exact import outcomes."""
         return self._deep_import_outcomes_status
+
+    @property
+    def standard_finder_status(self) -> str:
+        """Availability of exact aggregate standard-finder evidence."""
+        return self._standard_finder_status
 
     @property
     def initial_importer_cache(self) -> tuple[ImporterCacheEntry, ...]:
@@ -610,6 +616,7 @@ class Monitor:
         """Install a reversible profiler for the captured CPython import boundary."""
         if sys.getprofile() is not None or threading.getprofile() is not None:
             self._deep_import_outcomes_status = "refused_existing_profiler"
+            self._standard_finder_status = "unavailable_existing_profiler"
             return
         boundary = getattr(_importlib_bootstrap, "_find_and_load", None)
         code = getattr(boundary, "__code__", None)
@@ -620,6 +627,9 @@ class Monitor:
         path_finder = getattr(PathFinder.find_spec, "__func__", None)
         path_finder_code = getattr(path_finder, "__code__", None)
         self._path_finder_code = path_finder_code if isinstance(path_finder_code, types.CodeType) else None
+        self._standard_finder_status = (
+            "active_path_finder_aggregate" if self._path_finder_code is not None else "unsupported_path_finder_boundary"
+        )
         self._deep_import_outcomes = True
         self._deep_import_outcomes_status = "active_current_and_future_threading_threads_cache_hits_not_observed"
         threading.setprofile(self._profile_import_boundary)
@@ -999,6 +1009,7 @@ class Monitor:
                 self._deep_import_code = None
                 self._path_finder_code = None
                 self._deep_import_outcomes_status = "inactive_after_uninstall"
+                self._standard_finder_status = "inactive_after_uninstall"
             current = sys.meta_path
             if isinstance(current, _InstrumentedMetaPath):
                 sys.meta_path = list(current)
