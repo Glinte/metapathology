@@ -942,6 +942,7 @@ class Monitor:
                 @functools.wraps(original_exec, assigned=(), updated=())
                 def wrapped_exec(module: object) -> object:
                     fullname = safe_module_name(module)
+                    target_state = ModuleCacheState("object", id(module), type_name(module))
                     if not self._enabled:
                         return original_exec(module)
                     if self._deep_local.active:
@@ -953,6 +954,7 @@ class Monitor:
                             None,
                             "unobserved_reentrant",
                             None,
+                            target_state=target_state,
                         )
                         return original_exec(module)
                     state_before = None if fullname is None else module_cache_state(sys.modules, fullname)
@@ -972,6 +974,7 @@ class Monitor:
                                 type(exc).__name__,
                                 state_before,
                                 state_after,
+                                target_state,
                             )
                             raise
                         state_after = None if fullname is None else module_cache_state(sys.modules, fullname)
@@ -985,6 +988,7 @@ class Monitor:
                             None,
                             state_before,
                             state_after,
+                            target_state,
                         )
                         return result
                     finally:
@@ -1015,6 +1019,7 @@ class Monitor:
         exception_type_name: str | None,
         module_state_before: ModuleCacheState | None = None,
         module_state_after: ModuleCacheState | None = None,
+        target_state: ModuleCacheState | None = None,
     ) -> None:
         """Append primitive-only deep evidence without holding a lock across delegation."""
         thread_name = threading.current_thread().name
@@ -1035,6 +1040,7 @@ class Monitor:
                     thread_id,
                     module_state_before,
                     module_state_after,
+                    target_state,
                 )
             )
 

@@ -318,8 +318,13 @@ def _explanation_lines(explanation: CausalExplanation, context: _RenderContext) 
             "    nested activity was not observed; the boundary delta does not identify the internal cause",
         ]
     if explanation.kind == "module_replacement":
+        action = (
+            "executed a separate module object for"
+            if explanation.effect_status == "separate_module_executed"
+            else "replaced the module identity for"
+        )
         return [
-            f"[captured] {explanation.finder_type_name} replaced the module identity for '{explanation.subject}'",
+            f"[captured] {explanation.finder_type_name} {action} '{explanation.subject}'",
             f"    {explanation.boundary} boundary: {_module_transition(explanation.state_before, explanation.state_after)}",
             "    both endpoint identities are exact; intermediate steps remain unknown",
         ]
@@ -333,6 +338,21 @@ def _primary_explanations(explanations: tuple[CausalExplanation, ...]) -> tuple[
         return tuple(sorted(namespace, key=lambda item: item.effect_status != "failed"))
     exact = tuple(item for item in explanations if item.confidence in ("captured", "correlated"))
     return exact or explanations
+
+
+def _deep_effective_module_state(call: DeepDiagnosticCall) -> ModuleCacheState | None:
+    """Prefer an executed module argument when it differs from the cache entry."""
+    before = call.module_state_before
+    target = call.target_state
+    if (
+        before is not None
+        and before.state == "object"
+        and target is not None
+        and target.state == "object"
+        and before.object_id != target.object_id
+    ):
+        return target
+    return call.module_state_after
 
 
 def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
@@ -903,7 +923,7 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
         ]
     if finding.kind == "module_replacement" and finding.deep_call is not None:
         call = finding.deep_call
-        transition = _module_transition(call.module_state_before, call.module_state_after)
+        transition = _module_transition(call.module_state_before, _deep_effective_module_state(call))
         return [
             f"[module-replacement] '{finding.module}': object identity changed across deep {call.boundary}",
             f"    captured boundary: {transition}; internal steps and temporary objects are unknown",

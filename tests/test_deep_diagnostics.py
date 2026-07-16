@@ -152,7 +152,7 @@ class ReplacingLoader:
     def create_module(self, spec):
         return None
     def exec_module(self, module):
-        sys.modules[module.__name__] = module
+        module.LOADED = True
 
 class Finder:
     def __init__(self):
@@ -182,8 +182,10 @@ events = [
 assert len(events) == 2, events
 assert events[0].module_state_before.object_id == id(first)
 assert events[0].module_state_after.object_id == id(first)
+assert events[0].target_state.object_id == id(first)
 assert events[1].module_state_before.object_id == id(first)
-assert events[1].module_state_after.object_id == id(second)
+assert events[1].module_state_after.object_id == id(first)
+assert events[1].target_state.object_id == id(second)
 assert first.__spec__.origin == second.__spec__.origin == "shared.ext"
 document = json.loads(metapathology.render_report(format="json"))
 finding = next(item for item in document["findings"] if item["kind"] == "module_replacement")
@@ -192,16 +194,18 @@ assert finding["evidence"]["level"] == "captured"
 assert finding["evidence"]["event_refs"] == ["event:" + str(events[1].seq)]
 assert finding["deep_call"]["event_ref"] == "event:" + str(events[1].seq)
 assert finding["deep_call"]["module_state_before"]["object_id"] == hex(id(first))
-assert finding["deep_call"]["module_state_after"]["object_id"] == hex(id(second))
+assert finding["deep_call"]["module_state_after"]["object_id"] == hex(id(first))
+assert finding["deep_call"]["target_state"]["object_id"] == hex(id(second))
 explanation = next(item for item in document["explanations"] if item["kind"] == "module_replacement")
 assert explanation["confidence"] == "captured"
 assert explanation["cause_finding_ref"] == finding["id"]
 assert explanation["state_before"]["object_id"] == hex(id(first))
 assert explanation["state_after"]["object_id"] == hex(id(second))
+assert explanation["effect_status"] == "separate_module_executed"
 text = metapathology.render_report()
 assert "[module-replacement] 'deep_identity_ext'" in text, text
 assert "internal steps and temporary objects are unknown" in text, text
-assert "[captured] ReplacingLoader replaced the module identity for 'deep_identity_ext'" in text, text
+assert "[captured] ReplacingLoader executed a separate module object for 'deep_identity_ext'" in text, text
 metapathology.uninstall()
 print("OK")
 """

@@ -1298,13 +1298,25 @@ def _causal_explanations(
             )
         elif finding.kind == "module_replacement" and finding.deep_call is not None:
             call = finding.deep_call
+            target_diverged = (
+                call.module_state_before is not None
+                and call.module_state_before.state == "object"
+                and call.target_state is not None
+                and call.target_state.state == "object"
+                and call.module_state_before.object_id != call.target_state.object_id
+                and not (
+                    call.module_state_after is not None
+                    and call.module_state_after.state == "object"
+                    and call.module_state_before.object_id != call.module_state_after.object_id
+                )
+            )
             explanations.append(
                 CausalExplanation(
                     explanation_id=f"explanation:{len(explanations) + 1}",
                     kind="module_replacement",
                     confidence="captured",
                     subject=finding.module,
-                    effect_status="module_identity_replaced",
+                    effect_status="separate_module_executed" if target_diverged else "module_identity_replaced",
                     cause_finding_id=finding.finding_id,
                     finder_type_name=call.object_type_name,
                     omitted_location="",
@@ -1313,7 +1325,7 @@ def _causal_explanations(
                     next_observation=None,
                     boundary=call.boundary,
                     state_before=call.module_state_before,
-                    state_after=call.module_state_after,
+                    state_after=call.target_state if target_diverged else call.module_state_after,
                 )
             )
     return tuple(explanations)
@@ -1650,14 +1662,23 @@ def _module_replacement_findings(events: list[MonitorEvent], offset: int) -> lis
             continue
         before = event.module_state_before
         after = event.module_state_after
-        if (
-            before is None
-            or after is None
-            or before.state != "object"
-            or after.state != "object"
-            or before.object_id == after.object_id
-            or event.fullname is None
-        ):
+        target = event.target_state
+        cache_replaced = (
+            before is not None
+            and after is not None
+            and before.state == "object"
+            and after.state == "object"
+            and before.object_id != after.object_id
+        )
+        target_diverged = (
+            event.boundary == "loader_exec_module"
+            and before is not None
+            and before.state == "object"
+            and target is not None
+            and target.state == "object"
+            and before.object_id != target.object_id
+        )
+        if event.fullname is None or not (cache_replaced or target_diverged):
             continue
         findings.append(
             Finding(
@@ -2097,6 +2118,7 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
                 "object_type_name": event.object_type_name,
                 "outcome": event.outcome,
                 "path": event.path,
+                "target_state": _json_module_state(event.target_state),
                 "thread_name": event.thread_name,
                 "thread_id": event.thread_id,
             }
@@ -2418,6 +2440,7 @@ def _json_finding(finding: Finding) -> dict[str, object]:
             "module_state_after": _json_module_state(finding.deep_call.module_state_after),
             "module_state_before": _json_module_state(finding.deep_call.module_state_before),
             "outcome": finding.deep_call.outcome,
+            "target_state": _json_module_state(finding.deep_call.target_state),
         }
     if finding.replay is not None:
         result["path_finder_replay"] = {

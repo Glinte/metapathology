@@ -688,6 +688,7 @@ class DeepDiagnosticCall(_Record):
         "_outcome",
         "_path",
         "_seq",
+        "_target_state",
         "_thread_id",
         "_thread_name",
     )
@@ -704,6 +705,7 @@ class DeepDiagnosticCall(_Record):
         "exception_type_name",
         "thread_name",
         "thread_id",
+        "target_state",
     )
     seq = _ReadOnlyField[int]("_seq")
     boundary = _ReadOnlyField[str]("_boundary")
@@ -717,6 +719,7 @@ class DeepDiagnosticCall(_Record):
     exception_type_name = _ReadOnlyField[str | None]("_exception_type_name")
     thread_name = _ReadOnlyField[str]("_thread_name")
     thread_id = _ReadOnlyField[int]("_thread_id")
+    target_state = _ReadOnlyField[ModuleCacheState | None]("_target_state")
 
     def __init__(
         self,
@@ -732,6 +735,7 @@ class DeepDiagnosticCall(_Record):
         thread_id: int,
         module_state_before: ModuleCacheState | None = None,
         module_state_after: ModuleCacheState | None = None,
+        target_state: ModuleCacheState | None = None,
     ) -> None:
         self._seq = seq
         self._boundary = boundary
@@ -745,6 +749,7 @@ class DeepDiagnosticCall(_Record):
         self._exception_type_name = exception_type_name
         self._thread_name = thread_name
         self._thread_id = thread_id
+        self._target_state = target_state
 
 
 class DeepImportEvent(_Record):
