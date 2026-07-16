@@ -53,6 +53,14 @@ Real module dictionaries are read without subclass dispatch so lazy modules
 are not materialized; arbitrary module-like cache values are labeled
 unavailable instead of probed dynamically.
 
+Default standard-finder attribution inherits those post-hoc limitations and
+is always labeled inferred. It also requires an import audit start; cache hits,
+manual loader calls, and import entry points that do not emit that event cannot
+be reconstructed from inventory alone. Exact aggregate `PathFinder` evidence
+requires deep import outcomes, an unused profiling slot, and a discoverable
+Python `PathFinder.find_spec` code object on the running CPython. The report
+states when either prerequisite is unavailable and falls back to inference.
+
 [audit-events]: https://docs.python.org/3/library/audit_events.html#audit-events
 [site-pth]: https://docs.python.org/3/library/site.html
 [spec-from-file]: https://docs.python.org/3/library/importlib.html#importlib.util.spec_from_file_location

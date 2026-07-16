@@ -73,7 +73,7 @@ format.
 ### `render_report(*, format="text") -> str`
 
 Returns text or JSON, including its trailing newline. JSON currently uses the
-experimental `metapathology.report` schema version 0.13. Its shape may change
+experimental `metapathology.report` schema version 0.14. Its shape may change
 throughout schema 0.x; schema 1.0 will be reviewed once the evidence model stabilizes.
 Raises `RuntimeError` before the first installation and `ValueError` for an
 unknown format. Ordinary generation failures degrade to a valid failure
@@ -93,6 +93,8 @@ competing monitors is not supported because import state is process-global.
   is currently active.
 - `deep_diagnostics: tuple[str, ...]` — explicitly enabled inline delegation
   mechanisms.
+- `standard_finder_status: str` — whether exact aggregate `PathFinder`
+  profiling is active, unavailable, unsupported, or inactive after cleanup.
 - `initial_importer_cache: tuple[ImporterCacheEntry, ...]` — string-keyed
   cache entries captured when importer-cache monitoring was enabled.
 - `baseline_modules: frozenset[str]` — `sys.modules` names at installation.
@@ -122,6 +124,14 @@ the per-thread guard suppressed exact nested instrumentation. Modern mutable
 loaders use `loader_create_module` and `loader_exec_module`; absent methods are
 not added, and legacy `load_module` is not wrapped. Loader records also carry
 the target's `ModuleCacheState` at entry and return or exception exit.
+
+### `StandardFinderCall`
+
+Records a successful aggregate `PathFinder` result captured by the opt-in
+reversible profiler. It links the semantic `SpecSummary` to the exact T13
+attempt and thread without modifying the shared `PathFinder` class. No record
+is invented when runtime code-object discovery or profiler ownership prevents
+capture; consult `Monitor.standard_finder_status` and the report fallback.
 
 ### `ImportAuditStart`
 

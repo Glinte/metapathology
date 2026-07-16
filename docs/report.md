@@ -112,6 +112,29 @@ the interpreter, so metapathology deliberately does not modify them. This is
 normal and does not indicate degraded installation. The report later uses a
 fresh `PathFinder` call when checking suspicious custom-finder claims.
 
+## Standard resolution outcomes
+
+Default reports may attribute built-in, frozen, source, bytecode, extension,
+zip, and namespace results to the matching standard finder. These records are
+explicitly `inferred`: they combine an import audit start, its meta-path order,
+absence of a contradictory captured custom claim, and post-hoc loader
+metadata. They can explain why a later finder was unreachable, but they are
+not historical `find_spec()` calls.
+
+When deep import outcomes are enabled and CPython exposes a supported Python
+code boundary for `PathFinder.find_spec`, the existing reversible profiler
+captures its aggregate returned spec. Such records are `captured`, use the
+import-time phase, and link to the exact timeline event and import attempt.
+Deep path-entry finder calls are linked as component evidence when available;
+their path remains null when it was not known at instrumentation time.
+
+The header and JSON capture mechanisms report whether aggregate capture is
+active, unsupported on the running CPython, or unavailable because another
+profiler was already installed. In either unavailable case, the report keeps
+the conservative inference rather than replacing or proxying `PathFinder`.
+Live `PathFinder` replay remains separately labeled report-time
+counterfactual evidence and never upgrades attribution.
+
 Any nonstandard entries that could not be wrapped appear separately under
 "other finders observed but not instrumented." Their calls are not directly
 recorded, so attribution may require elimination.

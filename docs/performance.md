@@ -148,6 +148,12 @@ finder, and loader wrappers also add one Python call boundary to the selected
 foreign operations, so their overhead is intentionally outside the default
 mode's performance guarantee.
 
+When deep import outcomes are active on a supported CPython, successful
+aggregate `PathFinder` results add one constant-size semantic spec record to
+the same exhaustive event log. They introduce no separate queue, cache, retry
+loop, or overflow policy. Text displays at most 50 derived standard outcomes;
+JSON retains all attempt-linked outcomes.
+
 The post-hoc loader inventory is not a lifetime producer. Each report copies
 `sys.modules.items()` once and retains plain metadata proportional to the
 number of string-keyed entries for the lifetime of that report document. Text

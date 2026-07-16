@@ -154,6 +154,13 @@ wrapped. The report identifies these as expected standard finders and explains
 their roles. Other class entries and slotted objects are reported separately
 when direct finder-call recording is unavailable.
 
+Default reports can still infer a standard result by joining import-time
+ordering with conservative post-hoc loader metadata. The inference label is
+important: metadata may have changed after loading. Opt-in deep import
+outcomes also profile the runtime-discovered `PathFinder.find_spec` code object
+when CPython exposes it, capturing the aggregate returned spec without
+shadowing or replacing the class entry.
+
 [find-spec]: https://docs.python.org/3/library/importlib.html#importlib.abc.MetaPathFinder.find_spec
 
 ## Bypass comparison

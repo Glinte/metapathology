@@ -159,8 +159,8 @@ For integration with another diagnostic or test harness:
 - `metapathology.get_monitor()` returns the process-wide monitor, or `None`
   before the first call to `install()`; and
 - `monitor.events()` returns a capture-order snapshot of the structured
-  `ImportAuditStart`, `FindSpecCall`, `DeepDiagnosticCall`, meta-path, path-hooks, importer-cache,
-  and `InternalError` records. Path-hook records use `ImportObjectRef` values
+  `ImportAuditStart`, `FindSpecCall`, `StandardFinderCall`, `DeepDiagnosticCall`,
+  meta-path, path-hooks, importer-cache, and `InternalError` records. Path-hook records use `ImportObjectRef` values
   containing captured identity and safe type/name metadata. Mutating the
   returned list does not alter the monitor.
 
@@ -180,6 +180,13 @@ The post-hoc loader inventory separately groups all modules present at report
 time by safe loader type and identity, including modules that predate
 installation. It flags disagreement between `__spec__.loader` and
 `__loader__` as metadata evidence and does not materialize lazy modules.
+The standard-resolution section joins that inventory to import-time ordering
+and labels the result `inferred`. With `--deep`, CPython's aggregate
+`PathFinder` result is captured through the reversible profiler and labeled
+`captured`; neither form modifies the shared standard finder classes. The
+report distinguishes built-in, frozen, source, bytecode, extension, zip, and
+namespace outcomes and names later meta-path finders made unreachable by an
+earlier standard result.
 The suspicious-findings section uses these labels:
 
 - `[bypass]` means a custom finder claimed a source module, but a report-time

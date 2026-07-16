@@ -83,6 +83,12 @@ affect membership checks. Reports display a warning whenever any deep
 mechanism is active. Use this mode only in a diagnostic reproduction after
 passive evidence proves insufficient.
 
+Exact aggregate `PathFinder` attribution is part of the deep import-outcomes
+mechanism. It shares that mechanism's reversible profiler and is available
+only when no profiler was already installed and the running CPython exposes a
+discoverable Python `PathFinder.find_spec` boundary. The report states the
+availability status and falls back to labeled inference when necessary.
+
 Default finder monitoring records constant-size target-module identity before
 and after each delegated `find_spec()` call. This can identify a finder that
 changes `sys.modules` before passing or raising. With `--deep-loaders`, the
