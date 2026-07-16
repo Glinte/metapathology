@@ -2,10 +2,11 @@
 
 import types
 
-from metapathology._records import ImportObjectRef, SpecSummary, type_name
+from metapathology._records import ImportObjectRef, ModuleCacheState, SpecSummary, type_name
 from metapathology._spec import summarize_spec
 
 TYPE_CHECKING = False
+_MISSING = object()
 
 if TYPE_CHECKING:
     from typing import cast as _cast
@@ -69,6 +70,30 @@ class ModuleMetadata:
 def object_ref(value: object) -> ImportObjectRef:
     """Return import-safe identity metadata for an arbitrary object."""
     return ImportObjectRef(id(value), type_name(value))
+
+
+def module_cache_state(cache: object, name: str) -> ModuleCacheState:
+    """Read one module-cache identity without foreign mapping dispatch.
+
+    Args:
+        cache: Candidate module cache, normally ``sys.modules``.
+        name: Exact module name to inspect.
+
+    Returns:
+        Constant-size plain identity evidence. Non-dictionary containers are
+        unavailable rather than inspected through their mapping protocol.
+    """
+    if not isinstance(cache, dict):
+        return ModuleCacheState("unavailable")
+    try:
+        value = dict.get(cache, name, _MISSING)
+    except BaseException:
+        return ModuleCacheState("unavailable")
+    if value is _MISSING:
+        return ModuleCacheState("missing")
+    if value is None:
+        return ModuleCacheState("none")
+    return ModuleCacheState("object", id(value), type_name(value))
 
 
 def module_namespace(module: object) -> tuple[dict[str, object] | None, str | None]:

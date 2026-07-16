@@ -101,6 +101,21 @@ class ImportObjectRef(_Record):
         self._name = name
 
 
+class ModuleCacheState(_Record):
+    """Plain identity state for one name in a module cache."""
+
+    __slots__ = ("_object_id", "_state", "_type_name")
+    _fields = ("state", "object_id", "type_name")
+    state = _ReadOnlyField[str]("_state")
+    object_id = _ReadOnlyField[int | None]("_object_id")
+    type_name = _ReadOnlyField[str | None]("_type_name")
+
+    def __init__(self, state: str, object_id: int | None = None, type_name: str | None = None) -> None:
+        self._state = state
+        self._object_id = object_id
+        self._type_name = type_name
+
+
 class ImporterCacheEntry(_Record):
     """One string-keyed ``sys.path_importer_cache`` entry.
 
