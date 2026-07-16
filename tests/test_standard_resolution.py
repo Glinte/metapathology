@@ -1,8 +1,40 @@
 """Standard finder attribution coverage."""
 
+from importlib.abc import Loader
+from importlib.machinery import (
+    BuiltinImporter,
+    ExtensionFileLoader,
+    FrozenImporter,
+    ModuleSpec,
+    SourceFileLoader,
+    SourcelessFileLoader,
+)
 from pathlib import Path
+from typing import cast
 
 from conftest import RunPython
+
+from metapathology._report_data import _standard_spec_classification
+from metapathology._spec import summarize_spec
+
+
+def test_standard_loader_categories_are_explicit() -> None:
+    zip_loader_type = type("zipimporter", (), {})
+    specs = (
+        (ModuleSpec("built_in", cast("Loader", BuiltinImporter), origin="built-in"), "built_in"),
+        (ModuleSpec("frozen", cast("Loader", FrozenImporter), origin="frozen"), "frozen"),
+        (ModuleSpec("source", SourceFileLoader("source", "source.py")), "source"),
+        (ModuleSpec("bytecode", SourcelessFileLoader("bytecode", "bytecode.pyc")), "bytecode"),
+        (ModuleSpec("extension", ExtensionFileLoader("extension", "extension.pyd")), "extension"),
+        (ModuleSpec("zipped", cast("Loader", zip_loader_type())), "zip"),
+        (ModuleSpec("namespace", None, is_package=True), "namespace"),
+    )
+    specs[-1][0].submodule_search_locations = []
+    for spec, expected in specs:
+        summary, _loader = summarize_spec(spec, iterate_foreign_locations=False)
+        classified = _standard_spec_classification(summary)
+        assert classified is not None
+        assert classified[1] == expected
 
 
 def test_default_report_infers_namespace_before_later_finder(run_python: RunPython, tmp_path: Path) -> None:
