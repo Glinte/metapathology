@@ -16,7 +16,9 @@ Both runs print `same repr: True` and `same class object: False`. No Discord
 token or network connection is needed. The duplicate execution uses low-level
 importlib utilities and therefore does not represent a second normal meta-path
 claim, but the replacement module retains a valid ordinary-looking spec.
-Metapathology currently stays silent about `ext`: this reproduction documents
-a blind spot that cannot be fixed by treating every valid-spec module without
-an instrumented custom-finder claim as manual, because the deliberately
-unwrapped standard `PathFinder` loads normal modules that way too.
+Default monitoring labels this low-level identity transition unobservable
+because the second execution emits no ordinary import event. Run
+`python -m metapathology --deep-path-hooks --deep-path-entry-finders
+--deep-loaders invoke.py` to capture both loader executions;
+the report then explains that `SourceFileLoader` executed a separate module
+object for `ext` while linking the two observed boundaries.

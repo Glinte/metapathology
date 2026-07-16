@@ -55,5 +55,3 @@ nothing recorded: sys.meta_path mutations, ..., internal errors
 
 This directly identifies the cause: scikit-build-core's meta-path finder wins
 before `PathFinder` can reach the path hook installed by `beartype.claw`.
-The script also validates stable captured `[meta-bypass]` evidence and the
-compatible replay-based finding in the generated JSON report.

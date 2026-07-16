@@ -8,7 +8,7 @@ try {
     uv run --no-sync python invoke.py
 
     Write-Host "`n=== Same extension load under metapathology ==="
-    uv run --no-sync metapathology invoke.py
+    uv run --no-sync metapathology --deep-path-hooks --deep-path-entry-finders --deep-loaders invoke.py
 } finally {
     Pop-Location
 }
