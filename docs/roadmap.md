@@ -492,7 +492,7 @@ infer namespace truncation from loader differences.
 - Spec comparison never changes the target's import result and cannot make a
   malformed third-party spec fail earlier than it otherwise would.
 
-## T12: Audit finder API contracts
+## T12: Audit finder API contracts (implemented)
 
 **Weakness:** A finder can be present on `sys.meta_path` without implementing
 the modern `find_spec` protocol. CPython may still support a legacy
@@ -504,7 +504,7 @@ vendored six appends `_SixMetaPathImporter`, pytest calls its nonexistent
 the object, but the report does not currently state the compatibility hazard
 before or alongside the traceback.
 
-**Implementation plan:** Deliver the audit in three reviewable stages.
+**Implementation:** Delivered in three reviewable stages.
 
 1. Add a side-effect-free protocol inspector and immutable inventory records.
    Inspect raw instance and class dictionaries with built-in accessors only,

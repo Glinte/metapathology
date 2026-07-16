@@ -226,6 +226,22 @@ at most 25 claimed modules per finder and reports the omitted count.
 Two objects of the same finder class are separate entries because their object
 identities differ.
 
+## Finder API contracts
+
+The exhaustive JSON `finder_contracts` inventory records each observed
+meta-path object's `find_spec` and `find_module` availability, the raw
+dictionary evidence source, its first observed position, and an insertion
+event reference when available. The bounded text section prioritizes
+legacy-only, protocol-less, and indeterminate custom entries, followed by the
+standard CPython class entries.
+
+These labels are compatibility risks rather than defect verdicts. CPython
+3.10 and 3.11 can fall back to a callable `find_module`, CPython 3.12 and later
+cannot, and third-party code that directly iterates `sys.meta_path` may require
+`find_spec` on every version. An indeterminate result means safe raw inspection
+encountered a descriptor, unusual dictionary, or inspection error; the report
+does not resolve it by executing foreign code.
+
 ## Suspicious findings
 
 These findings are leads, not verdicts:

@@ -160,6 +160,12 @@ number of string-keyed entries for the lifetime of that report document. Text
 output caps displayed module names per loader; JSON intentionally projects the
 complete copied inventory.
 
+Finder-contract capture retains one constant-size plain record for every
+distinct meta-path object observed while monitoring is active. This set grows
+with distinct inserted finders, retains all records, and drops none. Raw
+protocol inspection occurs only on first observation, never per finder call;
+text shows at most 50 risk/standard entries while JSON remains exhaustive.
+
 ## Run the environment matrix
 
 The repository's [**Benchmarks** GitHub Actions workflow][benchmark-workflow]

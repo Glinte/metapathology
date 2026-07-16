@@ -93,6 +93,13 @@ Calling `PathFinder.find_spec()` can populate
 effect even though metapathology suppresses its own event recording during
 report analysis.
 
+Finder-contract auditing intentionally ignores protocols available only
+through `__getattr__`, custom `__getattribute__`, or a descriptor that must be
+bound. Such a protocol is reported as absent or indeterminate from raw
+dictionary evidence rather than executed during observation. Entries first
+seen after direct `sys.meta_path` reassignment have a reassignment observation
+boundary but no exact insertion event or insertion stack.
+
 ## Runtime perturbation and cleanup
 
 The monitor temporarily installs `list` subclasses for `sys.meta_path` and,

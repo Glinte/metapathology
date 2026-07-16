@@ -154,6 +154,13 @@ wrapped. The report identifies these as expected standard finders and explains
 their roles. Other class entries and slotted objects are reported separately
 when direct finder-call recording is unavailable.
 
+Before attempting that wrapper, metapathology inventories `find_spec` and the
+legacy `find_module` protocol through raw instance and class dictionaries. It
+does not bind descriptors, invoke dynamic attribute lookup, or call either
+protocol. The first observation of each distinct finder is retained, including
+the insertion mutation sequence when one was captured, so instrumentation
+cannot make the original contract appear more modern than it was.
+
 Default reports can still infer a standard result by joining import-time
 ordering with conservative post-hoc loader metadata. The inference label is
 important: metadata may have changed after loading. Opt-in deep import

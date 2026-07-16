@@ -120,6 +120,11 @@ and library API; see the usage guide for the corresponding
 `METAPATHOLOGY_*` variables.
 Loader instrumentation shadows existing `create_module` and `exec_module`
 methods only; it never adds missing methods or wraps legacy `load_module`.
+Every meta-path entry is also audited without calling its protocols. Reports
+identify modern, legacy-only, protocol-less, and indeterminate finder
+contracts and link entries added during monitoring to their mutation stacks.
+Legacy-only is a compatibility risk: CPython 3.12 removed the `find_module`
+fallback, and direct meta-path consumers may require `find_spec` even earlier.
 Exact import outcomes profile CPython's private `_find_and_load` boundary and
 are supported on CPython 3.10--3.14. They cover the installing thread and
 threads subsequently created through `threading`, but not already-running or
