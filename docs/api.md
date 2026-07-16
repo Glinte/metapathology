@@ -9,7 +9,7 @@ truth for the supported public API.
 
 ## Lifecycle and reporting
 
-### `install(*, report_at_exit=True, report_destination=None, report_format=None, monitor_path_hooks=True, monitor_importer_cache=True, deep_path_hooks=False, deep_path_entry_finders=False, deep_loaders=False) -> Monitor`
+### `install(*, report_at_exit=True, report_destination=None, report_format=None, monitor_path_hooks=None, monitor_importer_cache=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None) -> Monitor`
 
 Installs the process-wide monitor and returns it. Repeated calls return and
 enable the same monitor. Only activity after installation can be observed.
@@ -26,11 +26,18 @@ mechanism. Use `uninstall()` for cleanup.
 `monitor_importer_cache` has the same enable-later semantics and controls
 passive `sys.path_importer_cache` snapshots and diffs.
 
-The three `deep_*` switches independently enable exact-delegating wrappers
-around path hooks, mutable path-entry finders, and mutable loaders. They are
-never enabled automatically. Path-hook wrapping changes callable identity;
-all three mechanisms put monitor code inline with foreign imports and should
-be reserved for controlled diagnostic runs.
+`deep=True` enables all four deep mechanisms. Each `deep_*` argument can
+override the umbrella independently for delegated path hooks, mutable
+path-entry finders, mutable loaders, or exact import outcomes. Path-hook
+wrapping changes callable identity; deep mechanisms put monitor code inline
+with imports and should be reserved for controlled diagnostic runs.
+
+Capture booleans resolve consistently: an explicit API value wins, then its
+`METAPATHOLOGY_*` environment value, then the documented default. Accepted
+environment booleans are `1/0`, `true/false`, `yes/no`, and `on/off`
+(case-insensitive). `report_at_exit` remains API-only because it controls
+callback ownership rather than captured evidence. Early bootstrap activation
+remains environment-only because it must run before this API is importable.
 
 Automatic reports always include the current process ID in their filename. For
 process 1234, `report.json` becomes `report.1234.json`. When the configured path

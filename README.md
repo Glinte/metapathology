@@ -107,13 +107,17 @@ Opt-in deep diagnostics can capture delegated path-hook, path-entry finder,
 and modern loader creation/execution calls when passive evidence is insufficient:
 
 ```console
-python -m metapathology --deep-import-outcomes --deep-path-hooks --deep-path-entry-finders --deep-loaders myscript.py
+python -m metapathology --deep myscript.py
 ```
 
 These mechanisms are disabled by default because they put monitor code inline
 with imports and path-hook wrapping changes callable identity. Enable only the
 needed switches in a controlled reproduction; the report warns when any are
 active.
+Each mechanism also has a `--deep-*` / `--no-deep-*` switch. Capture settings
+use the same explicit-value, environment, then default precedence in the CLI
+and library API; see the usage guide for the corresponding
+`METAPATHOLOGY_*` variables.
 Loader instrumentation shadows existing `create_module` and `exec_module`
 methods only; it never adds missing methods or wraps legacy `load_module`.
 Exact import outcomes profile CPython's private `_find_and_load` boundary and

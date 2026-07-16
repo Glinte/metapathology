@@ -72,9 +72,10 @@ Importer-cache monitoring is also enabled by default. Its disable option
 skips passive cache snapshots and diffs; metapathology never replaces the
 cache dictionary in either mode.
 
-Deep diagnostics are disabled by default. The three `--deep-*` options are
-independent and capture exact-delegating path-hook calls, path-entry finder
-decisions, and modern loader creation/execution respectively. Existing
+Deep diagnostics are disabled by default. `--deep` enables all four mechanisms;
+the individual `--deep-*` / `--no-deep-*` options override it for path-hook
+calls, path-entry finder decisions, loader lifecycle calls, and exact import
+outcomes. Existing
 `create_module` and `exec_module` methods are observed; absent methods and
 legacy `load_module` are not added or wrapped. This puts metapathology inline
 with foreign import code: path-hook wrappers change callable identity and can
@@ -88,12 +89,19 @@ calling `install()`:
 ```console
 METAPATHOLOGY_REPORT=diagnostics-{pid}.json
 METAPATHOLOGY_REPORT_FORMAT=json
+METAPATHOLOGY_MONITOR_PATH_HOOKS=true
+METAPATHOLOGY_MONITOR_IMPORTER_CACHE=true
+METAPATHOLOGY_DEEP=false
 ```
 
 Environment variables configure an installed monitor; they do not cause
 metapathology to import or install itself. Explicit API or CLI values take
 precedence. Reports include argv, origins, filesystem paths, and stack
 filenames, so treat them as potentially sensitive diagnostic artifacts.
+Individual deep variables are `METAPATHOLOGY_DEEP_PATH_HOOKS`,
+`METAPATHOLOGY_DEEP_PATH_ENTRY_FINDERS`, `METAPATHOLOGY_DEEP_LOADERS`, and
+`METAPATHOLOGY_DEEP_IMPORT_OUTCOMES`. They override `METAPATHOLOGY_DEEP`.
+Boolean values accept `1/0`, `true/false`, `yes/no`, and `on/off`.
 
 ## Observe later `.pth` files
 
