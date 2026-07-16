@@ -669,8 +669,13 @@ def _loader_inventory_lines(document: ReportDocument, context: _RenderContext) -
     disagreements = [
         entry for entry in inventory.entries if entry.inspection == "available" and entry.loader_agreement is False
     ]
+    relevant_names = set(document.modules_since_install or ())
+    relevant_names.update(
+        event.fullname for event in document.events if isinstance(event, FindSpecCall) and event.found
+    )
     unavailable = sorted(
-        (entry for entry in inventory.entries if entry.inspection != "available"), key=lambda entry: entry.name
+        (entry for entry in inventory.entries if entry.inspection != "available" and entry.name in relevant_names),
+        key=lambda entry: entry.name,
     )
     if not custom and not disagreements and not unavailable and not inventory.non_string_keys:
         return []

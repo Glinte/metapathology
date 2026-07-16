@@ -17,5 +17,6 @@ assert any(
     and finding["module"].startswith("myproject")
     and finding["evidence"]["level"] == "live_replay"
     and finding["severity"] == "informational"
+    and "expected_editable_redirection" in finding["signals"]
     for finding in findings
 ), findings

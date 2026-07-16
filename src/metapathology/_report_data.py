@@ -1399,6 +1399,8 @@ def _contention_finding(
         if spec_comparison.loader_type_changed is True and kind != "loader_displacement":
             signals.append("loader_displacement")
         severity = _finding_severity(kind, winner.finder_type_name)
+        if severity == "informational" and _is_editable_finder(winner.finder_type_name):
+            signals.append("expected_editable_redirection")
         return Finding(
             f"finding:{finding_number}",
             kind,
