@@ -803,6 +803,12 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
             f"[legacy-finder-contract] {contract.finder_type_name}: find_module is callable but find_spec is not",
             "    CPython 3.12+ removed the legacy fallback; direct consumers may require find_spec earlier",
         ]
+    if finding.kind == "path_hook_shadow" and finding.deep_call is not None:
+        call = finding.deep_call
+        return [
+            f"[path-hook-shadow] {context.quoted_path(finding.module)}: distinct hooks accepted this path",
+            f"    captured acceptances: event #{finding.supporting_event_seqs[0]} and event #{call.seq}",
+        ]
     if finding.kind == "module_replacement" and finding.deep_call is not None:
         call = finding.deep_call
         transition = _module_transition(call.module_state_before, call.module_state_after)
@@ -821,6 +827,12 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
             f"[meta-bypass] '{finding.module}': {claim.finder_type_name} claimed before PathFinder",
             f"    captured claim: event #{claim.seq}; later sys.path_hooks-based resolution was not reached",
         ]
+    if finding.kind == "path_cache_displacement" and claim is not None:
+        references = ", ".join(f"#{seq}" for seq in finding.supporting_event_seqs)
+        return [
+            f"[path-cache-displacement] '{finding.module}': relevant cached path finders changed",
+            f"    captured cache changes: {references}; the change is correlated, not proven causal",
+        ]
     if finding.kind == "finder_side_effect" and claim is not None:
         finder = context.finder_label(claim.finder_type_name, claim.finder_id)
         outcome = f"raising {claim.exception_type_name}" if claim.exception_type_name is not None else "returning None"
@@ -833,6 +845,12 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
     tag = finding.kind.replace("_", "-")
     if claim is None or replay is None:
         return [f"[{tag}] '{finding.module}'"]
+    if finding.kind == "loader_displacement":
+        return [
+            f"[loader-displacement] '{finding.module}': captured claim and live PathFinder replay chose different loader types",
+            f"    {_spec_comparison_line(finding)}",
+            f"    {_structural_comparison_line(finding)}",
+        ]
     finder = context.finder_label(claim.finder_type_name, claim.finder_id)
     claimed_line = f"    claimed: loader {claim.loader_type_name}, origin {_origin_display(claim.origin, context)}"
     if finding.kind == "unfindable":

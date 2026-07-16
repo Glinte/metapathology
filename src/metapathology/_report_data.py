@@ -410,6 +410,7 @@ class Finding(_Record):
         "_spec_comparison",
         "_structural_comparison",
         "_subject_kind",
+        "_supporting_event_seqs",
     )
     _fields = (
         "finding_id",
@@ -421,6 +422,7 @@ class Finding(_Record):
         "finder_contract",
         "limitations",
         "subject_kind",
+        "supporting_event_seqs",
         "replay",
         "spec_comparison",
         "structural_comparison",
@@ -434,6 +436,7 @@ class Finding(_Record):
     finder_contract = _ReadOnlyField[FinderContract | None]("_finder_contract")
     limitations = _ReadOnlyField[tuple[str, ...]]("_limitations")
     subject_kind = _ReadOnlyField[str]("_subject_kind")
+    supporting_event_seqs = _ReadOnlyField[tuple[int, ...]]("_supporting_event_seqs")
     replay = _ReadOnlyField[ReplayResult | None]("_replay")
     spec_comparison = _ReadOnlyField[SpecComparison | None]("_spec_comparison")
     structural_comparison = _ReadOnlyField[StructuralComparison | None]("_structural_comparison")
@@ -452,6 +455,7 @@ class Finding(_Record):
         limitations: tuple[str, ...] = (),
         subject_kind: str = "module",
         finder_contract: FinderContract | None = None,
+        supporting_event_seqs: tuple[int, ...] = (),
     ) -> None:
         self._finding_id = finding_id
         self._kind = kind
@@ -462,6 +466,7 @@ class Finding(_Record):
         self._finder_contract = finder_contract
         self._limitations = limitations
         self._subject_kind = subject_kind
+        self._supporting_event_seqs = supporting_event_seqs
         self._replay = replay
         self._spec_comparison = spec_comparison
         self._structural_comparison = structural_comparison
@@ -999,6 +1004,7 @@ def _suspicious_findings(
     findings.extend(_module_replacement_findings(events, len(findings)))
     baseline = monitor.baseline_modules
     if module_items is None:
+        findings.extend(_path_hook_shadow_findings(events, len(findings)))
         findings.extend(_meta_bypass_findings(events, len(findings)))
         return tuple(findings)
     metadata_by_name = {entry.name: entry for entry in module_metadata}
@@ -1022,6 +1028,8 @@ def _suspicious_findings(
                     limitations=("report_snapshot_cannot_identify_load_mechanism",),
                 )
             )
+    findings.extend(_structural_contention_findings(tuple(findings), len(findings)))
+    findings.extend(_path_hook_shadow_findings(events, len(findings)))
     findings.extend(_meta_bypass_findings(events, len(findings)))
     return tuple(findings)
 
@@ -1074,6 +1082,81 @@ def _meta_bypass_findings(events: list[MonitorEvent], offset: int) -> list[Findi
                 event,
                 evidence_level="captured",
                 limitations=("same_type_entries_cannot_be_distinguished_in_audit_snapshot",),
+            )
+        )
+    return findings
+
+
+def _structural_contention_findings(existing: tuple[Finding, ...], offset: int) -> list[Finding]:
+    """Promote precise loader and importer-cache mechanics from comparisons."""
+    findings: list[Finding] = []
+    for finding in existing:
+        comparison = finding.spec_comparison
+        if comparison is not None and comparison.loader_type_changed is True and finding.claim is not None:
+            findings.append(
+                Finding(
+                    f"finding:{offset + len(findings) + 1}",
+                    "loader_displacement",
+                    finding.module,
+                    finding.claim,
+                    finding.replay,
+                    comparison,
+                    finding.structural_comparison,
+                    evidence_level="live_replay",
+                    limitations=("replay_uses_report_time_importer_state",),
+                )
+            )
+        structural = finding.structural_comparison
+        if structural is None or not structural.importer_cache_changed_paths or finding.claim is None:
+            continue
+        findings.append(
+            Finding(
+                f"finding:{offset + len(findings) + 1}",
+                "path_cache_displacement",
+                finding.module,
+                finding.claim,
+                structural_comparison=structural,
+                evidence_level="structural_inference",
+                limitations=("cache_change_may_not_have_caused_loader_difference",),
+                supporting_event_seqs=structural.importer_cache_event_seqs,
+            )
+        )
+    return findings
+
+
+def _path_hook_shadow_findings(events: list[MonitorEvent], offset: int) -> list[Finding]:
+    """Report paths accepted by distinct hooks across captured deep calls."""
+    accepted: dict[str, DeepDiagnosticCall] = {}
+    findings: list[Finding] = []
+    emitted: set[tuple[str, int, int]] = set()
+    for event in events:
+        if (
+            not isinstance(event, DeepDiagnosticCall)
+            or event.boundary != "path_hook"
+            or event.outcome != "returned"
+            or event.path is None
+        ):
+            continue
+        earlier = accepted.get(event.path)
+        if earlier is None:
+            accepted[event.path] = event
+            continue
+        if earlier.object_id == event.object_id:
+            continue
+        key = (event.path, earlier.object_id, event.object_id)
+        if key in emitted:
+            continue
+        emitted.add(key)
+        findings.append(
+            Finding(
+                f"finding:{offset + len(findings) + 1}",
+                "path_hook_shadow",
+                event.path,
+                deep_call=event,
+                evidence_level="structural_inference",
+                limitations=("acceptance_was_captured_across_distinct_resolution_states",),
+                subject_kind="path",
+                supporting_event_seqs=(earlier.seq,),
             )
         )
     return findings
@@ -1973,6 +2056,10 @@ def _json_finding(finding: Finding) -> dict[str, object]:
         event_refs.append(f"event:{finding.deep_call.seq}")
     if finding.finder_contract is not None and finding.finder_contract.observation_seq is not None:
         event_refs.append(f"event:{finding.finder_contract.observation_seq}")
+    event_refs.extend(f"event:{seq}" for seq in finding.supporting_event_seqs)
+    if finding.structural_comparison is not None:
+        event_refs.extend(f"event:{seq}" for seq in finding.structural_comparison.importer_cache_event_seqs)
+    event_refs = list(dict.fromkeys(event_refs))
     evidence: dict[str, object] = {
         "event_refs": event_refs,
         "level": finding.evidence_level,

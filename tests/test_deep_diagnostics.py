@@ -105,6 +105,41 @@ def test_deep_boundaries_delegate_record_and_restore(run_python: RunPython) -> N
     assert result["mechanisms"] == []
 
 
+def test_distinct_hooks_accepting_one_path_report_structural_shadow(run_python: RunPython, tmp_path: Path) -> None:
+    proc = run_python(
+        "import json, sys, metapathology\n"
+        "class Finder:\n"
+        "    def find_spec(self, fullname, target=None): return None\n"
+        "def first(path):\n"
+        "    if path == sys.argv[1]: return Finder()\n"
+        "    raise ImportError\n"
+        "def second(path):\n"
+        "    if path == sys.argv[1]: return Finder()\n"
+        "    raise ImportError\n"
+        "sys.path_hooks[:0] = [first, second]\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "sys.path_importer_cache.pop(sys.argv[1], None)\n"
+        "metapathology.install(report_at_exit=False, deep_path_hooks=True)\n"
+        "sys.path_importer_cache.pop(sys.argv[1], None)\n"
+        "try: __import__('shadow_first_missing')\n"
+        "except ModuleNotFoundError: pass\n"
+        "list.__setitem__(sys.path_hooks, slice(0, 2), [sys.path_hooks[1], sys.path_hooks[0]])\n"
+        "sys.path_importer_cache.pop(sys.argv[1], None)\n"
+        "try: __import__('shadow_second_missing')\n"
+        "except ModuleNotFoundError: pass\n"
+        "document = json.loads(metapathology.render_report(format='json'))\n"
+        "finding = next(item for item in document['findings'] if item['kind'] == 'path_hook_shadow')\n"
+        "assert finding['subject'] == {'kind': 'path', 'value': sys.argv[1]}\n"
+        "assert finding['evidence']['level'] == 'structural_inference'\n"
+        "assert len(finding['evidence']['event_refs']) == 2\n"
+        "assert '[path-hook-shadow]' in metapathology.render_report()\n"
+        "print('OK')\n",
+        str(tmp_path),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
 DISCORD_10017_MODULE_REPLACEMENT = r"""
 import importlib.machinery
 import json
