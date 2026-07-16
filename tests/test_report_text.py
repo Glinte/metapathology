@@ -38,6 +38,9 @@ document = json.loads(metapathology.render_report(format="json"))
 finding = next(item for item in document["findings"] if item["module"] == target_name)
 assert finding["path_finder_replay"]["evidence_level"] == "live_replay", finding
 assert finding["path_finder_replay"]["state_phase"] == "report", finding
+meta = next(item for item in document["findings"] if item["kind"] == "meta_bypass" and item["module"] == target_name)
+assert meta["evidence"]["level"] == "captured", meta
+assert meta["evidence"]["event_refs"] == [meta["claim"]["event_ref"]], meta
 print(text)
 """
 
@@ -50,6 +53,7 @@ def test_finder_shadowing_path_hooks_is_flagged_as_bypass(run_python: RunPython,
     proc = run_python(BYPASS, "real_mod", str(module_file))
     assert proc.returncode == 0, proc.stderr
     assert "[bypass]" in proc.stdout
+    assert "[meta-bypass]" in proc.stdout
     assert "real_mod" in proc.stdout
     assert "SneakyLoader" in proc.stdout
     assert "SourceFileLoader" in proc.stdout

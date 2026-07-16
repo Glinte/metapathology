@@ -797,6 +797,12 @@ def _attribution_lines(calls: list[FindSpecCall], context: _RenderContext) -> li
 
 def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
     """Render one structured finding as a headline plus labeled evidence lines."""
+    if finding.kind == "legacy_finder_contract" and finding.finder_contract is not None:
+        contract = finding.finder_contract
+        return [
+            f"[legacy-finder-contract] {contract.finder_type_name}: find_module is callable but find_spec is not",
+            "    CPython 3.12+ removed the legacy fallback; direct consumers may require find_spec earlier",
+        ]
     if finding.kind == "module_replacement" and finding.deep_call is not None:
         call = finding.deep_call
         transition = _module_transition(call.module_state_before, call.module_state_after)
@@ -810,6 +816,11 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
             "(manually created or exec_module-style load; invisible to all import hooks)."
         ]
     claim = finding.claim
+    if finding.kind == "meta_bypass" and claim is not None:
+        return [
+            f"[meta-bypass] '{finding.module}': {claim.finder_type_name} claimed before PathFinder",
+            f"    captured claim: event #{claim.seq}; later sys.path_hooks-based resolution was not reached",
+        ]
     if finding.kind == "finder_side_effect" and claim is not None:
         finder = context.finder_label(claim.finder_type_name, claim.finder_id)
         outcome = f"raising {claim.exception_type_name}" if claim.exception_type_name is not None else "returning None"

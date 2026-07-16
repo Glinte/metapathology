@@ -401,6 +401,7 @@ class Finding(_Record):
         "_claim",
         "_deep_call",
         "_evidence_level",
+        "_finder_contract",
         "_finding_id",
         "_kind",
         "_limitations",
@@ -408,6 +409,7 @@ class Finding(_Record):
         "_replay",
         "_spec_comparison",
         "_structural_comparison",
+        "_subject_kind",
     )
     _fields = (
         "finding_id",
@@ -416,7 +418,9 @@ class Finding(_Record):
         "claim",
         "deep_call",
         "evidence_level",
+        "finder_contract",
         "limitations",
+        "subject_kind",
         "replay",
         "spec_comparison",
         "structural_comparison",
@@ -427,7 +431,9 @@ class Finding(_Record):
     claim = _ReadOnlyField[FindSpecCall | None]("_claim")
     deep_call = _ReadOnlyField[DeepDiagnosticCall | None]("_deep_call")
     evidence_level = _ReadOnlyField[str]("_evidence_level")
+    finder_contract = _ReadOnlyField[FinderContract | None]("_finder_contract")
     limitations = _ReadOnlyField[tuple[str, ...]]("_limitations")
+    subject_kind = _ReadOnlyField[str]("_subject_kind")
     replay = _ReadOnlyField[ReplayResult | None]("_replay")
     spec_comparison = _ReadOnlyField[SpecComparison | None]("_spec_comparison")
     structural_comparison = _ReadOnlyField[StructuralComparison | None]("_structural_comparison")
@@ -444,6 +450,8 @@ class Finding(_Record):
         deep_call: DeepDiagnosticCall | None = None,
         evidence_level: str = "post_hoc",
         limitations: tuple[str, ...] = (),
+        subject_kind: str = "module",
+        finder_contract: FinderContract | None = None,
     ) -> None:
         self._finding_id = finding_id
         self._kind = kind
@@ -451,7 +459,9 @@ class Finding(_Record):
         self._claim = claim
         self._deep_call = deep_call
         self._evidence_level = evidence_level
+        self._finder_contract = finder_contract
         self._limitations = limitations
+        self._subject_kind = subject_kind
         self._replay = replay
         self._spec_comparison = spec_comparison
         self._structural_comparison = structural_comparison
@@ -686,6 +696,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
             importer_cache.latest_entries,
             module_items,
             loader_inventory.entries,
+            finder_contracts,
             report_errors,
         )
     finally:
@@ -971,6 +982,7 @@ def _suspicious_findings(
     current_importer_cache: tuple[ImporterCacheEntry, ...] | None,
     module_items: list[tuple[object, object]] | None,
     module_metadata: tuple[ModuleMetadata, ...],
+    finder_contracts: list[FinderContract],
     report_errors: list[ReportError],
 ) -> tuple[Finding, ...]:
     """Cross-reference copied calls against a best-effort module snapshot."""
@@ -982,10 +994,12 @@ def _suspicious_findings(
         initial_importer_cache,
         current_importer_cache,
     )
-    findings = _finder_side_effect_findings(events)
+    findings = _finder_contract_findings(finder_contracts)
+    findings.extend(_finder_side_effect_findings(events, len(findings)))
     findings.extend(_module_replacement_findings(events, len(findings)))
     baseline = monitor.baseline_modules
     if module_items is None:
+        findings.extend(_meta_bypass_findings(events, len(findings)))
         return tuple(findings)
     metadata_by_name = {entry.name: entry for entry in module_metadata}
     for name, module in module_items:
@@ -1008,10 +1022,64 @@ def _suspicious_findings(
                     limitations=("report_snapshot_cannot_identify_load_mechanism",),
                 )
             )
+    findings.extend(_meta_bypass_findings(events, len(findings)))
     return tuple(findings)
 
 
-def _finder_side_effect_findings(events: list[MonitorEvent]) -> list[Finding]:
+def _finder_contract_findings(contracts: list[FinderContract]) -> list[Finding]:
+    """Expose nonstandard legacy-only contracts as actionable findings."""
+    findings: list[Finding] = []
+    for contract in contracts:
+        if _finder_contract_category(contract) != "legacy_only":
+            continue
+        findings.append(
+            Finding(
+                f"finding:{len(findings) + 1}",
+                "legacy_finder_contract",
+                contract.finder_type_name,
+                evidence_level="captured",
+                limitations=("protocols_were_inspected_not_invoked",),
+                subject_kind="finder",
+                finder_contract=contract,
+            )
+        )
+    return findings
+
+
+def _meta_bypass_findings(events: list[MonitorEvent], offset: int) -> list[Finding]:
+    """Find custom claims captured before the import-time PathFinder position."""
+    latest_audit: dict[tuple[int, str], ImportAuditStart] = {}
+    findings: list[Finding] = []
+    for event in events:
+        if isinstance(event, ImportAuditStart):
+            latest_audit[(event.thread_id, event.fullname)] = event
+            continue
+        if not isinstance(event, FindSpecCall) or not event.found:
+            continue
+        audit = latest_audit.get((event.thread_id, event.fullname))
+        if audit is None or audit.seq >= event.seq or "PathFinder" not in audit.meta_path_type_names:
+            continue
+        try:
+            custom_index = audit.meta_path_type_names.index(event.finder_type_name)
+            path_finder_index = audit.meta_path_type_names.index("PathFinder")
+        except ValueError:
+            continue
+        if custom_index >= path_finder_index:
+            continue
+        findings.append(
+            Finding(
+                f"finding:{offset + len(findings) + 1}",
+                "meta_bypass",
+                event.fullname,
+                event,
+                evidence_level="captured",
+                limitations=("same_type_entries_cannot_be_distinguished_in_audit_snapshot",),
+            )
+        )
+    return findings
+
+
+def _finder_side_effect_findings(events: list[MonitorEvent], offset: int) -> list[Finding]:
     """Return captured target-cache changes made by passing or raising finders."""
     findings: list[Finding] = []
     for event in events:
@@ -1023,7 +1091,7 @@ def _finder_side_effect_findings(events: list[MonitorEvent]) -> list[Finding]:
             continue
         findings.append(
             Finding(
-                f"finding:{len(findings) + 1}",
+                f"finding:{offset + len(findings) + 1}",
                 "finder_side_effect",
                 event.fullname,
                 event,
@@ -1903,6 +1971,8 @@ def _json_finding(finding: Finding) -> dict[str, object]:
         event_refs.append(f"event:{finding.claim.seq}")
     if finding.deep_call is not None:
         event_refs.append(f"event:{finding.deep_call.seq}")
+    if finding.finder_contract is not None and finding.finder_contract.observation_seq is not None:
+        event_refs.append(f"event:{finding.finder_contract.observation_seq}")
     evidence: dict[str, object] = {
         "event_refs": event_refs,
         "level": finding.evidence_level,
@@ -1913,7 +1983,10 @@ def _json_finding(finding: Finding) -> dict[str, object]:
         "id": finding.finding_id,
         "kind": finding.kind,
         "module": finding.module,
+        "subject": {"kind": finding.subject_kind, "value": finding.module},
     }
+    if finding.finder_contract is not None:
+        result["finder_contract"] = _json_finder_contract(finding.finder_contract)
     if finding.claim is not None:
         result["claim"] = {
             "event_ref": f"event:{finding.claim.seq}",

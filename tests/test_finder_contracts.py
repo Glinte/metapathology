@@ -114,8 +114,14 @@ assert mutation["added"] == ["LegacyFinder"]
 replacement_contract = next(item for item in legacy_contracts if item["finder_id"] == hex(id(replacement_finder)))
 assert replacement_contract["observation"] == "reassignment"
 assert replacement_contract["observation_event_ref"] is None
+finding = next(item for item in document["findings"] if item["kind"] == "legacy_finder_contract")
+assert finding["subject"] == {"kind": "finder", "value": "LegacyFinder"}
+assert finding["finder_contract"]["finder_id"] == hex(id(finder))
+assert finding["evidence"]["level"] == "captured"
+assert finding["evidence"]["event_refs"] == [event_id]
 text = metapathology.render_report()
 assert "[legacy-only] LegacyFinder" in text, text
+assert "[legacy-finder-contract] LegacyFinder" in text, text
 assert "CPython 3.12+" in text, text
 metapathology.uninstall()
 assert finder.__dict__ == before
