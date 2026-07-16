@@ -101,6 +101,70 @@ class ImportObjectRef(_Record):
         self._name = name
 
 
+class FinderProtocol(_Record):
+    """Conservative raw-dictionary evidence for one finder protocol."""
+
+    __slots__ = ("_availability", "_defined_by", "_evidence")
+    _fields = ("availability", "evidence", "defined_by")
+    availability = _ReadOnlyField[str]("_availability")
+    evidence = _ReadOnlyField[str]("_evidence")
+    defined_by = _ReadOnlyField[str | None]("_defined_by")
+
+    def __init__(self, availability: str, evidence: str, defined_by: str | None) -> None:
+        self._availability = availability
+        self._evidence = evidence
+        self._defined_by = defined_by
+
+
+class FinderContract(_Record):
+    """Protocol inventory captured before metapathology changes a finder."""
+
+    __slots__ = (
+        "_find_module",
+        "_find_spec",
+        "_finder_id",
+        "_finder_type_name",
+        "_observation",
+        "_observation_seq",
+        "_position",
+    )
+    _fields = (
+        "finder_id",
+        "finder_type_name",
+        "position",
+        "observation",
+        "observation_seq",
+        "find_spec",
+        "find_module",
+    )
+    finder_id = _ReadOnlyField[int]("_finder_id")
+    finder_type_name = _ReadOnlyField[str]("_finder_type_name")
+    position = _ReadOnlyField[int]("_position")
+    observation = _ReadOnlyField[str]("_observation")
+    observation_seq = _ReadOnlyField[int | None]("_observation_seq")
+    find_spec = _ReadOnlyField[FinderProtocol]("_find_spec")
+    find_module = _ReadOnlyField[FinderProtocol]("_find_module")
+
+    def __init__(
+        self,
+        *,
+        finder_id: int,
+        finder_type_name: str,
+        position: int,
+        observation: str,
+        observation_seq: int | None,
+        find_spec: FinderProtocol,
+        find_module: FinderProtocol,
+    ) -> None:
+        self._finder_id = finder_id
+        self._finder_type_name = finder_type_name
+        self._position = position
+        self._observation = observation
+        self._observation_seq = observation_seq
+        self._find_spec = find_spec
+        self._find_module = find_module
+
+
 class ModuleCacheState(_Record):
     """Plain identity state for one name in a module cache."""
 

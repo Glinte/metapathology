@@ -23,6 +23,8 @@ from metapathology._module_metadata import module_cache_state, safe_module_name,
 from metapathology._records import (
     DeepDiagnosticCall,
     DeepImportEvent,
+    FinderContract,
+    FinderProtocol,
     FindSpecCall,
     ImportAuditStart,
     ImporterCacheDiff,
@@ -88,6 +90,44 @@ _DEEP_LOADERS_ENV = "METAPATHOLOGY_DEEP_LOADERS"
 _DEEP_IMPORT_OUTCOMES_ENV = "METAPATHOLOGY_DEEP_IMPORT_OUTCOMES"
 _TRUE_ENV_VALUES = frozenset(("1", "true", "yes", "on"))
 _FALSE_ENV_VALUES = frozenset(("0", "false", "no", "off"))
+
+
+def _raw_protocol_value(value: object, evidence: str, defined_by: str) -> FinderProtocol:
+    """Classify a dictionary value without binding or invoking a descriptor."""
+    if isinstance(value, (staticmethod, classmethod)):
+        value = value.__func__
+    elif not callable(value):
+        try:
+            for owner in type.__getattribute__(type(value), "__mro__"):
+                if "__get__" in type.__getattribute__(owner, "__dict__"):
+                    return FinderProtocol("indeterminate", evidence, defined_by)
+        except BaseException:
+            return FinderProtocol("indeterminate", "inspection_error", None)
+    return FinderProtocol("callable" if callable(value) else "non_callable", evidence, defined_by)
+
+
+def _inspect_finder_protocol(finder: object, name: str) -> FinderProtocol:
+    """Inspect one protocol through raw dictionaries and the real type MRO."""
+    try:
+        if not issubclass(type(finder), type):
+            try:
+                instance_dict = object.__getattribute__(finder, "__dict__")
+            except (AttributeError, TypeError):
+                instance_dict = None
+            if type(instance_dict) is dict and name in instance_dict:
+                return _raw_protocol_value(instance_dict[name], "instance_dict", type_name(finder))
+            cls = type(finder)
+        else:
+            cls = _cast("type[object]", finder)
+        mro = type.__getattribute__(cls, "__mro__")
+        for owner in mro:
+            namespace = type.__getattribute__(owner, "__dict__")
+            if name in namespace:
+                owner_name = type.__getattribute__(owner, "__name__")
+                return _raw_protocol_value(namespace[name], "class_dict", owner_name)
+    except BaseException:
+        return FinderProtocol("indeterminate", "inspection_error", None)
+    return FinderProtocol("absent", "class_mro", None)
 
 
 class _ImporterCacheReportState:
@@ -320,6 +360,9 @@ class Monitor:
         self._baseline_modules: frozenset[str] = frozenset()
         # Finder display names at install time, for the report header.
         self._initial_meta_path: tuple[str, ...] = ()
+        # T12 observations are exhaustive over distinct finder identities and
+        # retain the finder through the existing patched/skipped maps.
+        self._finder_contracts: dict[int, FinderContract] = {}
         self._deep_path_hooks = False
         self._deep_path_entry_finders = False
         self._deep_loaders = False
@@ -411,6 +454,7 @@ class Monitor:
         int,
         list[MonitorEvent],
         list[tuple[object, str]],
+        list[FinderContract],
         _ImporterCacheReportState,
         _EarlySiteBootstrapState | None,
     ]:
@@ -427,7 +471,14 @@ class Monitor:
                 observations=self._importer_cache_observations,
                 coalesced=self._importer_cache_coalesced,
             )
-            return self._seq, list(self._events), list(self._skipped.values()), cache_state, self._early_site_bootstrap
+            return (
+                self._seq,
+                list(self._events),
+                list(self._skipped.values()),
+                list(self._finder_contracts.values()),
+                cache_state,
+                self._early_site_bootstrap,
+            )
 
     def _set_early_site_bootstrap(
         self,
@@ -520,7 +571,8 @@ class Monitor:
                 # _instrument_finder.
                 self._local.active = True
                 try:
-                    for finder in list(instrumented):
+                    for position, finder in enumerate(list(instrumented)):
+                        self._observe_finder_contract(finder, position, "install", None)
                         self._instrument_finder(finder)
                 finally:
                     self._local.active = False
@@ -1044,6 +1096,7 @@ class Monitor:
             with self._record_lock:
                 self._patched.clear()
                 self._skipped.clear()
+                self._finder_contracts.clear()
                 self._search_path_cache.clear()
                 self._observed_path_hooks.clear()
                 self._observed_cache_finders.clear()
@@ -1403,6 +1456,31 @@ class Monitor:
             if self._enabled:
                 self._skipped[finder_id] = (finder, reason)
 
+    def _observe_finder_contract(
+        self,
+        finder: object,
+        position: int,
+        observation: str,
+        observation_seq: int | None,
+    ) -> None:
+        """Inventory raw finder protocols without invoking attribute lookup."""
+        finder_id = id(finder)
+        with self._record_lock:
+            if finder_id in self._finder_contracts:
+                return
+        contract = FinderContract(
+            finder_id=finder_id,
+            finder_type_name=type_name(finder),
+            position=position,
+            observation=observation,
+            observation_seq=observation_seq,
+            find_spec=_inspect_finder_protocol(finder, "find_spec"),
+            find_module=_inspect_finder_protocol(finder, "find_module"),
+        )
+        with self._record_lock:
+            if self._enabled:
+                self._finder_contracts.setdefault(finder_id, contract)
+
     @staticmethod
     def _restore_find_spec(finder: object, previous: object) -> None:
         """Reset a finder's instance-dict ``find_spec`` to its pre-shadowing value.
@@ -1613,8 +1691,6 @@ class Monitor:
         try:
             if not self._enabled:
                 return
-            for finder in added:
-                self._instrument_finder(finder)
             added_names = tuple(type_name(f) for f in added)
             removed_names = tuple(type_name(f) for f in removed)
             contents_after = tuple(type_name(f) for f in list(mutated))
@@ -1622,6 +1698,7 @@ class Monitor:
             stack = _capture_stack(frame)
             with self._record_lock:
                 self._seq += 1
+                mutation_seq = self._seq
                 self._events.append(
                     MetaPathMutation(
                         seq=self._seq,
@@ -1633,6 +1710,15 @@ class Monitor:
                         stack=stack,
                     )
                 )
+            positions = {id(finder): position for position, finder in enumerate(list(mutated))}
+            for finder in added:
+                self._observe_finder_contract(
+                    finder,
+                    positions.get(id(finder), -1),
+                    "mutation",
+                    mutation_seq,
+                )
+                self._instrument_finder(finder)
         except Exception as exc:
             self._record_internal_error("meta_path_mutation", exc)
         finally:

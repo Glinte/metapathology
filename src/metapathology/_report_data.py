@@ -17,6 +17,7 @@ from metapathology._module_metadata import ModuleMetadata, inspect_module
 from metapathology._records import (
     DeepDiagnosticCall,
     DeepImportEvent,
+    FinderContract,
     FindSpecCall,
     ImportAuditStart,
     ImporterCacheDiff,
@@ -486,6 +487,7 @@ class ReportDocument(_Record):
         "_deep_import_outcomes_status",
         "_early_site_bootstrap",
         "_events",
+        "_finder_contracts",
         "_findings",
         "_generated_at",
         "_importer_cache_coalesced",
@@ -532,6 +534,7 @@ class ReportDocument(_Record):
         "standard_resolutions",
         "standard_finder_status",
         "findings",
+        "finder_contracts",
         "report_errors",
         "cwd",
         "argv",
@@ -563,6 +566,7 @@ class ReportDocument(_Record):
     standard_resolutions = _ReadOnlyField[tuple[StandardResolution, ...]]("_standard_resolutions")
     standard_finder_status = _ReadOnlyField[str]("_standard_finder_status")
     findings = _ReadOnlyField[tuple[Finding, ...]]("_findings")
+    finder_contracts = _ReadOnlyField[tuple[FinderContract, ...]]("_finder_contracts")
     report_errors = _ReadOnlyField[tuple[ReportError, ...]]("_report_errors")
     cwd = _ReadOnlyField[str | None]("_cwd")
     argv = _ReadOnlyField[tuple[str, ...]]("_argv")
@@ -597,6 +601,7 @@ class ReportDocument(_Record):
         standard_resolutions: tuple[StandardResolution, ...],
         standard_finder_status: str,
         findings: tuple[Finding, ...],
+        finder_contracts: tuple[FinderContract, ...],
         report_errors: tuple[ReportError, ...],
         cwd: str | None,
         argv: tuple[str, ...],
@@ -628,6 +633,7 @@ class ReportDocument(_Record):
         self._standard_resolutions = standard_resolutions
         self._standard_finder_status = standard_finder_status
         self._findings = findings
+        self._finder_contracts = finder_contracts
         self._report_errors = report_errors
         self._cwd = cwd
         self._argv = argv
@@ -635,7 +641,14 @@ class ReportDocument(_Record):
 
 def capture_document(monitor: "Monitor") -> ReportDocument:
     """Copy evidence at one sequence cutoff before deriving any findings."""
-    cutoff_seq, events, skipped_raw, importer_cache, early_site_bootstrap_raw = monitor._report_state()
+    (
+        cutoff_seq,
+        events,
+        skipped_raw,
+        finder_contracts,
+        importer_cache,
+        early_site_bootstrap_raw,
+    ) = monitor._report_state()
     report_errors: list[ReportError] = []
     current_meta_path = _current_meta_path_names(report_errors)
     current_path_hooks = _current_path_hooks(monitor, report_errors)
@@ -715,6 +728,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         standard_resolutions=standard_resolutions,
         standard_finder_status=monitor.standard_finder_status,
         findings=findings,
+        finder_contracts=tuple(finder_contracts),
         report_errors=tuple(report_errors),
         cwd=cwd,
         argv=tuple(argv),
