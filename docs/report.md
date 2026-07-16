@@ -223,6 +223,13 @@ These findings are leads, not verdicts:
 - `[no-spec]` — a new `sys.modules` entry has no
   [`__spec__`][module-spec] and no recorded finder claim. It was likely
   created manually or loaded through a route invisible to meta-path finders.
+- `[finder-side-effect]` — a captured finder boundary changed the target's
+  `sys.modules` state before the finder returned `None` or raised. The report
+  does not infer which nested action caused the delta.
+- `[module-replacement]` — an opt-in deep loader boundary began and ended with
+  different non-`None` module object identities. Matching valid specs do not
+  hide this identity change; intermediate objects and internal steps remain
+  unknown.
 
 [path-finder]: https://docs.python.org/3/library/importlib.html#importlib.machinery.PathFinder
 [module-spec]: https://docs.python.org/3/reference/import.html#import-related-module-attributes
@@ -243,6 +250,11 @@ iterated in the import hot path. Namespace paths returned by the live replay
 are copied during reporting and marked `post_hoc`. Field comparisons expose
 omitted, additional, and reordered locations without presenting replay state
 as exact historical proof.
+
+Finder and mutable-loader records also expose constant-size target-module
+states: `missing`, explicit `none`, `object` with safe identity/type metadata,
+or `unavailable`. Text timelines omit unchanged pairs but JSON retains them.
+Object identities are process-local evidence and are not stable across runs.
 
 Each replay-based finding separately includes a `structural evidence:` line.
 This identity-only comparison says whether `sys.path_hooks` changed between

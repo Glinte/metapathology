@@ -83,6 +83,14 @@ affect membership checks. Reports display a warning whenever any deep
 mechanism is active. Use this mode only in a diagnostic reproduction after
 passive evidence proves insufficient.
 
+Default finder monitoring records constant-size target-module identity before
+and after each delegated `find_spec()` call. This can identify a finder that
+changes `sys.modules` before passing or raising. With `--deep-loaders`, the
+same evidence surrounds mutable loader lifecycle calls and can identify object
+replacement during later manual `exec_module()` calls. These are boundary
+deltas, not nested traces. A non-dictionary `sys.modules` replacement is left
+untouched and produces unavailable identity evidence.
+
 For frozen or embedded bootstrap code, configure the same behavior before
 calling `install()`:
 

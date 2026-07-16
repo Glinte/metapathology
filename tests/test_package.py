@@ -19,6 +19,7 @@ _EXPECTED_PUBLIC_API = frozenset(
         "InternalError",
         "MetaPathMutation",
         "MetaPathReassignment",
+        "ModuleCacheState",
         "Monitor",
         "MonitorEvent",
         "PathHooksMutation",

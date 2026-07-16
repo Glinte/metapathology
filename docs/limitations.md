@@ -37,6 +37,15 @@ builtin import audit boundary on supported CPython versions. Finder wrappers
 may still record instrumented custom finders, but there will be no corresponding
 `ImportAuditStart`.
 
+Finder wrappers capture only the target name's state before and after the
+outer call. A delta proves a boundary transition, not which nested import
+caused it or whether temporary intermediate objects existed. Deep loader
+states require `--deep-loaders` and an instrumentable mutable loader reached
+after activation. Standard class loaders, legacy `load_module()` calls, and
+earlier loader activity remain outside that evidence. A non-dictionary
+`sys.modules` replacement is reported unavailable rather than invoked through
+foreign mapping methods.
+
 The loader inventory observes only modules still present at report time and
 metadata they retain then. It cannot prove which loader originally executed a
 module, recover removed modules, or distinguish metadata replaced after load.

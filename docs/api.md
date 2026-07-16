@@ -73,7 +73,7 @@ format.
 ### `render_report(*, format="text") -> str`
 
 Returns text or JSON, including its trailing newline. JSON currently uses the
-experimental `metapathology.report` schema version 0.9. Its shape may change
+experimental `metapathology.report` schema version 0.13. Its shape may change
 throughout schema 0.x; schema 1.0 will be reviewed once the evidence model stabilizes.
 Raises `RuntimeError` before the first installation and `ValueError` for an
 unknown format. Ordinary generation failures degrade to a valid failure
@@ -120,7 +120,8 @@ identity/type, module or path, outcome, exception type, and thread. The
 `unobserved_reentrant` outcome means a nested call delegated normally while
 the per-thread guard suppressed exact nested instrumentation. Modern mutable
 loaders use `loader_create_module` and `loader_exec_module`; absent methods are
-not added, and legacy `load_module` is not wrapped.
+not added, and legacy `load_module` is not wrapped. Loader records also carry
+the target's `ModuleCacheState` at entry and return or exception exit.
 
 ### `ImportAuditStart`
 
@@ -135,12 +136,23 @@ unknown without separate evidence.
 Carries an import object's numeric identity, safe type name, and optional
 callable name. It never retains or stringifies the foreign object.
 
+### `ModuleCacheState`
+
+Carries one target name's constant-size `sys.modules` state: `unavailable`,
+`missing`, explicit `none`, or `object` with a numeric identity and safe type
+name. Dictionary subclasses are read through the built-in `dict`
+implementation so overridden mapping methods do not run. Non-dictionary cache
+replacements are not probed.
+
 ### `FindSpecCall`
 
 Records the module name, finder type and identity, whether the finder claimed
 the module, loader type, origin, captured search path and whether it represented
 `sys.path` or a parent package path, a `SpecSummary`, the exception type if the
 finder raised, and the thread name.
+The record also carries `module_state_before` and `module_state_after` from the
+finder delegation boundary. A changed pair does not reconstruct nested import
+activity or temporary intermediate objects.
 
 ### `SpecSummary`
 

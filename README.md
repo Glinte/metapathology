@@ -197,6 +197,12 @@ The suspicious-findings section uses these labels:
 - `[no-spec]` means a new `sys.modules` entry has neither a `__spec__` nor a
   recorded finder claim. It was probably created manually or loaded through
   an `exec_module()`-style path that is invisible to meta-path finders.
+- `[finder-side-effect]` means an instrumented finder changed its own target's
+  `sys.modules` entry before returning `None` or raising. The captured boundary
+  does not reveal the nested operation that caused the change.
+- `[module-replacement]` means opt-in deep loader evidence captured two
+  different module object identities across one `create_module()` or
+  `exec_module()` call. Both objects may still have valid, matching specs.
 
 These are diagnostic leads, not necessarily defects. Custom finders may bypass
 the standard path machinery intentionally. Findings label the current live
@@ -210,7 +216,7 @@ section and finding category.
 ## Resource use
 
 The monitor retains every recorded resolution start, finder call (including
-copied spec and package-path summaries), mutation,
+copied spec, package-path summaries, and constant-size target-module states), mutation,
 reassignment, cache diff, and internal error so the final report is
 exhaustive. Its memory use therefore grows with import activity for as long as
 monitoring remains enabled; there is currently no event limit or silent
@@ -282,8 +288,9 @@ for the full protocol.
    hook factories. Pass `monitor_path_hooks=False`, or use
    `--no-path-hook-monitoring`, to leave this list untouched.
 4. It wraps each finder's existing `find_spec()` method. The wrapper records
-   whether the finder returned `None` or a module spec, then returns the same
-   result. It does not supply a spec of its own or load a module.
+   whether the finder returned `None` or a module spec and the target name's
+   `sys.modules` identity immediately before and after delegation, then returns
+   the same result. It does not supply a spec of its own or load a module.
 5. It passively snapshots `sys.path_importer_cache` at installation, around
    observed path-hook mutations, and at report time. Pass
    `monitor_importer_cache=False`, or use `--no-importer-cache-monitoring`, to
@@ -311,11 +318,12 @@ by that comparison.
 - The temporary changes to finders, `sys.meta_path`, and `sys.path_hooks` are reversed by
   `uninstall()`. Python does not provide a way to remove an audit hook, so the
   installed callback remains as an inactive no-op after uninstalling.
-- A low-level loader can replace an existing `sys.modules` entry with a second
-  module object that retains a valid spec without starting a normal import.
-  That replacement is indistinguishable at report time from an ordinary
-  `PathFinder` load and is not currently flagged; discord.py#10017 is a
-  representative example in `reproductions/`.
+- Low-level module replacement is visible only when the responsible mutable
+  loader is reached after `--deep-loaders` is active. Standard class loaders,
+  legacy `load_module()` calls, activity before installation, and
+  uninstrumentable loaders remain outside this boundary. A foreign
+  non-dictionary `sys.modules` replacement is reported as unavailable rather
+  than called.
 - This tool changes `sys.meta_path` while it is running. Use it for debugging,
   not as part of an application's normal runtime.
 - Importer-cache diffs are passive boundary observations, not a complete log
