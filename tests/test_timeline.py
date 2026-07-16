@@ -63,7 +63,7 @@ assert "the audit event has no outcome or winner signal" in timeline
 assert "capture order; concurrent events are not a global wall-clock order" in timeline
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 0, "minor": 14, "name": "metapathology.report"}
+assert document["schema"] == {"major": 0, "minor": 15, "name": "metapathology.report"}
 audit = next(
     event
     for event in document["timeline"]
