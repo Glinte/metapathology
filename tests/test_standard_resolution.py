@@ -1,5 +1,7 @@
 """Standard finder attribution coverage."""
 
+import subprocess
+import sys
 from importlib.abc import Loader
 from importlib.machinery import (
     BuiltinImporter,
@@ -95,3 +97,19 @@ def test_deep_report_captures_source_resolution(run_python: RunPython, tmp_path:
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "OK"
+
+
+def test_distributed_7782_fixture_explains_unreachable_editable_finder() -> None:
+    fixture = Path(__file__).parents[1] / "reproductions" / "distributed-7782"
+    proc = subprocess.run(
+        [sys.executable, "-m", "metapathology", "invoke.py"],
+        cwd=fixture,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=25,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "editable marker: None" in proc.stdout
+    assert "[inferred standard resolution] 'distributed': PathFinder produced namespace" in proc.stderr
+    assert "later meta-path entries were unreachable: [_EditableFinder]" in proc.stderr
