@@ -27,6 +27,7 @@ _EXPECTED_PUBLIC_API = frozenset(
         "SpecSummary",
         "StandardFinderCall",
         "__version__",
+        "activate_frozen",
         "get_monitor",
         "install",
         "render_report",

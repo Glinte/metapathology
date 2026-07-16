@@ -63,6 +63,7 @@ addopts = [
     "--strict-markers",
 ]
 filterwarnings = ["error"]
+markers = ["freezer: slow opt-in tests that build real frozen executables"]
 testpaths = ["tests"]
 timeout = 30
 xfail_strict = true

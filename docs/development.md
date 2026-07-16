@@ -128,6 +128,24 @@ are not permitted. Temporary compatibility code must include a `TODO` with a
 specific removal trigger such as a supported Python version, dependency
 version, or date.
 
+Real freezer smoke tests are opt-in because they download large build tools,
+invoke native compilers, and take substantially longer than the stdlib-only
+suite. Run the currently reviewed toolchain with:
+
+```console
+METAPATHOLOGY_TEST_FREEZERS=1 uv run \
+  --with pyinstaller==6.21.0 \
+  --with cx-freeze==8.6.4 \
+  --with nuitka==4.1.3 \
+  pytest -m freezer tests/test_freezer_integrations.py
+```
+
+These packages are isolated additions for the command and are not project or
+runtime dependencies. The fixtures build PyInstaller directory/one-file,
+Nuitka standalone/one-file, and cx_Freeze directory executables, then assert
+semantically on text reports written inside those interpreters. Freezer builds
+remain platform-specific; passing locally does not claim another platform.
+
 When releasing, update both `project.version` in `pyproject.toml` and
 `metapathology.__version__`. The package test requires them to match. Keeping
 the small duplication avoids importing `importlib.metadata` during every

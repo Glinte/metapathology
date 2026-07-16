@@ -214,9 +214,13 @@ def _import_object_ref(obj: object) -> ImportObjectRef:
     """Reduce an import object to safe identity metadata without foreign dispatch."""
     name: str | None = None
     if isinstance(obj, (types.FunctionType, types.BuiltinFunctionType, types.MethodType)):
-        raw_name = object.__getattribute__(obj, "__name__")
-        if isinstance(raw_name, str):
-            name = raw_name
+        try:
+            raw_name = object.__getattribute__(obj, "__name__")
+        except (AttributeError, TypeError):
+            pass
+        else:
+            if isinstance(raw_name, str):
+                name = raw_name
     return ImportObjectRef(object_id=id(obj), type_name=type_name(obj), name=name)
 
 
