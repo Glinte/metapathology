@@ -504,7 +504,27 @@ vendored six appends `_SixMetaPathImporter`, pytest calls its nonexistent
 the object, but the report does not currently state the compatibility hazard
 before or alongside the traceback.
 
-**Recommendation:** Inventory every observed meta-path entry as implementing a
+**Implementation plan:** Deliver the audit in three reviewable stages.
+
+1. Add a side-effect-free protocol inspector and immutable inventory records.
+   Inspect raw instance and class dictionaries with built-in accessors only,
+   walk the real MRO without normal attribute lookup, and classify each
+   protocol as callable, non-callable, absent, or indeterminate. Preserve the
+   evidence source (instance dictionary or the defining class) and never retain
+   a foreign attribute value in report state.
+2. Snapshot the initial meta-path entries and every entry added by a captured
+   mutation. Assign a monotonic observation sequence and correlate an entry
+   with its insertion mutation and stack when available. Repeated observation
+   of the same live object must not erase its first insertion evidence; direct
+   reassignment remains identifiable as a weaker observation boundary.
+3. Add bounded text guidance and exhaustive JSON output, then pin the
+   pytest#12179 reproduction. Legacy-only and protocol-less custom entries are
+   compatibility risks, while standard class entries receive explanatory
+   context rather than defect language. The report must say that CPython 3.12+
+   removed the legacy fallback and that direct consumers may always require
+   ``find_spec``.
+
+Inventory every observed meta-path entry as implementing a
 callable `find_spec`, a callable legacy `find_module`, both, or neither. Record
 only protocol availability, finder identity and type/name, insertion sequence,
 and the existing mutation stack. Report legacy-only and protocol-less custom
