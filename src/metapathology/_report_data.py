@@ -407,6 +407,8 @@ class Finding(_Record):
         "_limitations",
         "_module",
         "_replay",
+        "_severity",
+        "_signals",
         "_spec_comparison",
         "_structural_comparison",
         "_subject_kind",
@@ -421,6 +423,8 @@ class Finding(_Record):
         "evidence_level",
         "finder_contract",
         "limitations",
+        "severity",
+        "signals",
         "subject_kind",
         "supporting_event_seqs",
         "replay",
@@ -435,6 +439,8 @@ class Finding(_Record):
     evidence_level = _ReadOnlyField[str]("_evidence_level")
     finder_contract = _ReadOnlyField[FinderContract | None]("_finder_contract")
     limitations = _ReadOnlyField[tuple[str, ...]]("_limitations")
+    severity = _ReadOnlyField[str]("_severity")
+    signals = _ReadOnlyField[tuple[str, ...]]("_signals")
     subject_kind = _ReadOnlyField[str]("_subject_kind")
     supporting_event_seqs = _ReadOnlyField[tuple[int, ...]]("_supporting_event_seqs")
     replay = _ReadOnlyField[ReplayResult | None]("_replay")
@@ -456,6 +462,8 @@ class Finding(_Record):
         subject_kind: str = "module",
         finder_contract: FinderContract | None = None,
         supporting_event_seqs: tuple[int, ...] = (),
+        severity: str = "warning",
+        signals: tuple[str, ...] = (),
     ) -> None:
         self._finding_id = finding_id
         self._kind = kind
@@ -465,6 +473,8 @@ class Finding(_Record):
         self._evidence_level = evidence_level
         self._finder_contract = finder_contract
         self._limitations = limitations
+        self._severity = severity
+        self._signals = signals
         self._subject_kind = subject_kind
         self._supporting_event_seqs = supporting_event_seqs
         self._replay = replay
@@ -999,6 +1009,7 @@ def _suspicious_findings(
         initial_importer_cache,
         current_importer_cache,
     )
+    meta_short_circuit_seqs = _meta_short_circuit_claim_seqs(events)
     findings = _finder_contract_findings(finder_contracts)
     findings.extend(_finder_side_effect_findings(events, len(findings)))
     findings.extend(_module_replacement_findings(events, len(findings)))
@@ -1006,7 +1017,6 @@ def _suspicious_findings(
     if module_items is None:
         findings.extend(_path_hook_shadow_findings(events, len(findings)))
         findings.extend(_failed_after_mutation_findings(events, len(findings)))
-        findings.extend(_meta_bypass_findings(events, len(findings)))
         return tuple(findings)
     metadata_by_name = {entry.name: entry for entry in module_metadata}
     for name, module in module_items:
@@ -1014,7 +1024,15 @@ def _suspicious_findings(
             continue
         winner = winners.get(name)
         if winner is not None:
-            finding = _bypass_finding(name, module, winner, len(findings) + 1, structural_context, report_errors)
+            finding = _contention_finding(
+                name,
+                module,
+                winner,
+                len(findings) + 1,
+                structural_context,
+                winner.seq in meta_short_circuit_seqs,
+                report_errors,
+            )
             if finding is not None:
                 findings.append(finding)
             continue
@@ -1027,12 +1045,11 @@ def _suspicious_findings(
                     name,
                     evidence_level="post_hoc",
                     limitations=("report_snapshot_cannot_identify_load_mechanism",),
+                    severity="informational",
                 )
             )
-    findings.extend(_structural_contention_findings(tuple(findings), len(findings)))
     findings.extend(_path_hook_shadow_findings(events, len(findings)))
     findings.extend(_failed_after_mutation_findings(events, len(findings)))
-    findings.extend(_meta_bypass_findings(events, len(findings)))
     return tuple(findings)
 
 
@@ -1056,10 +1073,10 @@ def _finder_contract_findings(contracts: list[FinderContract]) -> list[Finding]:
     return findings
 
 
-def _meta_bypass_findings(events: list[MonitorEvent], offset: int) -> list[Finding]:
-    """Find custom claims captured before the import-time PathFinder position."""
+def _meta_short_circuit_claim_seqs(events: list[MonitorEvent]) -> set[int]:
+    """Identify claims captured before the import-time PathFinder position."""
     latest_audit: dict[tuple[int, str], ImportAuditStart] = {}
-    findings: list[Finding] = []
+    claim_seqs: set[int] = set()
     for event in events:
         if isinstance(event, ImportAuditStart):
             latest_audit[(event.thread_id, event.fullname)] = event
@@ -1076,70 +1093,8 @@ def _meta_bypass_findings(events: list[MonitorEvent], offset: int) -> list[Findi
             continue
         if custom_index >= path_finder_index:
             continue
-        findings.append(
-            Finding(
-                f"finding:{offset + len(findings) + 1}",
-                "meta_bypass",
-                event.fullname,
-                event,
-                evidence_level="captured",
-                limitations=("same_type_entries_cannot_be_distinguished_in_audit_snapshot",),
-            )
-        )
-    return findings
-
-
-def _structural_contention_findings(existing: tuple[Finding, ...], offset: int) -> list[Finding]:
-    """Promote precise loader and importer-cache mechanics from comparisons."""
-    findings: list[Finding] = []
-    for finding in existing:
-        comparison = finding.spec_comparison
-        if comparison is not None and comparison.loader_type_changed is True and finding.claim is not None:
-            findings.append(
-                Finding(
-                    f"finding:{offset + len(findings) + 1}",
-                    "loader_displacement",
-                    finding.module,
-                    finding.claim,
-                    finding.replay,
-                    comparison,
-                    finding.structural_comparison,
-                    evidence_level="live_replay",
-                    limitations=("replay_uses_report_time_importer_state",),
-                )
-            )
-            if _is_source_loader(finding.claim.loader_type_name) and _is_frozen_or_archive_loader(
-                finding.replay.loader_type_name if finding.replay is not None else None
-            ):
-                findings.append(
-                    Finding(
-                        f"finding:{offset + len(findings) + 1}",
-                        "frozen_source_conflict",
-                        finding.module,
-                        finding.claim,
-                        finding.replay,
-                        comparison,
-                        finding.structural_comparison,
-                        evidence_level="live_replay",
-                        limitations=("replay_uses_report_time_importer_state",),
-                    )
-                )
-        structural = finding.structural_comparison
-        if structural is None or not structural.importer_cache_changed_paths or finding.claim is None:
-            continue
-        findings.append(
-            Finding(
-                f"finding:{offset + len(findings) + 1}",
-                "path_cache_displacement",
-                finding.module,
-                finding.claim,
-                structural_comparison=structural,
-                evidence_level="structural_inference",
-                limitations=("cache_change_may_not_have_caused_loader_difference",),
-                supporting_event_seqs=structural.importer_cache_event_seqs,
-            )
-        )
-    return findings
+        claim_seqs.add(event.seq)
+    return claim_seqs
 
 
 def _is_source_loader(loader_type_name: str | None) -> bool:
@@ -1258,12 +1213,13 @@ def _module_state_changed(before: ModuleCacheState, after: ModuleCacheState) -> 
     return before.state != after.state or before.object_id != after.object_id or before.type_name != after.type_name
 
 
-def _bypass_finding(
+def _contention_finding(
     name: str,
     module: object,
     winner: FindSpecCall,
     finding_number: int,
     structural_context: _StructuralContext,
+    meta_short_circuit: bool,
     report_errors: list[ReportError],
 ) -> Finding | None:
     """Compare one custom claim with a report-time PathFinder replay."""
@@ -1272,6 +1228,11 @@ def _bypass_finding(
         return None
     observed = _post_hoc_spec_summary(module, observed)
     structural_comparison = _structural_comparison(winner.search_path, structural_context)
+    signals: list[str] = []
+    if meta_short_circuit:
+        signals.append("meta_path_short_circuit")
+    if structural_comparison.importer_cache_changed_paths:
+        signals.append("importer_cache_changed")
     replay = _replay_path_finder(name, winner.search_path)
     if replay.status == "failed":
         report_errors.append(ReportError("path_finder_replay", replay.exception_type_name or "Exception"))
@@ -1288,6 +1249,8 @@ def _bypass_finding(
                 structural_comparison=structural_comparison,
                 evidence_level="live_replay",
                 limitations=("replay_uses_report_time_importer_state",),
+                severity="actionable",
+                signals=tuple(signals),
             )
         return None
     replayed = replay.spec_summary
@@ -1296,6 +1259,9 @@ def _bypass_finding(
     spec_comparison = _compare_specs(observed, replayed)
     kind = _spec_finding_kind(winner, observed, replayed, spec_comparison)
     if kind is not None:
+        if spec_comparison.loader_type_changed is True and kind != "loader_displacement":
+            signals.append("loader_displacement")
+        severity = _finding_severity(kind, winner.finder_type_name)
         return Finding(
             f"finding:{finding_number}",
             kind,
@@ -1306,6 +1272,8 @@ def _bypass_finding(
             structural_comparison,
             evidence_level="live_replay",
             limitations=("replay_uses_report_time_importer_state",),
+            severity=severity,
+            signals=tuple(signals),
         )
     return None
 
@@ -1336,11 +1304,13 @@ def _spec_finding_kind(
         return "namespace_truncation"
     if comparison.package_status_changed:
         return "package_displacement"
+    if _is_source_loader(winner.loader_type_name) and _is_frozen_or_archive_loader(_loader_type(replayed)):
+        return "frozen_source_conflict"
     if comparison.origin_changed and type(observed.origin) is str and type(replayed.origin) is str:
         return "origin_displacement"
     source_claim = winner.origin is not None and winner.origin.endswith(_SOURCE_SUFFIXES)
-    if source_claim and (comparison.loader_type_changed or comparison.origin_changed):
-        return "bypass"
+    if source_claim and comparison.loader_type_changed:
+        return "loader_displacement"
     if (
         comparison.loader_type_changed
         or comparison.cached_changed
@@ -1350,6 +1320,20 @@ def _spec_finding_kind(
     ):
         return "spec_difference"
     return None
+
+
+def _finding_severity(kind: str, finder_type_name: str) -> str:
+    """Triage mechanics without treating expected editable redirection as a defect."""
+    if kind in ("namespace_truncation", "package_displacement", "frozen_source_conflict"):
+        return "actionable"
+    if kind in ("origin_displacement", "loader_displacement") and _is_editable_finder(finder_type_name):
+        return "informational"
+    return "warning"
+
+
+def _is_editable_finder(finder_type_name: str) -> bool:
+    lowered = finder_type_name.lower()
+    return "editable" in lowered or finder_type_name == "ScikitBuildRedirectingFinder"
 
 
 def _compare_specs(observed: SpecSummary, replayed: SpecSummary) -> SpecComparison:
@@ -1419,6 +1403,7 @@ def _module_replacement_findings(events: list[MonitorEvent], offset: int) -> lis
                 deep_call=event,
                 evidence_level="captured",
                 limitations=("boundary_delta_does_not_reconstruct_intermediate_states",),
+                severity="actionable",
             )
         )
     return findings
@@ -2136,6 +2121,8 @@ def _json_finding(finding: Finding) -> dict[str, object]:
         "id": finding.finding_id,
         "kind": finding.kind,
         "module": finding.module,
+        "severity": finding.severity,
+        "signals": list(finding.signals),
         "subject": {"kind": finding.subject_kind, "value": finding.module},
     }
     if finding.finder_contract is not None:

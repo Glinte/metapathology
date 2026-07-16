@@ -39,27 +39,25 @@ document = json.loads(metapathology.render_report(format="json"))
 finding = next(item for item in document["findings"] if item["module"] == target_name)
 assert finding["path_finder_replay"]["evidence_level"] == "live_replay", finding
 assert finding["path_finder_replay"]["state_phase"] == "report", finding
-meta = next(item for item in document["findings"] if item["kind"] == "meta_bypass" and item["module"] == target_name)
-assert meta["evidence"]["level"] == "captured", meta
-assert meta["evidence"]["event_refs"] == [meta["claim"]["event_ref"]], meta
+assert "meta_path_short_circuit" in finding["signals"], finding
 print(text)
 """
 
 
-def test_finder_shadowing_path_hooks_is_flagged_as_bypass(run_python: RunPython, tmp_path: Path) -> None:
+def test_finder_shadowing_path_hooks_reports_loader_displacement(run_python: RunPython, tmp_path: Path) -> None:
     # The module file is in cwd, so the standard path machinery *would* find it
     # with a plain SourceFileLoader; the sneaky finder claims it first.
     module_file = tmp_path / "real_mod.py"
     module_file.write_text("VALUE = 7\n")
     proc = run_python(BYPASS, "real_mod", str(module_file))
     assert proc.returncode == 0, proc.stderr
-    assert "[bypass]" in proc.stdout
-    assert "[meta-bypass]" in proc.stdout
+    assert "[loader-displacement]" in proc.stdout
+    assert "corroborating signals: meta path short circuit" in proc.stdout
     assert "real_mod" in proc.stdout
     assert "SneakyLoader" in proc.stdout
     assert "SourceFileLoader" in proc.stdout
     # Findings lead the report, and paths under the reported cwd are relativized.
-    assert proc.stdout.index("-- suspicious findings") < proc.stdout.index("-- chronological evidence timeline")
+    assert proc.stdout.index("-- findings") < proc.stdout.index("-- chronological evidence timeline")
     assert "origin 'real_mod.py'" in proc.stdout
     assert f"paths shown relative to: {tmp_path}" in proc.stdout
 
@@ -181,7 +179,7 @@ sys.path.remove(module_dir)
 
 text = metapathology.render_report()
 assert "[unfindable] 'transient_path_mod'" not in text, text
-assert "[bypass] 'transient_path_mod'" not in text, text
+assert "[loader-displacement] 'transient_path_mod'" not in text, text
 print("OK")
 """
 
@@ -217,7 +215,7 @@ os.chdir(new_cwd)
 
 text = metapathology.render_report()
 assert "[unfindable] 'cwd_sensitive_mod'" not in text, text
-assert "[bypass] 'cwd_sensitive_mod'" not in text, text
+assert "[loader-displacement] 'cwd_sensitive_mod'" not in text, text
 print("OK")
 """
 

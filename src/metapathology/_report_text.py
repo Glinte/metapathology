@@ -172,21 +172,32 @@ def render_lines(document: ReportDocument) -> list[str]:
     lines = _header_lines(document, context)
 
     lines.append("")
-    lines.append(f"-- suspicious findings ({len(document.findings)}) --")
+    counts = {severity: 0 for severity in ("actionable", "warning", "informational")}
+    for finding in document.findings:
+        counts[finding.severity] = counts.get(finding.severity, 0) + 1
+    summary = ", ".join(f"{count} {severity}" for severity, count in counts.items() if count)
+    lines.append(f"-- findings ({len(document.findings)}{': ' + summary if summary else ''}) --")
     if not document.findings:
         lines.append("(none)")
-    for finding in document.findings:
+    for finding in sorted(
+        document.findings,
+        key=lambda item: ({"actionable": 0, "warning": 1, "informational": 2}.get(item.severity, 1), item.finding_id),
+    ):
         lines.extend(_finding_lines(finding, context))
+        if finding.signals:
+            lines.append(f"    corroborating signals: {', '.join(item.replace('_', ' ') for item in finding.signals)}")
         limitations = ", ".join(item.replace("_", " ") for item in finding.limitations)
         suffix = f"; limitations: {limitations}" if limitations else ""
-        lines.append(f"    evidence level: {finding.evidence_level}{suffix}")
+        lines.append(f"    severity: {finding.severity}; evidence: {finding.evidence_level}{suffix}")
 
     lines.append("")
     lines.append("-- finder attribution (instrumented finders only) --")
     lines.extend(_attribution_lines(calls, context))
 
-    lines.append("")
-    lines.extend(_finder_contract_lines(document.finder_contracts))
+    contract_lines = _finder_contract_lines(document.finder_contracts)
+    if contract_lines:
+        lines.append("")
+        lines.extend(contract_lines)
 
     lines.append("")
     lines.extend(_standard_resolution_lines(document.standard_resolutions, context))
@@ -385,6 +396,8 @@ def _finder_contract_lines(contracts: tuple[FinderContract, ...]) -> list[str]:
         and _contract_category(contract) in {"legacy-only", "protocol-less", "indeterminate"}
     ]
     standard = [contract for contract in contracts if contract.finder_id in _STANDARD_FINDER_IDS]
+    if not risky:
+        return []
     shown = (risky + standard)[:_FINDER_CONTRACT_DISPLAY_LIMIT]
     lines = [f"-- finder API contracts ({len(contracts)} observed entries) --"]
     if not shown:
@@ -828,17 +841,6 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
             "(manually created or exec_module-style load; invisible to all import hooks)."
         ]
     claim = finding.claim
-    if finding.kind == "meta_bypass" and claim is not None:
-        return [
-            f"[meta-bypass] '{finding.module}': {claim.finder_type_name} claimed before PathFinder",
-            f"    captured claim: event #{claim.seq}; later sys.path_hooks-based resolution was not reached",
-        ]
-    if finding.kind == "path_cache_displacement" and claim is not None:
-        references = ", ".join(f"#{seq}" for seq in finding.supporting_event_seqs)
-        return [
-            f"[path-cache-displacement] '{finding.module}': relevant cached path finders changed",
-            f"    captured cache changes: {references}; the change is correlated, not proven causal",
-        ]
     if finding.kind == "finder_side_effect" and claim is not None:
         finder = context.finder_label(claim.finder_type_name, claim.finder_id)
         outcome = f"raising {claim.exception_type_name}" if claim.exception_type_name is not None else "returning None"
@@ -854,6 +856,8 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
     if finding.kind == "loader_displacement":
         return [
             f"[loader-displacement] '{finding.module}': captured claim and live PathFinder replay chose different loader types",
+            f"    claimed: loader {claim.loader_type_name}, origin {_origin_display(claim.origin, context)}",
+            f"    PathFinder replay: loader {replay.loader_type_name}, origin {_origin_display(replay.origin, context)}",
             f"    {_spec_comparison_line(finding)}",
             f"    {_structural_comparison_line(finding)}",
         ]
@@ -891,7 +895,7 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
     )
     replay_origin = "same origin" if same_origin else f"origin {_origin_display(replay.origin, context)}"
     return [
-        f"[{tag}] '{finding.module}': claimed by {finder}, bypassing sys.path_hooks-based tools",
+        f"[{tag}] '{finding.module}': custom claim by {finder} differs from PathFinder replay",
         claimed_line,
         f"    PathFinder replay: loader {replay.loader_type_name}, {replay_origin}",
         f"    {_spec_comparison_line(finding)}",

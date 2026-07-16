@@ -7,15 +7,15 @@ import sys
 document = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 findings = document["findings"]
 assert any(
-    finding["kind"] == "meta_bypass"
-    and finding["module"].startswith("myproject")
+    finding["module"].startswith("myproject")
     and finding["claim"]["finder_type_name"] == "ScikitBuildRedirectingFinder"
-    and finding["evidence"]["level"] == "captured"
+    and "meta_path_short_circuit" in finding["signals"]
     for finding in findings
 ), findings
 assert any(
-    finding["kind"] in {"bypass", "unfindable"}
+    finding["kind"] in {"loader_displacement", "origin_displacement", "unfindable"}
     and finding["module"].startswith("myproject")
     and finding["evidence"]["level"] == "live_replay"
+    and finding["severity"] == "informational"
     for finding in findings
 ), findings

@@ -135,9 +135,9 @@ assert wins[-1].module_state_after is not None
 assert wins[-1].module_state_before.state == "missing"
 assert wins[-1].module_state_after.state == "missing"
 
-# A claim without a filesystem origin must not be flagged as a bypass.
+# A claim without a filesystem origin must not be flagged as contention.
 text = metapathology.render_report()
-assert "[bypass]" not in text, text
+assert "[loader-displacement]" not in text, text
 assert "dummy_mod" in text
 print("OK")
 """

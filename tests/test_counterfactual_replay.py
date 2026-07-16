@@ -70,7 +70,7 @@ assert type(current_spec.loader).__name__ == "CurrentLoader"
 
 document = json.loads(metapathology.render_report(format="json"))
 finding = next(item for item in document["findings"] if item["module"] == "counterfactual_target")
-assert finding["kind"] == "bypass"
+assert finding["kind"] == "loader_displacement"
 assert finding["path_finder_replay"]["evidence_level"] == "live_replay"
 assert finding["path_finder_replay"]["state_phase"] == "report"
 assert finding["path_finder_replay"]["loader_type_name"] == "CurrentLoader"
@@ -87,17 +87,15 @@ assert cache["install_snapshot_ref"] == "snapshot:importer-cache:install"
 assert cache["report_snapshot_ref"] == "snapshot:importer-cache:report"
 assert module_dir in cache["changed_paths"]
 assert cache["change_event_refs"]
-loader = next(item for item in document["findings"] if item["kind"] == "loader_displacement")
-assert loader["evidence"]["level"] == "live_replay"
-cache_finding = next(item for item in document["findings"] if item["kind"] == "path_cache_displacement")
-assert cache_finding["evidence"]["level"] == "structural_inference"
-assert set(cache["change_event_refs"]).issubset(cache_finding["evidence"]["event_refs"])
+assert finding["evidence"]["level"] == "live_replay"
+assert finding["signals"] == ["meta_path_short_circuit", "importer_cache_changed"]
+assert set(cache["change_event_refs"]).issubset(finding["evidence"]["event_refs"])
 
 text = metapathology.render_report()
 assert "structural evidence: sys.path_hooks changed" in text, text
 assert "PathFinder replay: loader CurrentLoader" in text, text
 assert "[loader-displacement]" in text, text
-assert "[path-cache-displacement]" in text, text
+assert "corroborating signals: meta path short circuit, importer cache changed" in text, text
 print("OK")
 """
 
