@@ -26,6 +26,7 @@ from metapathology._records import (
     InternalError,
     MetaPathMutation,
     MetaPathReassignment,
+    ModuleCacheState,
     MonitorEvent,
     PathHooksMutation,
     PathHooksReassignment,
@@ -52,7 +53,7 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 11
+_SCHEMA_MINOR = 12
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -770,10 +771,10 @@ def _suspicious_findings(
         initial_importer_cache,
         current_importer_cache,
     )
-    findings: list[Finding] = []
+    findings = _finder_side_effect_findings(events)
     baseline = monitor.baseline_modules
     if module_items is None:
-        return ()
+        return tuple(findings)
     metadata_by_name = {entry.name: entry for entry in module_metadata}
     for name, module in module_items:
         if type(name) is not str or name in baseline or name == "__main__":
@@ -788,6 +789,27 @@ def _suspicious_findings(
         if metadata is not None and metadata.inspection == "available" and metadata.spec_is_none:
             findings.append(Finding(f"finding:{len(findings) + 1}", "no_spec", name))
     return tuple(findings)
+
+
+def _finder_side_effect_findings(events: list[MonitorEvent]) -> list[Finding]:
+    """Return captured target-cache changes made by passing or raising finders."""
+    findings: list[Finding] = []
+    for event in events:
+        if not isinstance(event, FindSpecCall) or event.found:
+            continue
+        before = event.module_state_before
+        after = event.module_state_after
+        if before is None or after is None or not _module_state_changed(before, after):
+            continue
+        findings.append(Finding(f"finding:{len(findings) + 1}", "finder_side_effect", event.fullname, event))
+    return findings
+
+
+def _module_state_changed(before: ModuleCacheState, after: ModuleCacheState) -> bool:
+    """Compare available identity states without conflating unavailable evidence."""
+    if before.state == "unavailable" or after.state == "unavailable":
+        return False
+    return before.state != after.state or before.object_id != after.object_id or before.type_name != after.type_name
 
 
 def _bypass_finding(
@@ -1247,6 +1269,17 @@ def _json_early_site_bootstrap(bootstrap: EarlySiteBootstrap | None) -> dict[str
     }
 
 
+def _json_module_state(state: ModuleCacheState | None) -> dict[str, object] | None:
+    """Serialize target-module identity evidence."""
+    if state is None:
+        return None
+    return {
+        "object_id": None if state.object_id is None else f"0x{state.object_id:x}",
+        "state": state.state,
+        "type_name": state.type_name,
+    }
+
+
 def _json_event(event: MonitorEvent) -> dict[str, object]:
     """Serialize a public event record without inspecting foreign objects."""
     result: dict[str, object] = {"id": f"event:{event.seq}", "seq": event.seq}
@@ -1310,6 +1343,8 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
                 "fullname": event.fullname,
                 "kind": "find_spec_call",
                 "loader_type_name": event.loader_type_name,
+                "module_state_after": _json_module_state(event.module_state_after),
+                "module_state_before": _json_module_state(event.module_state_before),
                 "origin": event.origin,
                 "search_path": list(event.search_path),
                 "search_path_kind": event.search_path_kind,
@@ -1532,6 +1567,17 @@ def _json_finding(finding: Finding) -> dict[str, object]:
             "search_path_kind": finding.claim.search_path_kind,
             "spec": None if finding.claim.spec_summary is None else _json_spec_summary(finding.claim.spec_summary),
         }
+        if finding.kind == "finder_side_effect":
+            result["evidence"] = {
+                "level": "captured",
+                "module_state_after": _json_module_state(finding.claim.module_state_after),
+                "module_state_before": _json_module_state(finding.claim.module_state_before),
+                "outcome": (
+                    f"raised:{finding.claim.exception_type_name}"
+                    if finding.claim.exception_type_name is not None
+                    else "passed"
+                ),
+            }
     if finding.replay is not None:
         result["path_finder_replay"] = {
             "evidence_level": finding.replay.evidence_level,

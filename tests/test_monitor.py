@@ -196,6 +196,7 @@ def test_find_spec_records_preserve_metadata_and_path_snapshots(run_python: RunP
 
 
 FINDER_MODULE_TRANSITIONS = """
+import json
 import sys
 
 import metapathology
@@ -245,6 +246,20 @@ assert calls["identity_replaced"].module_state_before.object_id == id(original)
 assert calls["identity_replaced"].module_state_after.object_id == id(replacement)
 assert calls["identity_raised"].exception_type_name == "RuntimeError"
 assert calls["identity_raised"].module_state_after.state == "object"
+
+document = json.loads(metapathology.render_report(format="json"))
+event = next(item for item in document["timeline"] if item.get("fullname") == "identity_replaced")
+assert event["module_state_before"]["object_id"] == hex(id(original))
+assert event["module_state_after"]["object_id"] == hex(id(replacement))
+findings = [item for item in document["findings"] if item["kind"] == "finder_side_effect"]
+assert {item["module"] for item in findings} == set(calls)
+raised = next(item for item in findings if item["module"] == "identity_raised")
+assert raised["evidence"]["level"] == "captured"
+assert raised["evidence"]["outcome"] == "raised:RuntimeError"
+text = metapathology.render_report()
+assert "[finder-side-effect] 'identity_replaced'" in text, text
+assert "nested activity was not observed" in text, text
+assert "sys.modules object at" in text, text
 
 for name in tuple(calls):
     sys.modules.pop(name, None)

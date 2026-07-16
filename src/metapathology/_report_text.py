@@ -13,6 +13,7 @@ from metapathology._records import (
     InternalError,
     MetaPathMutation,
     MetaPathReassignment,
+    ModuleCacheState,
     MonitorEvent,
     PathHooksMutation,
     PathHooksReassignment,
@@ -448,7 +449,11 @@ def _timeline_line(event: MonitorEvent, context: _RenderContext) -> str:
         else:
             outcome = "passed"
         finder = context.finder_label(event.finder_type_name, event.finder_id)
-        return f"#{event.seq} {finder} probed {event.fullname!r}: {outcome}{context.thread_suffix(event.thread_name)}"
+        transition = _module_transition_suffix(event.module_state_before, event.module_state_after)
+        return (
+            f"#{event.seq} {finder} probed {event.fullname!r}: {outcome}{transition}"
+            f"{context.thread_suffix(event.thread_name)}"
+        )
     if isinstance(event, ImporterCacheDiff):
         deltas: list[str] = []
         if event.added:
@@ -697,6 +702,14 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
             "(manually created or exec_module-style load; invisible to all import hooks)."
         ]
     claim = finding.claim
+    if finding.kind == "finder_side_effect" and claim is not None:
+        finder = context.finder_label(claim.finder_type_name, claim.finder_id)
+        outcome = f"raising {claim.exception_type_name}" if claim.exception_type_name is not None else "returning None"
+        transition = _module_transition(claim.module_state_before, claim.module_state_after)
+        return [
+            f"[finder-side-effect] '{finding.module}': {finder} changed sys.modules while {outcome}",
+            f"    captured boundary: {transition}; nested activity was not observed",
+        ]
     replay = finding.replay
     tag = finding.kind.replace("_", "-")
     if claim is None or replay is None:
@@ -735,6 +748,31 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
         f"    {_spec_comparison_line(finding)}",
         f"    {_structural_comparison_line(finding)}",
     ]
+
+
+def _module_transition_suffix(before: ModuleCacheState | None, after: ModuleCacheState | None) -> str:
+    """Render only informative cache evidence in the bounded timeline."""
+    if before is None or after is None:
+        return ""
+    if before.state == "unavailable" or after.state == "unavailable":
+        return "; module identity unavailable"
+    if before.state == after.state and before.object_id == after.object_id and before.type_name == after.type_name:
+        return ""
+    return f"; sys.modules {_module_transition(before, after)}"
+
+
+def _module_transition(before: ModuleCacheState | None, after: ModuleCacheState | None) -> str:
+    """Render one plain-data module-cache transition."""
+    return f"{_module_state(before)} -> {_module_state(after)}"
+
+
+def _module_state(state: ModuleCacheState | None) -> str:
+    """Render one captured state without consulting a live module object."""
+    if state is None:
+        return "not captured"
+    if state.state != "object":
+        return state.state
+    return f"{state.type_name} at 0x{state.object_id:x}" if state.object_id is not None else "object"
 
 
 def _origin_display(origin: str | None, context: _RenderContext) -> str:
