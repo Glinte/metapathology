@@ -273,6 +273,45 @@ def test_find_spec_records_target_module_transitions(run_python: RunPython) -> N
     assert proc.stdout.strip() == "OK"
 
 
+SETUPTOOLS_3073 = """
+import sys
+
+import metapathology
+
+class DistutilsMetaFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "distutils":
+            sys.modules[fullname] = replacement
+        return None
+
+previous = sys.modules.get("distutils", sentinel := object())
+original = object()
+replacement = object()
+sys.modules["distutils"] = original
+finder = DistutilsMetaFinder()
+sys.meta_path.insert(0, finder)
+metapathology.install(report_at_exit=False)
+finder.find_spec("distutils")
+
+text = metapathology.render_report()
+assert "[finder-side-effect] 'distutils'" in text, text
+assert "DistutilsMetaFinder" in text, text
+assert "returning None" in text, text
+
+if previous is sentinel:
+    del sys.modules["distutils"]
+else:
+    sys.modules["distutils"] = previous
+print("OK")
+"""
+
+
+def test_setuptools_3073_finder_side_effect_fixture(run_python: RunPython) -> None:
+    proc = run_python(SETUPTOOLS_3073)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
 REASSIGNMENT = """
 import sys
 import metapathology

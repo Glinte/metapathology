@@ -105,7 +105,7 @@ def test_deep_boundaries_delegate_record_and_restore(run_python: RunPython) -> N
     assert result["mechanisms"] == []
 
 
-LOADER_MODULE_TRANSITIONS = r"""
+DISCORD_10017_MODULE_REPLACEMENT = r"""
 import importlib.machinery
 import json
 import sys
@@ -165,8 +165,8 @@ print("OK")
 """
 
 
-def test_deep_loader_records_valid_spec_module_replacement(run_python: RunPython) -> None:
-    proc = run_python(LOADER_MODULE_TRANSITIONS)
+def test_discord_10017_valid_spec_module_replacement_fixture(run_python: RunPython) -> None:
+    proc = run_python(DISCORD_10017_MODULE_REPLACEMENT)
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "OK"
 
