@@ -1,0 +1,15 @@
+[project]
+name = "metapathology-importlib-resources-311-repro"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "importlib_resources==6.4.0",
+    "metapathology",
+]
+
+[tool.uv]
+exclude-newer = "2026-07-08"
+package = false
+
+[tool.uv.sources]
+metapathology = { path = "../..", editable = true }

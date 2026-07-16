@@ -1,0 +1,15 @@
+[project]
+name = "metapathology-pwntools-2737-repro"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "metapathology",
+    "pwntools==4.15.0",
+]
+
+[tool.uv]
+exclude-newer = "2026-07-08"
+package = false
+
+[tool.uv.sources]
+metapathology = { path = "../..", editable = true }

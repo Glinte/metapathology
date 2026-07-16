@@ -1,0 +1,15 @@
+[project]
+name = "metapathology-wrapt-1150-repro"
+version = "0.1.0"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "metapathology",
+    "wrapt==1.14.2",
+]
+
+[tool.uv]
+exclude-newer = "2025-08-12"
+package = false
+
+[tool.uv.sources]
+metapathology = { path = "../..", editable = true }
