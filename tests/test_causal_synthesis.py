@@ -4,7 +4,41 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
+from metapathology._report_data import CausalExplanation, _append_ambiguous_explanations
+from metapathology._report_text import _primary_explanations
+
 RunPython = Callable[..., subprocess.CompletedProcess[str]]
+
+
+def _explanation(explanation_id: str, kind: str, effect_status: str) -> CausalExplanation:
+    return CausalExplanation(
+        explanation_id=explanation_id,
+        kind=kind,
+        confidence="captured",
+        subject="contended.module",
+        effect_status=effect_status,
+        cause_finding_id=None,
+        finder_type_name="Finder",
+        omitted_location="",
+        candidate_path="",
+        event_seqs=(7,),
+        next_observation=None,
+    )
+
+
+def test_equal_conflicting_explanations_remain_explicit_alternatives() -> None:
+    explanations = _append_ambiguous_explanations(
+        (
+            _explanation("explanation:1", "first_mechanism", "first_effect"),
+            _explanation("explanation:2", "second_mechanism", "second_effect"),
+        )
+    )
+
+    ambiguity = explanations[-1]
+    assert ambiguity.kind == "ambiguous_contention"
+    assert ambiguity.confidence == "unknown"
+    assert ambiguity.alternatives == ("explanation:1", "explanation:2")
+    assert _primary_explanations(explanations) == (ambiguity,)
 
 
 NAMESPACE_FAILURE = r"""

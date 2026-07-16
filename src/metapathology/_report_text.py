@@ -328,11 +328,21 @@ def _explanation_lines(explanation: CausalExplanation, context: _RenderContext) 
             f"    {explanation.boundary} boundary: {_module_transition(explanation.state_before, explanation.state_after)}",
             "    both endpoint identities are exact; intermediate steps remain unknown",
         ]
+    if explanation.kind == "ambiguous_contention":
+        return [
+            f"[unknown] competing explanations remain for '{explanation.subject}'",
+            f"    alternatives: {', '.join(explanation.alternatives)}; supporting events: "
+            + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
+            "    next observation: capture a more specific boundary before selecting a cause",
+        ]
     return [f"[{explanation.confidence}] {explanation.kind}: '{explanation.subject}'"]
 
 
 def _primary_explanations(explanations: tuple[CausalExplanation, ...]) -> tuple[CausalExplanation, ...]:
     """Keep lower-value corroboration in JSON without crowding human diagnoses."""
+    ambiguous = tuple(item for item in explanations if item.kind == "ambiguous_contention")
+    if ambiguous:
+        return ambiguous
     namespace = tuple(item for item in explanations if item.kind == "namespace_truncation_failure")
     if namespace:
         return tuple(sorted(namespace, key=lambda item: item.effect_status != "failed"))

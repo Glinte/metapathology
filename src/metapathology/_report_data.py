@@ -487,6 +487,7 @@ class CausalExplanation(_Record):
     """Deterministic synthesis joining a primary finding to its likely effect."""
 
     __slots__ = (
+        "_alternatives",
         "_boundary",
         "_candidate_path",
         "_cause_finding_id",
@@ -507,6 +508,7 @@ class CausalExplanation(_Record):
         "_subject",
     )
     _fields = (
+        "alternatives",
         "boundary",
         "explanation_id",
         "kind",
@@ -526,6 +528,7 @@ class CausalExplanation(_Record):
         "event_seqs",
         "next_observation",
     )
+    alternatives = _ReadOnlyField[tuple[str, ...]]("_alternatives")
     boundary = _ReadOnlyField[str | None]("_boundary")
     explanation_id = _ReadOnlyField[str]("_explanation_id")
     kind = _ReadOnlyField[str]("_kind")
@@ -566,7 +569,9 @@ class CausalExplanation(_Record):
         boundary: str | None = None,
         state_before: ModuleCacheState | None = None,
         state_after: ModuleCacheState | None = None,
+        alternatives: tuple[str, ...] = (),
     ) -> None:
+        self._alternatives = alternatives
         self._boundary = boundary
         self._explanation_id = explanation_id
         self._kind = kind
@@ -1328,7 +1333,41 @@ def _causal_explanations(
                     state_after=call.target_state if target_diverged else call.module_state_after,
                 )
             )
-    return tuple(explanations)
+    return _append_ambiguous_explanations(tuple(explanations))
+
+
+def _append_ambiguous_explanations(
+    explanations: tuple[CausalExplanation, ...],
+) -> tuple[CausalExplanation, ...]:
+    """Expose equally supported, contradictory conclusions without selecting one."""
+    groups: dict[tuple[str, tuple[int, ...]], list[CausalExplanation]] = {}
+    for explanation in explanations:
+        if explanation.event_seqs:
+            groups.setdefault((explanation.subject, explanation.event_seqs), []).append(explanation)
+
+    ambiguous: list[CausalExplanation] = []
+    for (subject, event_seqs), group in groups.items():
+        conclusions = {(item.kind, item.effect_status) for item in group}
+        confidences = {item.confidence for item in group}
+        if len(group) < 2 or len(conclusions) < 2 or len(confidences) != 1:
+            continue
+        ambiguous.append(
+            CausalExplanation(
+                explanation_id=f"explanation:{len(explanations) + len(ambiguous) + 1}",
+                kind="ambiguous_contention",
+                confidence="unknown",
+                subject=subject,
+                effect_status="conflicting_explanations",
+                cause_finding_id=None,
+                finder_type_name="",
+                omitted_location="",
+                candidate_path="",
+                event_seqs=event_seqs,
+                next_observation="capture_a_more_specific_boundary",
+                alternatives=tuple(item.explanation_id for item in group),
+            )
+        )
+    return explanations + tuple(ambiguous)
 
 
 def _omitted_module_candidate(omitted_locations: tuple[str, ...], relative_parts: list[str]) -> tuple[str, str] | None:
@@ -2493,6 +2532,7 @@ def _json_finding(finding: Finding) -> dict[str, object]:
 def _json_explanation(explanation: CausalExplanation) -> dict[str, object]:
     """Serialize causal joins without making human prose a schema contract."""
     return {
+        "alternatives": list(explanation.alternatives),
         "candidate_path": explanation.candidate_path,
         "boundary": explanation.boundary,
         "cause_finding_ref": explanation.cause_finding_id,
