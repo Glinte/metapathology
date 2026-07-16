@@ -811,6 +811,37 @@ percentages. Use categorical confidence tied to provenance:
 - `counterfactual`: based on current or reconstructed replay;
 - `unknown`: evidence does not select one explanation.
 
+**Implementation plan:** Deliver synthesis as five independently reviewable
+rule families over one generic explanation record:
+
+1. Retain the implemented namespace-failure join: connect a primary namespace
+   truncation finding to a descendant attempt, verify the child under an
+   omitted location at report time, and use `correlated` only for an exact T13
+   failed completion. Outcome-unknown candidates remain `counterfactual` and
+   recommend deep import outcomes.
+2. Explain custom backend claims from the canonical T7 finding. Name the
+   finder, captured origin, replay origin, and claim event. This is
+   `counterfactual` because `PathFinder` replay uses report-time state even
+   when the custom claim itself was captured.
+3. Explain a standard winner making later finders unreachable from T16. Use
+   `captured` only for an aggregate standard-finder event; use `inferred` for
+   post-hoc inventory joins and preserve that limitation in the headline.
+4. Promote T14 finder-side-effect and module-replacement findings into concise
+   explanations. A captured before/after boundary may describe the delta but
+   never invent internal steps. Default mode emits an `unknown` next-observation
+   explanation only when a relevant attempt exists but the required deep
+   identity boundary is absent.
+5. Group explanations by subject and decisive boundary. Contradictory primary
+   mechanisms become explicit alternatives with `unknown` confidence; do not
+   rank them using scores. Text is bounded and ordered by exact effects first,
+   then captured, correlated, inferred, counterfactual, and unknown evidence;
+   JSON remains exhaustive.
+
+The generic structured record stores categorical confidence, subject, cause
+finding references, standard-attempt references, event references, optional
+origin/path/state facts, alternatives, and the next observation. Human prose
+is derived by the text renderer and is not part of the JSON contract.
+
 Examples of acceptable conclusions include:
 
 - “`_EditableFinder` claimed `my_backend` from X before `PathFinder`; replay
@@ -822,7 +853,7 @@ Examples of acceptable conclusions include:
 - “`DistutilsMetaFinder` returned `None` after adding or replacing
   `sys.modules['distutils']`; nested activity was not observed.”
 
-Keep atomic T7 findings as the compatibility and machine-consumption layer.
+Keep atomic T7 findings as the machine-consumption layer.
 T15 groups them into explanations; it does not introduce facts absent from the
 underlying records.
 
