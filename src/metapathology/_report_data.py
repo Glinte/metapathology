@@ -1024,7 +1024,7 @@ def _standard_resolutions(
         event_values = tuple(by_seq[seq] for seq in attempt.event_seqs if seq in by_seq)
         if aggregate is None and any(isinstance(event, FindSpecCall) and event.found for event in event_values):
             continue
-        if audit is None or finder_type_name not in audit.meta_path_type_names:
+        if audit is None or finder_type_name not in audit.meta_path_type_names or category != "namespace":
             if aggregate is None:
                 continue
             later_finders: tuple[str, ...] = ()

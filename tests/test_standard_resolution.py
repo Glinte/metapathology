@@ -70,6 +70,31 @@ def test_default_report_infers_namespace_before_later_finder(run_python: RunPyth
     assert proc.stdout.strip() == "OK"
 
 
+def test_ordinary_standard_modules_do_not_claim_later_finders_are_relevant(
+    run_python: RunPython, tmp_path: Path
+) -> None:
+    (tmp_path / "ordinary_source.py").write_text("VALUE = 1\n", encoding="utf-8")
+    proc = run_python(
+        "import json, sys, metapathology\n"
+        "class LaterFinder:\n"
+        "    def find_spec(self, fullname, path=None, target=None): return None\n"
+        "metapathology.install(report_at_exit=False, deep_import_outcomes=True)\n"
+        "sys.meta_path.append(LaterFinder())\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import ordinary_source\n"
+        "document = json.loads(metapathology.render_report(format='json'))\n"
+        "resolution = next(item for item in document['standard_resolutions'] "
+        "if item['fullname'] == 'ordinary_source')\n"
+        "assert resolution['later_finders'] == []\n"
+        "assert not any(item['kind'] == 'standard_winner_precedence' "
+        "and item['subject'] == 'ordinary_source' for item in document['explanations'])\n"
+        "print('OK')\n",
+        str(tmp_path),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
 def test_deep_report_captures_source_resolution(run_python: RunPython, tmp_path: Path) -> None:
     module_dir = tmp_path / "deep_standard"
     module_dir.mkdir()
