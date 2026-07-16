@@ -33,10 +33,13 @@ def test_default_report_infers_namespace_before_later_finder(run_python: RunPyth
 
 
 def test_deep_report_captures_source_resolution(run_python: RunPython, tmp_path: Path) -> None:
-    (tmp_path / "standard_source.py").write_text("VALUE = 1\n", encoding="utf-8")
+    module_dir = tmp_path / "deep_standard"
+    module_dir.mkdir()
+    (module_dir / "standard_source.py").write_text("VALUE = 1\n", encoding="utf-8")
     proc = run_python(
-        "import json, metapathology\n"
-        "metapathology.install(report_at_exit=False, deep_import_outcomes=True)\n"
+        "import json, sys, metapathology\n"
+        "metapathology.install(report_at_exit=False, deep=True)\n"
+        f"sys.path.insert(0, {str(module_dir)!r})\n"
         "import standard_source\n"
         "document = json.loads(metapathology.render_report(format='json'))\n"
         "resolution = next(item for item in document['standard_resolutions'] "
@@ -46,6 +49,10 @@ def test_deep_report_captures_source_resolution(run_python: RunPython, tmp_path:
         "assert resolution['evidence_level'] == 'captured'\n"
         "assert resolution['state_phase'] == 'import'\n"
         "assert resolution['event_ref'] is not None\n"
+        "assert resolution['component_event_refs']\n"
+        "component = next(event for event in document['timeline'] "
+        "if event['id'] == resolution['component_event_refs'][0])\n"
+        f"assert component['path'] == {str(module_dir)!r}\n"
         "print('OK')\n"
     )
     assert proc.returncode == 0, proc.stderr

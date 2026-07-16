@@ -739,14 +739,14 @@ class Monitor:
                     self._record_deep_call("path_hook", hook_id, hook_name, None, path, "raised", type(exc).__name__)
                     raise
                 self._record_deep_call("path_hook", hook_id, hook_name, None, path, "returned", None)
-                self._instrument_deep_path_entry_finder(finder)
+                self._instrument_deep_path_entry_finder(finder, path)
                 return finder
             finally:
                 self._deep_local.active = False
 
         return wrapped
 
-    def _instrument_deep_path_entry_finder(self, finder: object) -> None:
+    def _instrument_deep_path_entry_finder(self, finder: object, path: str | None = None) -> None:
         """Shadow one mutable path-entry finder's find_spec when requested."""
         if not self._deep_path_entry_finders or id(finder) in self._deep_finder_patches:
             return
@@ -763,7 +763,7 @@ class Monitor:
                     return original(fullname, target)
                 if self._deep_local.active:
                     self._record_deep_call(
-                        "path_entry_finder", finder_id, finder_name, fullname, None, "unobserved_reentrant", None
+                        "path_entry_finder", finder_id, finder_name, fullname, path, "unobserved_reentrant", None
                     )
                     return original(fullname, target)
                 self._deep_local.active = True
@@ -772,7 +772,7 @@ class Monitor:
                         spec = original(fullname, target)
                     except BaseException as exc:
                         self._record_deep_call(
-                            "path_entry_finder", finder_id, finder_name, fullname, None, "raised", type(exc).__name__
+                            "path_entry_finder", finder_id, finder_name, fullname, path, "raised", type(exc).__name__
                         )
                         raise
                     self._record_deep_call(
@@ -780,7 +780,7 @@ class Monitor:
                         finder_id,
                         finder_name,
                         fullname,
-                        None,
+                        path,
                         "found" if spec is not None else "not_found",
                         None,
                     )
