@@ -105,6 +105,61 @@ def test_deep_boundaries_delegate_record_and_restore(run_python: RunPython) -> N
     assert result["mechanisms"] == []
 
 
+LOADER_MODULE_TRANSITIONS = r"""
+import importlib.machinery
+import sys
+import types
+
+import metapathology
+
+class ReplacingLoader:
+    def create_module(self, spec):
+        return None
+    def exec_module(self, module):
+        sys.modules[module.__name__] = module
+
+class Finder:
+    def __init__(self):
+        self.loader = ReplacingLoader()
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname != "deep_identity_ext":
+            return None
+        return importlib.machinery.ModuleSpec(fullname, self.loader, origin="shared.ext")
+
+finder = Finder()
+sys.meta_path.insert(0, finder)
+monitor = metapathology.install(report_at_exit=False, deep_loaders=True)
+import deep_identity_ext
+first = deep_identity_ext
+spec = first.__spec__
+second = types.ModuleType("deep_identity_ext")
+second.__spec__ = spec
+second.__loader__ = spec.loader
+spec.loader.exec_module(second)
+
+events = [
+    event for event in monitor.events()
+    if isinstance(event, metapathology.DeepDiagnosticCall)
+    and event.boundary == "loader_exec_module"
+    and event.fullname == "deep_identity_ext"
+]
+assert len(events) == 2, events
+assert events[0].module_state_before.object_id == id(first)
+assert events[0].module_state_after.object_id == id(first)
+assert events[1].module_state_before.object_id == id(first)
+assert events[1].module_state_after.object_id == id(second)
+assert first.__spec__.origin == second.__spec__.origin == "shared.ext"
+metapathology.uninstall()
+print("OK")
+"""
+
+
+def test_deep_loader_records_valid_spec_module_replacement(run_python: RunPython) -> None:
+    proc = run_python(LOADER_MODULE_TRANSITIONS)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
 def test_deep_mechanisms_are_independently_toggleable(run_python: RunPython) -> None:
     proc = run_python(
         "import metapathology\n"

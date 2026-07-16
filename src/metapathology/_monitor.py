@@ -788,11 +788,13 @@ class Monitor:
                             None,
                         )
                         return original_create(spec)
+                    state_before = None if fullname is None else module_cache_state(sys.modules, fullname)
                     self._deep_local.active = True
                     try:
                         try:
                             result = original_create(spec)
                         except BaseException as exc:
+                            state_after = None if fullname is None else module_cache_state(sys.modules, fullname)
                             self._record_deep_call(
                                 "loader_create_module",
                                 loader_id,
@@ -801,10 +803,21 @@ class Monitor:
                                 None,
                                 "raised",
                                 type(exc).__name__,
+                                state_before,
+                                state_after,
                             )
                             raise
+                        state_after = None if fullname is None else module_cache_state(sys.modules, fullname)
                         self._record_deep_call(
-                            "loader_create_module", loader_id, loader_name, fullname, None, "returned", None
+                            "loader_create_module",
+                            loader_id,
+                            loader_name,
+                            fullname,
+                            None,
+                            "returned",
+                            None,
+                            state_before,
+                            state_after,
                         )
                         return result
                     finally:
@@ -836,11 +849,13 @@ class Monitor:
                             None,
                         )
                         return original_exec(module)
+                    state_before = None if fullname is None else module_cache_state(sys.modules, fullname)
                     self._deep_local.active = True
                     try:
                         try:
                             result = original_exec(module)
                         except BaseException as exc:
+                            state_after = None if fullname is None else module_cache_state(sys.modules, fullname)
                             self._record_deep_call(
                                 "loader_exec_module",
                                 loader_id,
@@ -849,10 +864,21 @@ class Monitor:
                                 None,
                                 "raised",
                                 type(exc).__name__,
+                                state_before,
+                                state_after,
                             )
                             raise
+                        state_after = None if fullname is None else module_cache_state(sys.modules, fullname)
                         self._record_deep_call(
-                            "loader_exec_module", loader_id, loader_name, fullname, None, "returned", None
+                            "loader_exec_module",
+                            loader_id,
+                            loader_name,
+                            fullname,
+                            None,
+                            "returned",
+                            None,
+                            state_before,
+                            state_after,
                         )
                         return result
                     finally:
@@ -881,6 +907,8 @@ class Monitor:
         path: str | None,
         outcome: str,
         exception_type_name: str | None,
+        module_state_before: ModuleCacheState | None = None,
+        module_state_after: ModuleCacheState | None = None,
     ) -> None:
         """Append primitive-only deep evidence without holding a lock across delegation."""
         thread_name = threading.current_thread().name
@@ -899,6 +927,8 @@ class Monitor:
                     exception_type_name,
                     thread_name,
                     thread_id,
+                    module_state_before,
+                    module_state_after,
                 )
             )
 

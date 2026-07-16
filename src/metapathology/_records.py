@@ -617,6 +617,8 @@ class DeepDiagnosticCall(_Record):
         "_boundary",
         "_exception_type_name",
         "_fullname",
+        "_module_state_after",
+        "_module_state_before",
         "_object_id",
         "_object_type_name",
         "_outcome",
@@ -633,6 +635,8 @@ class DeepDiagnosticCall(_Record):
         "fullname",
         "path",
         "outcome",
+        "module_state_before",
+        "module_state_after",
         "exception_type_name",
         "thread_name",
         "thread_id",
@@ -644,6 +648,8 @@ class DeepDiagnosticCall(_Record):
     fullname = _ReadOnlyField[str | None]("_fullname")
     path = _ReadOnlyField[str | None]("_path")
     outcome = _ReadOnlyField[str]("_outcome")
+    module_state_before = _ReadOnlyField[ModuleCacheState | None]("_module_state_before")
+    module_state_after = _ReadOnlyField[ModuleCacheState | None]("_module_state_after")
     exception_type_name = _ReadOnlyField[str | None]("_exception_type_name")
     thread_name = _ReadOnlyField[str]("_thread_name")
     thread_id = _ReadOnlyField[int]("_thread_id")
@@ -660,6 +666,8 @@ class DeepDiagnosticCall(_Record):
         exception_type_name: str | None,
         thread_name: str,
         thread_id: int,
+        module_state_before: ModuleCacheState | None = None,
+        module_state_after: ModuleCacheState | None = None,
     ) -> None:
         self._seq = seq
         self._boundary = boundary
@@ -668,6 +676,8 @@ class DeepDiagnosticCall(_Record):
         self._fullname = fullname
         self._path = path
         self._outcome = outcome
+        self._module_state_before = module_state_before
+        self._module_state_after = module_state_after
         self._exception_type_name = exception_type_name
         self._thread_name = thread_name
         self._thread_id = thread_id
