@@ -20,7 +20,7 @@ file output all use the same cutoff-based report document as the human
 renderer. The current experimental schema is identified by:
 
 ```json
-{"name": "metapathology.report", "major": 0, "minor": 9}
+{"name": "metapathology.report", "major": 0, "minor": 16}
 ```
 
 Its top-level sections are `tool`, `process`, `capture`, `snapshots`, `loader_inventory`,
@@ -244,11 +244,16 @@ does not resolve it by executing foreign code.
 
 ## Suspicious findings
 
+Each claim produces at most one primary finding. The most specific supported
+mechanism wins; meta-path short circuits, relevant importer-cache changes, and
+less-specific loader differences remain nested corroborating signals. Findings
+are tiered as `actionable`, `warning`, or `informational`. Recognized editable
+redirection is informational unless namespace or package behavior is lost.
+
 These findings are leads, not verdicts:
 
-- `[bypass]` — a custom finder claimed a source module, while a report-time
-  live [`PathFinder`][path-finder] replay selects a different loader or origin.
-  Path-hook tools did not observe the actual import.
+- `[loader-displacement]` — a custom claim and the live
+  [`PathFinder`][path-finder] replay select different loader types.
 - `[unfindable]` — a custom finder claimed a source module that the replay
   cannot find through the standard path machinery at all. This is the stronger
   bypass signal.
@@ -269,6 +274,21 @@ These findings are leads, not verdicts:
   different non-`None` module object identities. Matching valid specs do not
   hide this identity change; intermediate objects and internal steps remain
   unknown.
+- `[legacy-finder-contract]` — safe raw-dictionary inspection captured a
+  callable `find_module` without a callable `find_spec`. Protocols are not
+  invoked, and descriptor-backed availability can remain indeterminate.
+- `[path-hook-shadow]` — distinct opt-in path-hook boundaries accepted the
+  same path across recorded resolution states. This is structural evidence;
+  it does not claim both hooks were reachable in one historical call.
+- `[frozen-source-conflict]` — a source claim differs from a frozen or archive
+  loader. The same live-replay timing limitation applies.
+- `[failed-after-mutation]` — an exact deep import boundary reported `failed`
+  after a retained meta-path, path-hook, or importer-cache mutation. Temporal
+  ordering alone does not prove that the mutation caused the failure.
+
+`loader-reentry` is reserved for nested lifecycle and partially initialized
+identity evidence. The current `unobserved_reentrant` deep marker explicitly
+lacks that evidence and therefore never produces this finding.
 
 [path-finder]: https://docs.python.org/3/library/importlib.html#importlib.machinery.PathFinder
 [module-spec]: https://docs.python.org/3/reference/import.html#import-related-module-attributes
@@ -280,6 +300,14 @@ with a `PathFinder replay:` line (collapsing to `same origin` when only the
 loader differs) and summarizes the field-level comparison on a
 `differences (import-time claim vs live replay):` line. A package can
 therefore produce an intentional or time-sensitive difference.
+
+Every JSON finding contains an `evidence` object. Its primary `level` is one
+of `captured`, `post_hoc`, `live_replay`, `structural_inference`, or
+`speculative_replay`; `event_refs` links retained supporting records and
+`limitations` contains stable machine-readable caveats. Text prints the same
+primary level and caveats below each finding. The sibling `severity` and
+`signals` fields carry triage and corroboration without multiplying headline
+blocks.
 
 Finder-call timeline records include import-time spec summaries. Exact string
 values and exact list/tuple package paths are copied before the spec is returned

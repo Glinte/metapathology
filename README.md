@@ -194,10 +194,8 @@ namespace outcomes and names later meta-path finders made unreachable by an
 earlier standard result.
 The suspicious-findings section uses these labels:
 
-- `[bypass]` means a custom finder claimed a source module, but a report-time
-  live `PathFinder` replay would choose a different loader or origin. Tools
-  attached through `sys.path_hooks` did not see the import that actually
-  happened.
+- `[loader-displacement]` means a custom claim and the report-time live
+  `PathFinder` replay select different loader types.
 - `[unfindable]` means a custom finder claimed a source module that the current
   live `PathFinder` replay cannot find at all. This is a stronger form of
   bypass.
@@ -215,9 +213,22 @@ The suspicious-findings section uses these labels:
 - `[module-replacement]` means opt-in deep loader evidence captured two
   different module object identities across one `create_module()` or
   `exec_module()` call. Both objects may still have valid, matching specs.
+- `[legacy-finder-contract]` identifies a captured finder with callable
+  `find_module` but no callable `find_spec`.
+- `[path-hook-shadow]` means distinct captured path-hook boundaries accepted
+  the same path across resolution states.
+- `[frozen-source-conflict]` is the loader-displacement case where a source
+  claim differs from a frozen or archive loader.
+- `[failed-after-mutation]` requires an exact opt-in failed import completion
+  after a retained mutation. Mere absence from `sys.modules` never emits it.
 
-These are diagnostic leads, not necessarily defects. Custom finders may bypass
-the standard path machinery intentionally. Findings label the current live
+Each claim produces at most one primary finding. Meta-path short circuits,
+relevant importer-cache changes, and less-specific loader differences appear
+as corroborating signals. Findings are tiered as `actionable`, `warning`, or
+`informational`; recognized editable-install redirection is informational
+unless it loses namespace/package behavior.
+
+These are diagnostic leads, not necessarily defects. Findings label the current live
 replay separately from historical structural evidence: the latter compares
 recorded path-hook and importer-cache identities between installation and
 reporting without calling historical foreign finders. Neither reconstructs the

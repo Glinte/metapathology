@@ -46,6 +46,14 @@ earlier loader activity remain outside that evidence. A non-dictionary
 `sys.modules` replacement is reported unavailable rather than invoked through
 foreign mapping methods.
 
+Contention findings intentionally degrade with capture settings. Exact failure
+correlation requires deep import outcomes; module replacement requires deep
+loader boundaries; hook shadow requires deep path-hook calls. A suppressed
+`unobserved_reentrant` marker proves only that nested activity was not
+instrumented, so it cannot produce a loader-reentry finding. Structural cache
+and mutation correlations identify plausible investigation boundaries, not
+causes.
+
 The loader inventory observes only modules still present at report time and
 metadata they retain then. It cannot prove which loader originally executed a
 module, recover removed modules, or distinguish metadata replaced after load.

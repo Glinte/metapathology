@@ -264,7 +264,7 @@ duplicating importlib or mutating global hook/cache state to exclude one hook.
   clear.
 - Replay failures are isolated and reported without affecting cleanup.
 
-## T7: Expand contention findings
+## T7: Expand contention findings (implemented)
 
 **Weakness:** `[bypass]`, `[unfindable]`, and `[no-spec]` compress distinct
 failure mechanisms into a small vocabulary. A meta-path short circuit, a
@@ -274,11 +274,10 @@ path-hook shadow, and importer-cache displacement need different remedies.
 backward-compatibility requirement, so remove ambiguous legacy labels instead
 of emitting them beside their replacements:
 
-- `[meta-bypass]`: a meta-path finder prevented `PathFinder` from running;
+- meta-path short circuit: corroborating captured ordering signal;
 - `[path-hook-shadow]`: an earlier path hook accepted a path another hook could
   serve;
-- `[path-cache-displacement]`: a cached finder was removed or replaced after a
-  relevant mutation;
+- importer-cache displacement: corroborating structural signal;
 - `[loader-displacement]`: loader choice changed across recorded states;
 - `[frozen-source-conflict]`: a source loader displaced a frozen/archive
   loader;
