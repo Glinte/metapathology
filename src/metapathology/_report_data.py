@@ -407,6 +407,7 @@ class Finding(_Record):
         "_kind",
         "_limitations",
         "_module",
+        "_module_state_baseline",
         "_replay",
         "_severity",
         "_signals",
@@ -424,6 +425,7 @@ class Finding(_Record):
         "evidence_level",
         "finder_contract",
         "limitations",
+        "module_state_baseline",
         "severity",
         "signals",
         "subject_kind",
@@ -440,6 +442,7 @@ class Finding(_Record):
     evidence_level = _ReadOnlyField[str]("_evidence_level")
     finder_contract = _ReadOnlyField[FinderContract | None]("_finder_contract")
     limitations = _ReadOnlyField[tuple[str, ...]]("_limitations")
+    module_state_baseline = _ReadOnlyField[ModuleCacheState | None]("_module_state_baseline")
     severity = _ReadOnlyField[str]("_severity")
     signals = _ReadOnlyField[tuple[str, ...]]("_signals")
     subject_kind = _ReadOnlyField[str]("_subject_kind")
@@ -465,6 +468,7 @@ class Finding(_Record):
         supporting_event_seqs: tuple[int, ...] = (),
         severity: str = "warning",
         signals: tuple[str, ...] = (),
+        module_state_baseline: ModuleCacheState | None = None,
     ) -> None:
         self._finding_id = finding_id
         self._kind = kind
@@ -474,6 +478,7 @@ class Finding(_Record):
         self._evidence_level = evidence_level
         self._finder_contract = finder_contract
         self._limitations = limitations
+        self._module_state_baseline = module_state_baseline
         self._severity = severity
         self._signals = signals
         self._subject_kind = subject_kind
@@ -1303,16 +1308,20 @@ def _causal_explanations(
             )
         elif finding.kind == "module_replacement" and finding.deep_call is not None:
             call = finding.deep_call
+            baseline = finding.module_state_baseline or call.module_state_before
             target_diverged = (
-                call.module_state_before is not None
-                and call.module_state_before.state == "object"
+                baseline is not None
+                and baseline.state == "object"
                 and call.target_state is not None
                 and call.target_state.state == "object"
-                and call.module_state_before.object_id != call.target_state.object_id
-                and not (
-                    call.module_state_after is not None
-                    and call.module_state_after.state == "object"
-                    and call.module_state_before.object_id != call.module_state_after.object_id
+                and baseline.object_id != call.target_state.object_id
+                and (
+                    finding.module_state_baseline is not None
+                    or not (
+                        call.module_state_after is not None
+                        and call.module_state_after.state == "object"
+                        and baseline.object_id != call.module_state_after.object_id
+                    )
                 )
             )
             explanations.append(
@@ -1326,10 +1335,10 @@ def _causal_explanations(
                     finder_type_name=call.object_type_name,
                     omitted_location="",
                     candidate_path="",
-                    event_seqs=(call.seq,),
+                    event_seqs=tuple(dict.fromkeys((*finding.supporting_event_seqs, call.seq))),
                     next_observation=None,
                     boundary=call.boundary,
-                    state_before=call.module_state_before,
+                    state_before=baseline,
                     state_after=call.target_state if target_diverged else call.module_state_after,
                 )
             )
@@ -1696,12 +1705,16 @@ def _compare_specs(observed: SpecSummary, replayed: SpecSummary) -> SpecComparis
 def _module_replacement_findings(events: list[MonitorEvent], offset: int) -> list[Finding]:
     """Return exact object replacements captured across deep loader boundaries."""
     findings: list[Finding] = []
+    previous_exec: dict[str, DeepDiagnosticCall] = {}
     for event in events:
         if not isinstance(event, DeepDiagnosticCall) or not event.boundary.startswith("loader_"):
             continue
         before = event.module_state_before
         after = event.module_state_after
         target = event.target_state
+        prior = previous_exec.get(event.fullname or "")
+        if event.boundary == "loader_exec_module" and event.fullname is not None:
+            previous_exec[event.fullname] = event
         cache_replaced = (
             before is not None
             and after is not None
@@ -1717,7 +1730,15 @@ def _module_replacement_findings(events: list[MonitorEvent], offset: int) -> lis
             and target.state == "object"
             and before.object_id != target.object_id
         )
-        if event.fullname is None or not (cache_replaced or target_diverged):
+        prior_state = None if prior is None else (prior.target_state or prior.module_state_after)
+        prior_diverged = (
+            prior_state is not None
+            and prior_state.state == "object"
+            and target is not None
+            and target.state == "object"
+            and prior_state.object_id != target.object_id
+        )
+        if event.fullname is None or not (cache_replaced or target_diverged or prior_diverged):
             continue
         findings.append(
             Finding(
@@ -1725,6 +1746,8 @@ def _module_replacement_findings(events: list[MonitorEvent], offset: int) -> lis
                 "module_replacement",
                 event.fullname,
                 deep_call=event,
+                module_state_baseline=prior_state if prior_diverged else None,
+                supporting_event_seqs=((prior.seq,) if prior_diverged and prior is not None else ()),
                 evidence_level="captured",
                 limitations=("boundary_delta_does_not_reconstruct_intermediate_states",),
                 severity="actionable",
@@ -2447,6 +2470,7 @@ def _json_finding(finding: Finding) -> dict[str, object]:
         "id": finding.finding_id,
         "kind": finding.kind,
         "module": finding.module,
+        "module_state_baseline": _json_module_state(finding.module_state_baseline),
         "severity": finding.severity,
         "signals": list(finding.signals),
         "subject": {"kind": finding.subject_kind, "value": finding.module},

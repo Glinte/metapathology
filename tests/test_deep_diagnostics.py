@@ -171,7 +171,9 @@ spec = first.__spec__
 second = types.ModuleType("deep_identity_ext")
 second.__spec__ = spec
 second.__loader__ = spec.loader
+sys.modules["deep_identity_ext"] = second
 spec.loader.exec_module(second)
+sys.modules["deep_identity_ext"] = first
 
 events = [
     event for event in monitor.events()
@@ -183,18 +185,19 @@ assert len(events) == 2, events
 assert events[0].module_state_before.object_id == id(first)
 assert events[0].module_state_after.object_id == id(first)
 assert events[0].target_state.object_id == id(first)
-assert events[1].module_state_before.object_id == id(first)
-assert events[1].module_state_after.object_id == id(first)
+assert events[1].module_state_before.object_id == id(second)
+assert events[1].module_state_after.object_id == id(second)
 assert events[1].target_state.object_id == id(second)
 assert first.__spec__.origin == second.__spec__.origin == "shared.ext"
 document = json.loads(metapathology.render_report(format="json"))
 finding = next(item for item in document["findings"] if item["kind"] == "module_replacement")
 assert finding["module"] == "deep_identity_ext"
 assert finding["evidence"]["level"] == "captured"
-assert finding["evidence"]["event_refs"] == ["event:" + str(events[1].seq)]
+assert set(finding["evidence"]["event_refs"]) == {"event:" + str(events[0].seq), "event:" + str(events[1].seq)}
 assert finding["deep_call"]["event_ref"] == "event:" + str(events[1].seq)
-assert finding["deep_call"]["module_state_before"]["object_id"] == hex(id(first))
-assert finding["deep_call"]["module_state_after"]["object_id"] == hex(id(first))
+assert finding["module_state_baseline"]["object_id"] == hex(id(first))
+assert finding["deep_call"]["module_state_before"]["object_id"] == hex(id(second))
+assert finding["deep_call"]["module_state_after"]["object_id"] == hex(id(second))
 assert finding["deep_call"]["target_state"]["object_id"] == hex(id(second))
 explanation = next(item for item in document["explanations"] if item["kind"] == "module_replacement")
 assert explanation["confidence"] == "captured"

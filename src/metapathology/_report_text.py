@@ -933,7 +933,9 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
         ]
     if finding.kind == "module_replacement" and finding.deep_call is not None:
         call = finding.deep_call
-        transition = _module_transition(call.module_state_before, _deep_effective_module_state(call))
+        transition = _module_transition(
+            finding.module_state_baseline or call.module_state_before, _deep_effective_module_state(call)
+        )
         return [
             f"[module-replacement] '{finding.module}': object identity changed across deep {call.boundary}",
             f"    captured boundary: {transition}; internal steps and temporary objects are unknown",
