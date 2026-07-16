@@ -706,6 +706,54 @@ class DeepImportEvent(_Record):
         self._thread_name = thread_name
 
 
+class StandardFinderCall(_Record):
+    """A captured aggregate call to a shared standard finder."""
+
+    __slots__ = (
+        "_attempt_id",
+        "_finder_type_name",
+        "_fullname",
+        "_seq",
+        "_spec_summary",
+        "_thread_id",
+        "_thread_name",
+    )
+    _fields = (
+        "seq",
+        "attempt_id",
+        "fullname",
+        "finder_type_name",
+        "spec_summary",
+        "thread_id",
+        "thread_name",
+    )
+    seq = _ReadOnlyField[int]("_seq")
+    attempt_id = _ReadOnlyField[int]("_attempt_id")
+    fullname = _ReadOnlyField[str]("_fullname")
+    finder_type_name = _ReadOnlyField[str]("_finder_type_name")
+    spec_summary = _ReadOnlyField[SpecSummary]("_spec_summary")
+    thread_id = _ReadOnlyField[int]("_thread_id")
+    thread_name = _ReadOnlyField[str]("_thread_name")
+
+    def __init__(
+        self,
+        seq: int,
+        attempt_id: int,
+        fullname: str,
+        finder_type_name: str,
+        spec_summary: SpecSummary,
+        thread_id: int,
+        thread_name: str,
+    ) -> None:
+        self._seq = seq
+        self._attempt_id = attempt_id
+        self._fullname = fullname
+        self._finder_type_name = finder_type_name
+        self._spec_summary = spec_summary
+        self._thread_id = thread_id
+        self._thread_name = thread_name
+
+
 class InternalError(_Record):
     """An exception raised inside metapathology's own instrumentation.
 
@@ -748,4 +796,5 @@ MonitorEvent = (
     | MetaPathReassignment
     | PathHooksMutation
     | PathHooksReassignment
+    | StandardFinderCall
 )

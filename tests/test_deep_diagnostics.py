@@ -381,6 +381,28 @@ def test_exact_import_outcomes_and_runtime_coverage(run_python: RunPython, tmp_p
     assert proc.stdout.strip() == "OK"
 
 
+def test_deep_outcomes_capture_path_finder_aggregate(run_python: RunPython, tmp_path: Path) -> None:
+    (tmp_path / "standard_aggregate_target.py").write_text("VALUE = 1\n", encoding="utf-8")
+    proc = run_python(
+        "import sys, metapathology\n"
+        f"sys.path.insert(0, {str(tmp_path)!r})\n"
+        "monitor = metapathology.install(report_at_exit=False, deep_import_outcomes=True)\n"
+        "import standard_aggregate_target\n"
+        "events = [event for event in monitor.events() "
+        "if isinstance(event, metapathology.StandardFinderCall) "
+        "and event.fullname == 'standard_aggregate_target']\n"
+        "assert len(events) == 1, events\n"
+        "event = events[0]\n"
+        "assert event.finder_type_name == 'PathFinder'\n"
+        "assert event.spec_summary.loader.type_name == 'SourceFileLoader'\n"
+        "assert event.attempt_id > 0\n"
+        "metapathology.uninstall()\n"
+        "print('OK')\n"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
 def test_exact_outcomes_refuse_an_existing_profiler(run_python: RunPython) -> None:
     proc = run_python(
         "import sys, metapathology\n"

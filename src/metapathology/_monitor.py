@@ -37,6 +37,7 @@ from metapathology._records import (
     PathHooksMutation,
     PathHooksReassignment,
     SpecSummary,
+    StandardFinderCall,
     type_name,
 )
 from metapathology._spec import summarize_spec
@@ -325,6 +326,7 @@ class Monitor:
         self._deep_import_outcomes = False
         self._deep_import_outcomes_status = "disabled"
         self._deep_import_code: types.CodeType | None = None
+        self._path_finder_code: types.CodeType | None = None
         self._deep_hook_wrappers: dict[int, tuple[object, object]] = {}
         self._deep_finder_patches: dict[int, tuple[object, object]] = {}
         self._deep_loader_patches: dict[int, tuple[object, tuple[tuple[str, object], ...]]] = {}
@@ -615,6 +617,9 @@ class Monitor:
             self._deep_import_outcomes_status = "unsupported_boundary"
             return
         self._deep_import_code = code
+        path_finder = getattr(PathFinder.find_spec, "__func__", None)
+        path_finder_code = getattr(path_finder, "__code__", None)
+        self._path_finder_code = path_finder_code if isinstance(path_finder_code, types.CodeType) else None
         self._deep_import_outcomes = True
         self._deep_import_outcomes_status = "active_current_and_future_threading_threads_cache_hits_not_observed"
         threading.setprofile(self._profile_import_boundary)
@@ -622,10 +627,12 @@ class Monitor:
 
     def _profile_import_boundary(self, frame: "FrameType", event: str, arg: object) -> None:
         """Record paired entry and completion for the captured ``_find_and_load`` code."""
-        if not self._enabled or not self._deep_import_outcomes or frame.f_code is not self._deep_import_code:
+        if not self._enabled or not self._deep_import_outcomes:
             return
         try:
-            if event == "call":
+            if frame.f_code is self._path_finder_code:
+                self._profile_path_finder(frame, event, arg)
+            elif frame.f_code is self._deep_import_code and event == "call":
                 fullname = frame.f_locals.get("name")
                 if type(fullname) is not str:
                     return
@@ -645,7 +652,7 @@ class Monitor:
                     )
                 stack = getattr(self._deep_local, "import_attempts", ())
                 self._deep_local.import_attempts = (*stack, (attempt_id, fullname))
-            elif event == "return":
+            elif frame.f_code is self._deep_import_code and event == "return":
                 stack = getattr(self._deep_local, "import_attempts", ())
                 if not stack:
                     return
@@ -661,6 +668,43 @@ class Monitor:
                     )
         except BaseException as exc:
             self._record_internal_error("deep_import_outcomes", exc)
+
+    def _profile_path_finder(self, frame: "FrameType", event: str, arg: object) -> None:
+        """Capture successful aggregate ``PathFinder`` results by code identity."""
+        if event == "call":
+            fullname = frame.f_locals.get("fullname")
+            attempts = getattr(self._deep_local, "import_attempts", ())
+            if type(fullname) is str and attempts:
+                attempt_id, attempt_name = attempts[-1]
+                if fullname == attempt_name:
+                    stack = getattr(self._deep_local, "path_finder_calls", ())
+                    self._deep_local.path_finder_calls = (*stack, (attempt_id, fullname))
+            return
+        if event != "return":
+            return
+        stack = getattr(self._deep_local, "path_finder_calls", ())
+        if not stack:
+            return
+        attempt_id, fullname = stack[-1]
+        self._deep_local.path_finder_calls = stack[:-1]
+        if arg is None:
+            return
+        summary, _loader = summarize_spec(arg, iterate_foreign_locations=False)
+        thread_name = threading.current_thread().name
+        with self._record_lock:
+            thread_id = self._thread_id_locked()
+            self._seq += 1
+            self._events.append(
+                StandardFinderCall(
+                    self._seq,
+                    attempt_id,
+                    fullname,
+                    "PathFinder",
+                    summary,
+                    thread_id,
+                    thread_name,
+                )
+            )
 
     def _enable_importer_cache(self) -> None:
         """Capture the T2 baseline without replacing the interpreter cache."""
@@ -953,6 +997,7 @@ class Monitor:
                 threading.setprofile(None)
                 self._deep_import_outcomes = False
                 self._deep_import_code = None
+                self._path_finder_code = None
                 self._deep_import_outcomes_status = "inactive_after_uninstall"
             current = sys.meta_path
             if isinstance(current, _InstrumentedMetaPath):

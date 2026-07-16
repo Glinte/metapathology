@@ -31,6 +31,7 @@ from metapathology._records import (
     PathHooksMutation,
     PathHooksReassignment,
     SpecSummary,
+    StandardFinderCall,
     _ReadOnlyField,
     _Record,
     type_name,
@@ -675,7 +676,7 @@ def _import_attempts(
     starts: dict[int, tuple[str, int, int, str]] = {}
     order: list[int] = []
     latest_by_thread: dict[int, tuple[int, str]] = {}
-    linked: dict[int, list[FindSpecCall | DeepDiagnosticCall | DeepImportEvent]] = {}
+    linked: dict[int, list[FindSpecCall | DeepDiagnosticCall | DeepImportEvent | StandardFinderCall]] = {}
     for event in events:
         if isinstance(event, DeepImportEvent):
             if event.outcome == "started":
@@ -700,6 +701,8 @@ def _import_attempts(
             latest = latest_by_thread.get(event.thread_id)
             if latest is not None and event.fullname == latest[1]:
                 linked[latest[0]].append(event)
+        elif isinstance(event, StandardFinderCall) and event.attempt_id in linked:
+            linked[event.attempt_id].append(event)
     attempts: list[ImportAttempt] = []
     for attempt_id in order:
         fullname, start_seq, thread_id, thread_name = starts[attempt_id]
@@ -1373,6 +1376,19 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
                 "fullname": event.fullname,
                 "kind": "deep_import_event",
                 "outcome": event.outcome,
+                "thread_id": event.thread_id,
+                "thread_name": event.thread_name,
+            }
+        )
+    elif isinstance(event, StandardFinderCall):
+        result.update(
+            {
+                "attempt_id": event.attempt_id,
+                "evidence": "captured_standard_finder_boundary",
+                "finder_type_name": event.finder_type_name,
+                "fullname": event.fullname,
+                "kind": "standard_finder_call",
+                "spec": _json_spec_summary(event.spec_summary),
                 "thread_id": event.thread_id,
                 "thread_name": event.thread_name,
             }

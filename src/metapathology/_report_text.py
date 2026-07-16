@@ -17,6 +17,7 @@ from metapathology._records import (
     MonitorEvent,
     PathHooksMutation,
     PathHooksReassignment,
+    StandardFinderCall,
 )
 from metapathology._report_data import Finding, ReportDocument
 
@@ -453,6 +454,13 @@ def _timeline_line(event: MonitorEvent, context: _RenderContext) -> str:
         transition = _module_transition_suffix(event.module_state_before, event.module_state_after)
         return (
             f"#{event.seq} {finder} probed {event.fullname!r}: {outcome}{transition}"
+            f"{context.thread_suffix(event.thread_name)}"
+        )
+    if isinstance(event, StandardFinderCall):
+        loader = event.spec_summary.loader
+        loader_name = "None" if loader is None else loader.type_name
+        return (
+            f"#{event.seq} captured {event.finder_type_name} result for {event.fullname!r}: loader {loader_name}"
             f"{context.thread_suffix(event.thread_name)}"
         )
     if isinstance(event, ImporterCacheDiff):

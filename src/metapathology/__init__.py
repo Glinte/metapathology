@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         PathHooksMutation,
         PathHooksReassignment,
         SpecSummary,
+        StandardFinderCall,
     )
 
 # Keep this in sync with ``project.version`` in pyproject.toml. The package
@@ -60,6 +61,7 @@ _RECORD_EXPORTS = frozenset(
         "PathHooksMutation",
         "PathHooksReassignment",
         "SpecSummary",
+        "StandardFinderCall",
     )
 )
 
@@ -81,6 +83,7 @@ __all__ = [
     "PathHooksMutation",
     "PathHooksReassignment",
     "SpecSummary",
+    "StandardFinderCall",
     "__version__",
     "get_monitor",
     "install",
