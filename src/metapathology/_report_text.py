@@ -177,6 +177,9 @@ def render_lines(document: ReportDocument) -> list[str]:
         lines.append("(none)")
     for finding in document.findings:
         lines.extend(_finding_lines(finding, context))
+        limitations = ", ".join(item.replace("_", " ") for item in finding.limitations)
+        suffix = f"; limitations: {limitations}" if limitations else ""
+        lines.append(f"    evidence level: {finding.evidence_level}{suffix}")
 
     lines.append("")
     lines.append("-- finder attribution (instrumented finders only) --")

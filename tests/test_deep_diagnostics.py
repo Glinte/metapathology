@@ -153,7 +153,8 @@ assert first.__spec__.origin == second.__spec__.origin == "shared.ext"
 document = json.loads(metapathology.render_report(format="json"))
 finding = next(item for item in document["findings"] if item["kind"] == "module_replacement")
 assert finding["module"] == "deep_identity_ext"
-assert finding["evidence"]["level"] == "captured_deep_boundary"
+assert finding["evidence"]["level"] == "captured"
+assert finding["evidence"]["event_refs"] == ["event:" + str(events[1].seq)]
 assert finding["deep_call"]["event_ref"] == "event:" + str(events[1].seq)
 assert finding["deep_call"]["module_state_before"]["object_id"] == hex(id(first))
 assert finding["deep_call"]["module_state_after"]["object_id"] == hex(id(second))

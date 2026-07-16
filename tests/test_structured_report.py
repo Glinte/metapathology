@@ -31,7 +31,7 @@ import observed_mod
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 0, "minor": 15, "name": "metapathology.report"}
+assert document["schema"] == {"major": 0, "minor": 16, "name": "metapathology.report"}
 assert document["capture"]["early_site_bootstrap"] is None
 assert document["capture"]["cutoff_seq"] == max(event["seq"] for event in document["timeline"])
 assert document["snapshots"][0]["id"] == "snapshot:install"
@@ -64,7 +64,13 @@ assert mechanisms["importer_cache_snapshots"]["capacity"] == 2
 assert mechanisms["importer_cache_snapshots"]["overflow_policy"] == "replace_latest"
 no_spec = next(finding for finding in document["findings"] if finding["kind"] == "no_spec")
 assert no_spec["module"] == "ghost_mod"
-assert no_spec["evidence"] == {"finder_claim": "not_recorded", "module_spec": "missing"}
+assert no_spec["evidence"] == {
+    "event_refs": [],
+    "finder_claim": "not_recorded",
+    "level": "post_hoc",
+    "limitations": ["report_snapshot_cannot_identify_load_mechanism"],
+    "module_spec": "missing",
+}
 assert document["diagnostics"]["report_errors"] == []
 assert document["loader_inventory"]["evidence"] == "post_hoc"
 assert document["loader_inventory"]["phase"] == "report"
