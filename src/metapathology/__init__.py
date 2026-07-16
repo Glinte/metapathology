@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         MonitorEvent,
         PathHooksMutation,
         PathHooksReassignment,
+        SpecSummary,
     )
 
 # Keep this in sync with ``project.version`` in pyproject.toml. The package
@@ -54,6 +55,7 @@ _RECORD_EXPORTS = frozenset(
         "MonitorEvent",
         "PathHooksMutation",
         "PathHooksReassignment",
+        "SpecSummary",
     )
 )
 
@@ -72,6 +74,7 @@ __all__ = [
     "MonitorEvent",
     "PathHooksMutation",
     "PathHooksReassignment",
+    "SpecSummary",
     "__version__",
     "get_monitor",
     "install",

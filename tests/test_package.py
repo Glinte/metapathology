@@ -22,6 +22,7 @@ _EXPECTED_PUBLIC_API = frozenset(
         "MonitorEvent",
         "PathHooksMutation",
         "PathHooksReassignment",
+        "SpecSummary",
         "__version__",
         "get_monitor",
         "install",

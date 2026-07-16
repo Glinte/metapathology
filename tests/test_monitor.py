@@ -1114,8 +1114,10 @@ import metapathology
 install = metapathology.install
 
 class HostileSpec:
+    accessed = False
     @property
     def loader(self):
+        self.accessed = True
         raise SystemExit(93)
 
 class DummyFinder:
@@ -1130,17 +1132,16 @@ finder = DummyFinder(spec)
 sys.meta_path.insert(0, finder)
 monitor = install(report_at_exit=False)
 
-try:
-    finder.find_spec("probe")
-except SystemExit as exc:
-    assert exc.code == 93
-else:
-    raise AssertionError("SystemExit from foreign spec metadata was swallowed")
+result = finder.find_spec("probe")
+assert result is spec
+assert not spec.accessed
+call = monitor.events()[-1]
+assert call.spec_summary.unavailable_fields
 print("OK")
 """
 
 
-def test_base_exception_from_spec_metadata_is_not_swallowed(run_python: RunPython) -> None:
+def test_foreign_spec_descriptors_are_not_invoked(run_python: RunPython) -> None:
     proc = run_python(HOSTILE_SPEC_METADATA)
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout

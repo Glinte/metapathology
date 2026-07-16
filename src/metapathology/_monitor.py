@@ -32,8 +32,10 @@ from metapathology._records import (
     MonitorEvent,
     PathHooksMutation,
     PathHooksReassignment,
+    SpecSummary,
     type_name,
 )
+from metapathology._spec import summarize_spec
 
 # Supported type checkers treat this conventional name as true without making
 # the runtime import typing solely for annotations and casts.
@@ -1172,6 +1174,7 @@ class Monitor:
                         fullname,
                         spec,
                         search_path,
+                        "sys_path" if path is None else "parent_path",
                         exception_type_name,
                     )
             finally:
@@ -1186,10 +1189,10 @@ class Monitor:
         source = sys.path if path is None else path
         try:
             if path is not None:
-                return tuple(entry for entry in source if isinstance(entry, str))
+                return tuple(entry for entry in source if type(entry) is str)
             snapshot: list[str] = []
             for entry in source:
-                if not isinstance(entry, str):
+                if type(entry) is not str:
                     continue
                 # PathFinder resolves the special empty top-level entry to the
                 # cwd before consulting its importer cache. Preserve that
@@ -1222,6 +1225,7 @@ class Monitor:
         fullname: str,
         spec: "ModuleSpec | None",
         search_path: tuple[str, ...],
+        search_path_kind: str,
         exception_type_name: str | None,
     ) -> None:
         """Record one ``find_spec`` call, reducing the spec to primitives before taking the lock.
@@ -1237,14 +1241,14 @@ class Monitor:
         try:
             loader_type_name: str | None = None
             origin: str | None = None
+            spec_summary: SpecSummary | None = None
             if spec is not None:
-                loader = getattr(spec, "loader", None)
+                spec_summary, loader = summarize_spec(spec, iterate_foreign_locations=False)
                 if loader is not None:
                     loader_type_name = type_name(loader)
                     self._instrument_deep_loader(loader, fullname)
-                raw_origin = getattr(spec, "origin", None)
-                if isinstance(raw_origin, str):
-                    origin = raw_origin
+                if type(spec_summary.origin) is str:
+                    origin = spec_summary.origin
             found = spec is not None
             thread_name = threading.current_thread().name
             with self._record_lock:
@@ -1260,6 +1264,8 @@ class Monitor:
                         loader_type_name=loader_type_name,
                         origin=origin,
                         search_path=search_path,
+                        search_path_kind=search_path_kind,
+                        spec_summary=spec_summary,
                         exception_type_name=exception_type_name,
                         thread_name=thread_name,
                     )

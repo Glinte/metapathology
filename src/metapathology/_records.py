@@ -411,6 +411,64 @@ class PathHooksReassignment(_Record):
         self._stack = stack
 
 
+class SpecSummary(_Record):
+    """Import-safe semantic summary of a finder-produced module spec."""
+
+    __slots__ = (
+        "_cached",
+        "_is_namespace",
+        "_is_package",
+        "_loader",
+        "_locations_state",
+        "_origin",
+        "_spec",
+        "_submodule_search_locations",
+        "_unavailable_fields",
+    )
+    _fields = (
+        "spec",
+        "loader",
+        "origin",
+        "cached",
+        "is_package",
+        "is_namespace",
+        "submodule_search_locations",
+        "locations_state",
+        "unavailable_fields",
+    )
+    spec = _ReadOnlyField[ImportObjectRef]("_spec")
+    loader = _ReadOnlyField[ImportObjectRef | None]("_loader")
+    origin = _ReadOnlyField[str | ImportObjectRef | None]("_origin")
+    cached = _ReadOnlyField[str | ImportObjectRef | None]("_cached")
+    is_package = _ReadOnlyField[bool | None]("_is_package")
+    is_namespace = _ReadOnlyField[bool | None]("_is_namespace")
+    submodule_search_locations = _ReadOnlyField[tuple[str | ImportObjectRef, ...] | None]("_submodule_search_locations")
+    locations_state = _ReadOnlyField[str]("_locations_state")
+    unavailable_fields = _ReadOnlyField[tuple[str, ...]]("_unavailable_fields")
+
+    def __init__(
+        self,
+        spec: ImportObjectRef,
+        loader: ImportObjectRef | None,
+        origin: str | ImportObjectRef | None,
+        cached: str | ImportObjectRef | None,
+        is_package: bool | None,
+        is_namespace: bool | None,
+        submodule_search_locations: tuple[str | ImportObjectRef, ...] | None,
+        locations_state: str,
+        unavailable_fields: tuple[str, ...] = (),
+    ) -> None:
+        self._spec = spec
+        self._loader = loader
+        self._origin = origin
+        self._cached = cached
+        self._is_package = is_package
+        self._is_namespace = is_namespace
+        self._submodule_search_locations = submodule_search_locations
+        self._locations_state = locations_state
+        self._unavailable_fields = unavailable_fields
+
+
 class FindSpecCall(_Record):
     """One ``find_spec`` call on an instrumented meta-path finder.
 
@@ -444,7 +502,9 @@ class FindSpecCall(_Record):
         "_loader_type_name",
         "_origin",
         "_search_path",
+        "_search_path_kind",
         "_seq",
+        "_spec_summary",
         "_thread_name",
     )
     _fields = (
@@ -456,6 +516,8 @@ class FindSpecCall(_Record):
         "loader_type_name",
         "origin",
         "search_path",
+        "search_path_kind",
+        "spec_summary",
         "exception_type_name",
         "thread_name",
     )
@@ -467,6 +529,8 @@ class FindSpecCall(_Record):
     loader_type_name = _ReadOnlyField[str | None]("_loader_type_name")
     origin = _ReadOnlyField[str | None]("_origin")
     search_path = _ReadOnlyField[tuple[str, ...]]("_search_path")
+    search_path_kind = _ReadOnlyField[str]("_search_path_kind")
+    spec_summary = _ReadOnlyField[SpecSummary | None]("_spec_summary")
     exception_type_name = _ReadOnlyField[str | None]("_exception_type_name")
     thread_name = _ReadOnlyField[str]("_thread_name")
 
@@ -480,6 +544,8 @@ class FindSpecCall(_Record):
         loader_type_name: str | None,
         origin: str | None,
         search_path: tuple[str, ...],
+        search_path_kind: str,
+        spec_summary: SpecSummary | None,
         exception_type_name: str | None,
         thread_name: str,
     ) -> None:
@@ -491,6 +557,8 @@ class FindSpecCall(_Record):
         self._loader_type_name = loader_type_name
         self._origin = origin
         self._search_path = search_path
+        self._search_path_kind = search_path_kind
+        self._spec_summary = spec_summary
         self._exception_type_name = exception_type_name
         self._thread_name = thread_name
 
