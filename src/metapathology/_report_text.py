@@ -111,13 +111,13 @@ class _RenderContext:
         self.hook_ambiguous = {label for label, ids in hook_ids.items() if len(ids) > 1}
 
     def display_path(self, path: str) -> str:
-        """Shorten a path under the report's base directory; the base itself becomes '.'."""
+        """Shorten a path under the report's base directory."""
         if self._base is None or self._base_prefix is None:
             return path
         # normcase preserves length, so slicing the original keeps its casing.
         normalized = os.path.normcase(path)
         if normalized.rstrip(os.sep) == self._base:
-            return "."
+            return "<project>"
         if normalized.startswith(self._base_prefix):
             return path[len(self._base_prefix) :]
         return path
@@ -256,8 +256,10 @@ def render_lines(document: ReportDocument) -> list[str]:
     else:
         empty_sections.append("internal errors")
 
-    lines.append("")
-    lines.extend(_loader_inventory_lines(document, context))
+    inventory_lines = _loader_inventory_lines(document, context)
+    if inventory_lines:
+        lines.append("")
+        lines.extend(inventory_lines)
 
     if empty_sections:
         lines.append("")
@@ -622,42 +624,41 @@ def _names_line(names: tuple[str, ...]) -> str:
 def _loader_inventory_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
     """Render a bounded view of the exhaustive post-hoc loader inventory.
 
-    Text groups modules by loader type name and summarizes standard CPython
-    loader groups as counts, listing only their metadata disagreements; the
-    JSON projection retains every entry grouped by loader identity.
+    Text shows loader groups that participated in captured custom claims and
+    any metadata disagreements; JSON retains the exhaustive inventory.
     """
     inventory = document.loader_inventory
-    lines = [f"-- post-hoc loader inventory ({len(inventory.entries)} string-keyed entries) --"]
-    lines.append("This is report-time metadata, not exact historical loader attribution.")
     if not inventory.available:
-        lines.append("(sys.modules snapshot unavailable)")
-        return lines
+        return ["-- post-hoc loader inventory --", "(sys.modules snapshot unavailable)"]
     groups: dict[str | None, list[ModuleMetadata]] = {}
     for entry in inventory.entries:
         if entry.inspection != "available":
             continue
         label = None if entry.loader is None else entry.loader.type_name
         groups.setdefault(label, []).append(entry)
-    custom = sorted(label for label in groups if label is not None and label not in _STANDARD_LOADER_NAMES)
-    standard = sorted(label for label in groups if label is not None and label in _STANDARD_LOADER_NAMES)
-    if standard:
-        lines.append("Standard CPython loader groups list only metadata disagreements; JSON retains every module.")
+    claimed_loaders = {
+        event.loader_type_name
+        for event in document.events
+        if isinstance(event, FindSpecCall) and event.found and event.loader_type_name is not None
+    }
+    custom = sorted(label for label in groups if label is not None and label in claimed_loaders)
+    disagreements = [
+        entry for entry in inventory.entries if entry.inspection == "available" and entry.loader_agreement is False
+    ]
+    unavailable = sorted(
+        (entry for entry in inventory.entries if entry.inspection != "available"), key=lambda entry: entry.name
+    )
+    if not custom and not disagreements and not unavailable and not inventory.non_string_keys:
+        return []
+    lines = [f"-- relevant post-hoc loader inventory ({len(inventory.entries)} total entries in JSON) --"]
+    lines.append("Text shows claimed custom loaders and metadata problems; attribution remains report-time.")
     for label in custom:
         entries = groups[label]
         lines.append(f"{label}: {len(entries)} module(s)")
         lines.extend(_inventory_entry_lines(entries, context))
-    if None in groups:
-        entries = groups[None]
-        lines.append(f"no loader: {len(entries)} module(s)")
-        lines.extend(_inventory_entry_lines(entries, context))
-    for label in standard:
-        entries = groups[label]
-        lines.append(f"{label}: {len(entries)} module(s)")
-        disagreements = [entry for entry in entries if entry.loader_agreement is False]
+    if disagreements:
+        lines.append(f"loader metadata disagreements: {len(disagreements)}")
         lines.extend(_inventory_entry_lines(disagreements, context))
-    unavailable = sorted(
-        (entry for entry in inventory.entries if entry.inspection != "available"), key=lambda entry: entry.name
-    )
     if unavailable:
         lines.append(f"metadata unavailable for {len(unavailable)} module-cache entries:")
         lines.extend(

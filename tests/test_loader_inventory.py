@@ -117,9 +117,8 @@ assert inventory["non_string_keys_omitted"] == 1
 assert any(item["name"] == "inventory_module_like" for item in inventory["unavailable"])
 assert "post-hoc loader inventory" in text
 assert "loader metadata disagreement" in text
-assert "InventoryLoader: 5 module(s)" in text, text
-assert "inventory_shared_a: origin 'inventory_shared_a.py'" in text, text
-assert "Standard CPython loader groups list only metadata disagreements" in text, text
+assert "InventoryLoader: 5 module(s)" not in text, text
+assert "inventory_shared_a: origin 'inventory_shared_a.py'" not in text, text
 assert "inventory_std_mismatch: origin 'inventory_std_mismatch.py' [loader metadata disagreement]" in text, text
 assert "    json: origin" not in text, text
 assert ", cached" not in text, text
