@@ -1300,7 +1300,8 @@ class Monitor:
                 old_contents = tuple(type_name(finder) for finder in list(expected_meta_path))
                 new_contents = tuple(type_name(finder) for finder in list(current_meta_path))
                 replacement = _InstrumentedMetaPath(current_meta_path, self)
-                for finder in list(replacement):
+                for position, finder in enumerate(list(replacement)):
+                    self._observe_finder_contract(finder, position, "reassignment", None)
                     self._instrument_finder(finder)
                 self._instrumented = replacement
                 sys.meta_path = replacement

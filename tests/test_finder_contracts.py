@@ -92,8 +92,12 @@ finder = LegacyFinder()
 before = dict(finder.__dict__)
 metapathology.install(report_at_exit=False)
 sys.meta_path.append(finder)
+replacement_finder = LegacyFinder()
+sys.meta_path = [replacement_finder, *sys.meta_path]
+import fractions
 document = json.loads(metapathology.render_report(format="json"))
-contract = next(item for item in document["finder_contracts"] if item["finder_type_name"] == "LegacyFinder")
+legacy_contracts = [item for item in document["finder_contracts"] if item["finder_type_name"] == "LegacyFinder"]
+contract = next(item for item in legacy_contracts if item["finder_id"] == hex(id(finder)))
 assert contract["category"] == "legacy_only", contract
 assert contract["find_spec"] == {
     "availability": "absent",
@@ -107,6 +111,9 @@ event_id = contract["observation_event_ref"]
 mutation = next(event for event in document["timeline"] if event["id"] == event_id)
 assert mutation["kind"] == "meta_path_mutation"
 assert mutation["added"] == ["LegacyFinder"]
+replacement_contract = next(item for item in legacy_contracts if item["finder_id"] == hex(id(replacement_finder)))
+assert replacement_contract["observation"] == "reassignment"
+assert replacement_contract["observation_event_ref"] is None
 text = metapathology.render_report()
 assert "[legacy-only] LegacyFinder" in text, text
 assert "CPython 3.12+" in text, text
