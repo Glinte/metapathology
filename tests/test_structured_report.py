@@ -58,6 +58,8 @@ assert "snapshot:importer-cache:report" in snapshot_ids
 mechanisms = {mechanism["name"]: mechanism for mechanism in document["capture"]["mechanisms"]}
 assert mechanisms["path_hooks_mutations"]["overflow_policy"] == "retain_all"
 assert mechanisms["path_hooks_mutations"]["retained"] >= 1
+assert mechanisms["finder_contracts"]["overflow_policy"] == "retain_all"
+assert mechanisms["finder_contracts"]["retained"] >= 4
 assert mechanisms["importer_cache_snapshots"]["capacity"] == 2
 assert mechanisms["importer_cache_snapshots"]["overflow_policy"] == "replace_latest"
 no_spec = next(finding for finding in document["findings"] if finding["kind"] == "no_spec")

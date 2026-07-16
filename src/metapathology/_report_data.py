@@ -1371,6 +1371,12 @@ def json_document(document: ReportDocument) -> dict[str, object]:
                 _mechanism("meta_path_reassignments", document.monitor_enabled, reassignments, "import_boundaries"),
                 _mechanism("import_audit_starts", document.monitor_enabled, audit_starts, "resolution_starts"),
                 _mechanism("finder_attribution", document.monitor_enabled, calls, "instrumented_finders"),
+                _mechanism(
+                    "finder_contracts",
+                    document.monitor_enabled,
+                    len(document.finder_contracts),
+                    "first_observation_per_identity",
+                ),
                 _mechanism("deep_diagnostics", bool(document.deep_diagnostics), deep_calls, "delegated_boundaries"),
                 _mechanism(
                     "deep_import_outcomes",
