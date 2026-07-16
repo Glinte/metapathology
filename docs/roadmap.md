@@ -665,30 +665,50 @@ model. Exact outcomes additionally depend on T10.
 that low-level extension loading executed a second object with the same valid
 spec. Setuptools#3073 and discord.py#10017 are representative failures.
 
-**Recommendation:** Never replace or proxy `sys.modules`. Add two tiers of
-identity-only observation:
+**Implementation plan:** Never replace or proxy `sys.modules`. Deliver the
+work in three independently reviewable stages:
 
-1. In default finder wrappers, capture the target name's state immediately
-   before and after delegating: missing, `None`, or object identity plus safe
-   type name. Store the delta on the existing finder-call record. This can show
-   that a finder changed its own target entry before returning `None` without
-   recursively observing the nested imports that caused it.
-2. In deep mode, capture the same target-name state at T10 loader entry, return,
-   and exception boundaries. A loader wrapper attached to a retained module
-   spec can then expose manual later `exec_module()` calls and object
-   replacement, including valid-spec replacements.
+1. Add one safe target-state primitive and its record vocabulary. A state is
+   `unavailable`, `missing`, explicit `None`, or an object identity plus its
+   safe type name. Read an ordinary dictionary or dictionary subclass through
+   the built-in `dict` implementation so an overridden `__getitem__`, `get`,
+   `__contains__`, or `__missing__` cannot run. A non-dictionary replacement is
+   `unavailable`; observation must not probe it through the mapping protocol.
+   The helper performs constant work, retains no object, and never formats a
+   foreign value.
+2. In default finder wrappers, capture that state immediately before and after
+   delegating and store both states on the existing finder-call record. Project
+   changed states into the timeline, text report, and JSON attempt evidence.
+   Add a captured `[finder-side-effect]` finding when an instrumented finder
+   returns `None` or raises after changing its own target entry. This shows the
+   boundary delta without claiming which nested action caused it.
+3. When deep loader instrumentation is enabled, capture the same state at T10
+   `create_module` and `exec_module` entry, return, and exception boundaries.
+   Store the entry and exit states on the existing deep-call record so a loader
+   wrapper attached to a retained module spec can expose manual later
+   `exec_module()` calls and valid-spec object replacement. Project changed
+   states into reports and add `[module-replacement]` only when two available
+   non-`None` states have different identities.
 
-First validate safe lookup against ordinary dictionaries and known
-`sys.modules` subclasses such as ddtrace's `ModuleWatchdog`. Do not call
-overridden mapping methods on a foreign container merely to improve evidence.
-If identity cannot be read without foreign dispatch, record `unavailable`.
-Do not take a full module-cache copy around every finder or loader call; that
-would make hot-path work scale with the environment and retain unrelated
-modules.
+Validate safe lookup against ordinary dictionaries, hostile dictionary
+subclasses representative of ddtrace's `ModuleWatchdog`, and non-dictionary
+mapping replacements. Do not call overridden mapping methods on a foreign
+container merely to improve evidence. Do not take a full module-cache copy
+around every finder or loader call; that would make hot-path work scale with
+the environment and retain unrelated modules. Capture failures are isolated as
+`unavailable` evidence and must not replace or mask the delegated exception.
 
 A before/after delta proves an identity transition across that boundary. It
 does not prove the internal sequence, which nested import caused it, or that a
-temporary intermediate object did not exist.
+temporary intermediate object did not exist. Re-entrant calls still delegate
+silently under T10's guard; their unobserved nested activity must not be
+reconstructed from the outer delta. Identity values are meaningful only within
+one process and report, so JSON exposes them as evidence rather than stable
+cross-run identifiers.
+
+Capture is exhaustive and grows by constant additional data per existing
+finder or deep-loader event. It adds no queue, cache, retry loop, or separate
+shutdown path; the existing report cutoff and uninstall behavior apply.
 
 **Dependencies:** T4 provides safe module metadata conventions, T13 provides
 attempt and boundary identities, and exact loader transitions depend on T10.
@@ -702,6 +722,9 @@ attempt and boundary identities, and exact loader transitions depend on T10.
   specs for the same origin.
 - Missing entries, explicit `None`, replacements, removals, loader exceptions,
   recursive imports, and hostile module-cache containers are covered.
+- JSON and text distinguish unchanged, changed, and unavailable boundaries;
+  unchanged boundaries remain machine-readable without overwhelming the
+  bounded human projections.
 - Records contain only target-name state and have constant work and storage per
   observed boundary.
 - The report never expands an identity delta into an invented nested-import
