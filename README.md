@@ -180,7 +180,7 @@ events remain available after uninstalling.
 
 For integration with another diagnostic or test harness:
 
-- `metapathology.render_report(format="text")` returns text or experimental
+- `metapathology.render_report(format="text")` returns text or stable,
   schema-versioned JSON as a string;
 - `metapathology.write_report(destination=None, format="text")` writes to
   standard error, a text stream, or an atomic file path;

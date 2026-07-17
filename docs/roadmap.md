@@ -200,7 +200,7 @@ module cache but no lifetime event producer.
 usable stderr. Multiple worker processes also make human-readable stderr
 reports difficult to collect reliably.
 
-**Implementation:** Text and experimental schema-versioned JSON are projections
+**Implementation:** Text and schema-versioned JSON are projections
 of one cutoff-based report document containing process metadata, snapshots, a
 chronological timeline, structured findings, and diagnostics. Every automatic
 report filename includes the process ID: `{pid}` is replaced when present;
@@ -210,9 +210,9 @@ unchanged. The CLI, public API, and
 `METAPATHOLOGY_REPORT` configuration all reach the same atomic file writer.
 
 The initial schema was 0.1 and T1 extended it to 0.2 rather than prematurely
-stabilizing 1.0. Later evidence tasks may extend or reshape schema 0.x as their
-actual models are implemented; perform a schema 1.0 review after T15 and T16
-and before T9 pins semantic assertions.
+stabilizing 1.0. After T15 and T16 stabilized the evidence model, the typed
+contract, JSON Schema, canonical failure document, and reference-integrity
+rules were finalized as schema 1.0.
 Human and JSON renderers must continue to consume the same report document.
 
 There is no cross-process aggregation. Each process performs one synchronous
@@ -227,8 +227,8 @@ queue, collector, retry loop, or silent dropping policy.
 - Concurrent processes do not overwrite each other's files.
 - Write failures become isolated internal errors and never change the target
   exit status.
-- Schema 0.x is explicitly experimental and covered by round-trip and semantic
-  tests; schema 1.0 is the future compatibility boundary.
+- Schema 1.0 is the compatibility boundary and is covered by structural,
+  reference-integrity, round-trip, and semantic tests.
 
 ## T6: Generalize resolution-route evidence (implemented; revised in schema 0.19)
 

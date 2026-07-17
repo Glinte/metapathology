@@ -81,9 +81,11 @@ format.
 
 ### `render_report(*, format="text") -> str`
 
-Returns text or JSON, including its trailing newline. JSON currently uses the
-experimental `metapathology.report` schema version 0.19. Its shape may change
-throughout schema 0.x; schema 1.0 will be reviewed once the evidence model stabilizes.
+Returns text or JSON, including its trailing newline. JSON uses the stable
+`metapathology.report` schema version 1.0. The bundled
+`metapathology/report.schema.json` file defines its language-neutral shape;
+`metapathology.ReportJSON` and `metapathology.ReportStatus` expose the Python
+typing contract without eagerly importing the reporting implementation.
 Raises `RuntimeError` before the first installation and `ValueError` for an
 unknown format. Ordinary generation failures degrade to a valid failure
 report rather than propagating.

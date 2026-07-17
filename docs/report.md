@@ -21,10 +21,10 @@ paths and full identity metadata.
 
 `render_report(format="json")`, `write_report(..., format="json")`, and JSON
 file output all use the same cutoff-based report document as the human
-renderer. The current experimental schema is identified by:
+renderer. The stable schema is identified by:
 
 ```json
-{"name": "metapathology.report", "major": 0, "minor": 20}
+{"name": "metapathology.report", "major": 1, "minor": 0}
 ```
 
 Its top-level sections include `tool`, `process`, `capture`, `snapshots`,
@@ -41,10 +41,42 @@ number and receive an `event:<seq>` identifier. Findings reference
 document-scoped routes and comparisons rather than duplicating probe evidence
 or requiring consumers to parse human wording.
 
-Schema 0.x is intentionally allowed to change as the remaining snapshot,
-timeline, inventory, comparison, and finding models are introduced. A
-schema 1.0 review is required before machine consumers treat the shape as
-stable. Capacity and completeness are reported per capture mechanism; the
+The bundled `metapathology/report.schema.json` file is the language-neutral
+contract. A major-version change may remove or rename a field, change its
+type or meaning, or remove an enum value. A minor-version change is additive:
+consumers must ignore unknown object fields and tolerate unknown enum values.
+Existing fields and enum meanings do not change within one major version.
+
+Every report has a `report_status`: `complete` means projection completed
+without recorded instrumentation or report-copy errors, `partial` means a
+valid report contains such errors, and `generation_failed` is the canonical
+minimal document produced when ordinary report generation raises. All three
+statuses have the same required top-level sections.
+
+Optional-value conventions are semantic. A field is omitted only when the
+concept does not apply to that record kind. `null` means the concept applies
+but its value is unknown, unavailable, or not captured. An empty array means
+the collection is known to contain no retained entries. IDs and `*_ref` /
+`*_refs` fields are document-scoped; every reference resolves within the same
+document and IDs are unique. Object and finder identity values are meaningful
+only within their originating process and report.
+
+Array ordering is contractual where it carries evidence: `timeline` is in
+increasing capture sequence, import attempts are in start order, snapshots
+retain their documented install/report order, and meta-path/path-hook entries
+retain finder precedence. Findings and explanations are in deterministic
+report priority order. Inventory group and module arrays are sorted by their
+documented safe type/name keys. Arrays described as sets of signals,
+limitations, references, or changed paths are semantically unordered even
+when output happens to be deterministic.
+
+`generated_at` is a second-precision UTC report-capture timestamp, not process
+start time or a per-event clock. JSON intentionally retains absolute paths,
+`argv`, `cwd`, executable paths, module origins, and stack filenames. Review a
+report before sharing it outside its original trust boundary.
+
+Capacity, completeness, overflow, and synchronous shutdown behavior are
+reported per capture mechanism; the
 event producers retain all records and therefore grow with observed import
 activity. Importer-cache snapshot storage is separately bounded at two full
 maps with a replace-latest policy.
