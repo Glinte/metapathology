@@ -36,23 +36,29 @@ assert module.VALUE == 7
 
 text = metapathology.render_report()
 document = json.loads(metapathology.render_report(format="json"))
-finding = next(item for item in document["findings"] if item["module"] == target_name)
-assert finding["path_finder_replay"]["evidence_level"] == "live_replay", finding
-assert finding["path_finder_replay"]["state_phase"] == "report", finding
-assert "meta_path_short_circuit" in finding["signals"], finding
+routes = [item for item in document["resolution_routes"] if item["module"] == target_name]
+captured = next(item for item in routes if item["kind"] == "captured_claim")
+probe = next(item for item in routes if item["kind"] == "standard_path_probe")
+assert probe["evidence_level"] == "live_probe", probe
+assert probe["state_phase"] == "report", probe
+assert probe["predicts_alternative_winner"] is False, probe
+assert "meta_path_short_circuit" in captured["signals"], captured
+assert not any(item["module"] == target_name for item in document["findings"])
 print(text)
 """
 
 
-def test_finder_shadowing_path_hooks_reports_loader_displacement(run_python: RunPython, tmp_path: Path) -> None:
+def test_finder_shadowing_path_hooks_reports_neutral_route_difference(run_python: RunPython, tmp_path: Path) -> None:
     # The module file is in cwd, so the standard path machinery *would* find it
     # with a plain SourceFileLoader; the sneaky finder claims it first.
     module_file = tmp_path / "real_mod.py"
     module_file.write_text("VALUE = 7\n")
     proc = run_python(BYPASS, "real_mod", str(module_file))
     assert proc.returncode == 0, proc.stderr
-    assert "[loader-displacement]" in proc.stdout
-    assert "corroborating signals: meta path short circuit" in proc.stdout
+    assert "[loader-displacement]" not in proc.stdout
+    assert "-- resolution route divergences" in proc.stdout
+    assert "captured route signals: meta path short circuit" in proc.stdout
+    assert "intervening meta-path finders skipped" in proc.stdout
     assert "real_mod" in proc.stdout
     assert "SneakyLoader" in proc.stdout
     assert "SourceFileLoader" in proc.stdout
@@ -62,7 +68,9 @@ def test_finder_shadowing_path_hooks_reports_loader_displacement(run_python: Run
     assert f"paths shown relative to: {tmp_path}" in proc.stdout
 
 
-def test_source_claim_displacing_archive_loader_is_classified(run_python: RunPython, tmp_path: Path) -> None:
+def test_source_and_archive_routes_are_compared_without_classifying_a_defect(
+    run_python: RunPython, tmp_path: Path
+) -> None:
     archive = tmp_path / "frozen-like.zip"
     with zipfile.ZipFile(archive, "w") as zipped:
         zipped.writestr("archive_conflict.py", "VALUE = 'archive'\n")
@@ -84,10 +92,11 @@ def test_source_claim_displacing_archive_loader_is_classified(run_python: RunPyt
         "sys.meta_path.insert(0, Finder())\n"
         "import archive_conflict\n"
         "document = json.loads(metapathology.render_report(format='json'))\n"
-        "finding = next(item for item in document['findings'] if item['kind'] == 'frozen_source_conflict')\n"
-        "assert finding['path_finder_replay']['loader_type_name'] == 'zipimporter'\n"
-        "assert finding['evidence']['level'] == 'live_replay'\n"
-        "assert '[frozen-source-conflict]' in metapathology.render_report()\n"
+        "routes = [item for item in document['resolution_routes'] if item['module'] == 'archive_conflict']\n"
+        "probe = next(item for item in routes if item['kind'] == 'standard_path_probe')\n"
+        "assert probe['spec']['loader']['type_name'] == 'zipimporter'\n"
+        "assert not any(item['module'] == 'archive_conflict' for item in document['findings'])\n"
+        "assert '[frozen-source-conflict]' not in metapathology.render_report()\n"
         "print('OK')\n",
         str(archive),
         str(custom),
@@ -96,7 +105,9 @@ def test_source_claim_displacing_archive_loader_is_classified(run_python: RunPyt
     assert proc.stdout.strip() == "OK"
 
 
-def test_module_invisible_to_path_machinery_is_flagged_as_unfindable(run_python: RunPython, tmp_path: Path) -> None:
+def test_module_invisible_to_path_machinery_has_a_not_found_standard_route(
+    run_python: RunPython, tmp_path: Path
+) -> None:
     # The module file lives in a directory that is not on sys.path, so the
     # standard path machinery cannot find it at all.
     hidden = tmp_path / "hidden"
@@ -105,7 +116,8 @@ def test_module_invisible_to_path_machinery_is_flagged_as_unfindable(run_python:
     module_file.write_text("VALUE = 7\n")
     proc = run_python(BYPASS, "hidden_mod", str(module_file))
     assert proc.returncode == 0, proc.stderr
-    assert "[unfindable]" in proc.stdout
+    assert "[unfindable]" not in proc.stdout
+    assert "PathFinder status not_found" in proc.stdout
     assert "hidden_mod" in proc.stdout
 
 
@@ -145,7 +157,7 @@ def test_standard_unwrapped_finders_are_explained(run_python: RunPython) -> None
     assert "report guide: https://glinte.github.io/metapathology/report/" in proc.stdout
     assert "standard CPython finders left unwrapped (expected)" in proc.stdout
     assert "interpreter-shared classes handle built-in, frozen, and sys.path imports" in proc.stdout
-    assert "Custom claims are checked against PathFinder below" in proc.stdout
+    assert "Custom claims may be compared with an independent standard path probe below" in proc.stdout
     assert "BuiltinImporter: class entry" not in proc.stdout
     assert "FrozenImporter: class entry" not in proc.stdout
     assert "PathFinder: class entry" not in proc.stdout

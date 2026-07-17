@@ -31,7 +31,9 @@ import observed_mod
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 0, "minor": 18, "name": "metapathology.report"}
+assert document["schema"] == {"major": 0, "minor": 19, "name": "metapathology.report"}
+assert isinstance(document["resolution_routes"], list)
+assert isinstance(document["route_comparisons"], list)
 assert document["capture"]["early_site_bootstrap"] is None
 assert document["capture"]["frozen_bootstrap"] is None
 assert document["capture"]["cutoff_seq"] == max(event["seq"] for event in document["timeline"])
@@ -61,6 +63,10 @@ assert mechanisms["path_hooks_mutations"]["overflow_policy"] == "retain_all"
 assert mechanisms["path_hooks_mutations"]["retained"] >= 1
 assert mechanisms["finder_contracts"]["overflow_policy"] == "retain_all"
 assert mechanisms["finder_contracts"]["retained"] >= 4
+assert mechanisms["resolution_route_analysis"]["overflow_policy"] == "retain_all"
+assert mechanisms["resolution_route_analysis"]["shutdown"] == "synchronous_no_retry"
+assert mechanisms["resolution_route_analysis"]["retained"] == len(document["resolution_routes"])
+assert mechanisms["resolution_route_analysis"]["comparison_count"] == len(document["route_comparisons"])
 assert mechanisms["importer_cache_snapshots"]["capacity"] == 2
 assert mechanisms["importer_cache_snapshots"]["overflow_policy"] == "replace_latest"
 no_spec = next(finding for finding in document["findings"] if finding["kind"] == "no_spec")
@@ -161,6 +167,7 @@ def test_report_document_uses_hand_written_slots(run_python: RunPython) -> None:
         "    importer_cache_coalesced=0,\n"
         "    loader_inventory=LoaderInventory(True, (), 0), attempts=(),\n"
         "    modules_since_install=(), events=(), explanations=(), skipped_finders=(), standard_resolutions=(),\n"
+        "    resolution_routes=(), route_comparisons=(),\n"
         "    standard_finder_status='disabled', findings=(), finder_contracts=(),\n"
         "    early_site_bootstrap=None, frozen_bootstrap=None,\n"
         "    deep_diagnostics=(), deep_import_outcomes_status='disabled',\n"

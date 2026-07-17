@@ -21,7 +21,15 @@ from metapathology._records import (
     PathHooksReassignment,
     StandardFinderCall,
 )
-from metapathology._report_data import CausalExplanation, Finding, ReportDocument, StandardResolution
+from metapathology._report_data import (
+    CausalExplanation,
+    Finding,
+    ReportDocument,
+    ResolutionRoute,
+    RouteComparison,
+    StandardResolution,
+    StructuralComparison,
+)
 
 TYPE_CHECKING = False
 
@@ -75,7 +83,15 @@ class _RenderContext:
     force hex ids back onto unrelated sections.
     """
 
-    __slots__ = ("_base", "_base_prefix", "finder_ambiguous", "hook_ambiguous", "only_thread")
+    __slots__ = (
+        "_base",
+        "_base_prefix",
+        "comparisons_by_id",
+        "finder_ambiguous",
+        "hook_ambiguous",
+        "only_thread",
+        "routes_by_id",
+    )
 
     def __init__(self, document: ReportDocument) -> None:
         cwd = document.cwd
@@ -109,6 +125,8 @@ class _RenderContext:
             _note_label(hook_ids, reference)
         self.finder_ambiguous = {label for label, ids in finder_ids.items() if len(ids) > 1}
         self.hook_ambiguous = {label for label, ids in hook_ids.items() if len(ids) > 1}
+        self.routes_by_id = {route.route_id: route for route in document.resolution_routes}
+        self.comparisons_by_id = {comparison.comparison_id: comparison for comparison in document.route_comparisons}
 
     def display_path(self, path: str) -> str:
         """Shorten a path under the report's base directory."""
@@ -196,6 +214,13 @@ def render_lines(document: ReportDocument) -> list[str]:
         limitations = ", ".join(item.replace("_", " ") for item in finding.limitations)
         suffix = f"; limitations: {limitations}" if limitations else ""
         lines.append(f"    severity: {finding.severity}; evidence: {finding.evidence_level}{suffix}")
+
+    divergent = tuple(comparison for comparison in document.route_comparisons if _routes_differ(comparison))
+    if divergent:
+        lines.append("")
+        lines.append(f"-- resolution route divergences ({len(divergent)}) --")
+        for comparison in divergent:
+            lines.extend(_route_comparison_lines(comparison, context))
 
     lines.append("")
     lines.append("-- finder attribution (instrumented finders only) --")
@@ -290,20 +315,12 @@ def _explanation_lines(explanation: CausalExplanation, context: _RenderContext) 
                 "    next observation: enable deep import outcomes to confirm whether the descendant import failed"
             )
         return lines
-    if explanation.kind == "custom_claim_displacement":
-        return [
-            f"[counterfactual] {explanation.finder_type_name} claimed '{explanation.subject}' before PathFinder",
-            f"    captured origin: {_origin_display(explanation.observed_origin, context)}",
-            f"    PathFinder replay origin: {_origin_display(explanation.replayed_origin, context)}",
-            f"    cause: {explanation.cause_finding_id}; supporting events: "
-            + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
-        ]
     if explanation.kind == "standard_winner_precedence":
         later = ", ".join(explanation.later_finders)
         qualifier = "produced" if explanation.confidence == "captured" else "likely produced"
         lines = [
             f"[{explanation.confidence}] {explanation.finder_type_name} {qualifier} {explanation.effect_status} for '{explanation.subject}' before later finders",
-            f"    later unreachable finders: {later}; origin: {_origin_display(explanation.observed_origin, context)}",
+            f"    later unreachable finders: {later}; origin: {_origin_display(explanation.origin, context)}",
         ]
         if explanation.standard_attempt_id is not None:
             lines.append(f"    attempt: attempt:{explanation.standard_attempt_id}")
@@ -428,7 +445,10 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
             + _names_line(tuple(item.finder_type_name for item in standard_skipped))
         )
         lines.append("    These interpreter-shared classes handle built-in, frozen, and sys.path imports;")
-        lines.append("    metapathology does not modify them. Custom claims are checked against PathFinder below.")
+        lines.append(
+            "    metapathology does not modify them. Custom claims may be compared with an independent "
+            "standard path probe below."
+        )
     if other_skipped:
         lines.append("other finders observed but not instrumented (direct attribution unavailable):")
         lines.extend(f"    {item.finder_type_name}: {item.reason}" for item in other_skipped)
@@ -959,58 +979,24 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
             f"[finder-side-effect] '{finding.module}': {finder} changed sys.modules while {outcome}",
             f"    captured boundary: {transition}; nested activity was not observed",
         ]
-    replay = finding.replay
     tag = finding.kind.replace("_", "-")
-    if claim is None or replay is None:
+    if claim is None:
         return [f"[{tag}] '{finding.module}'"]
-    if finding.kind == "loader_displacement":
-        return [
-            f"[loader-displacement] '{finding.module}': captured claim and live PathFinder replay chose different loader types",
-            f"    claimed: loader {claim.loader_type_name}, origin {_origin_display(claim.origin, context)}",
-            f"    PathFinder replay: loader {replay.loader_type_name}, origin {_origin_display(replay.origin, context)}",
-            f"    {_spec_comparison_line(finding)}",
-            f"    {_structural_comparison_line(finding)}",
-        ]
-    if finding.kind == "frozen_source_conflict":
-        return [
-            f"[frozen-source-conflict] '{finding.module}': source claim displaced a frozen or archive loader in replay",
-            f"    {_spec_comparison_line(finding)}",
-            f"    {_structural_comparison_line(finding)}",
-        ]
     finder = context.finder_label(claim.finder_type_name, claim.finder_id)
-    claimed_line = f"    claimed: loader {claim.loader_type_name}, origin {_origin_display(claim.origin, context)}"
-    if finding.kind == "unfindable":
-        return [
-            f"[unfindable] '{finding.module}': claimed by {finder}, but a live PathFinder replay finds nothing; "
-            "sys.path_hooks-based tools never see this module",
-            claimed_line,
-            f"    {_structural_comparison_line(finding)}",
-        ]
     if finding.kind == "namespace_truncation":
-        comparison = finding.spec_comparison
+        comparison = (
+            None if finding.route_comparison_id is None else context.comparisons_by_id.get(finding.route_comparison_id)
+        )
         if comparison is None:
-            omitted = "unavailable"
+            standard_only = "unavailable"
         else:
-            omitted = ", ".join(context.quoted_path(path) for path in comparison.omitted_locations)
+            standard_only = ", ".join(context.quoted_path(path) for path in comparison.only_in_right_route)
         return [
-            f"[namespace-truncation] '{finding.module}': claimed as a namespace package by {finder}",
-            f"    locations omitted from the claim (present in the PathFinder replay): {omitted}",
-            f"    {_spec_comparison_line(finding)}",
+            f"[namespace-truncation] '{finding.module}': descendant failure is correlated with a narrower namespace route from {finder}",
+            f"    locations available only through the standard path probe: {standard_only}",
             f"    {_structural_comparison_line(finding)}",
         ]
-    same_origin = (
-        claim.origin is not None
-        and replay.origin is not None
-        and os.path.normcase(claim.origin) == os.path.normcase(replay.origin)
-    )
-    replay_origin = "same origin" if same_origin else f"origin {_origin_display(replay.origin, context)}"
-    return [
-        f"[{tag}] '{finding.module}': custom claim by {finder} differs from PathFinder replay",
-        claimed_line,
-        f"    PathFinder replay: loader {replay.loader_type_name}, {replay_origin}",
-        f"    {_spec_comparison_line(finding)}",
-        f"    {_structural_comparison_line(finding)}",
-    ]
+    return [f"[{tag}] '{finding.module}': captured evidence from {finder}"]
 
 
 def _module_transition_suffix(before: ModuleCacheState | None, after: ModuleCacheState | None) -> str:
@@ -1043,48 +1029,108 @@ def _origin_display(origin: str | None, context: _RenderContext) -> str:
     return "None" if origin is None else context.quoted_path(origin)
 
 
-def _spec_comparison_line(finding: Finding) -> str:
-    comparison = finding.spec_comparison
-    if comparison is None:
-        return "differences: comparison unavailable"
+def _routes_differ(comparison: RouteComparison) -> bool:
+    """Return whether two route outcomes have any comparable difference."""
+    return bool(
+        comparison.status_differs
+        or comparison.loader_type_differs
+        or comparison.origin_differs
+        or comparison.cached_differs
+        or comparison.package_status_differs
+        or comparison.only_in_left_route
+        or comparison.only_in_right_route
+        or comparison.locations_reordered
+    )
+
+
+def _route_comparison_lines(comparison: RouteComparison, context: _RenderContext) -> list[str]:
+    """Render a neutral route comparison outside the findings section."""
+    left = context.routes_by_id.get(comparison.left_route_id)
+    right = context.routes_by_id.get(comparison.right_route_id)
+    if left is None or right is None:
+        return [f"{comparison.comparison_id}: referenced route unavailable"]
+    lines = [
+        f"'{left.module}': captured claim compared with an independent standard path probe",
+        f"    captured route: {_route_summary(left, context)}",
+        f"    standard path probe: {_route_summary(right, context)}",
+        f"    {_route_difference_line(comparison)}",
+    ]
+    if left.signals:
+        signals = ", ".join(item.replace("_", " ") for item in left.signals)
+        lines.append(f"    captured route signals: {signals}")
+    lines.extend(
+        (
+            "    interpretation: the probe does not predict which finder would win if the captured finder were absent",
+            "    probe boundary: captured search path; report-time path hooks, importer cache, filesystem, and "
+            "finder state; intervening meta-path finders skipped",
+            f"    {_structural_evidence_line(comparison.structural_comparison)}",
+        )
+    )
+    return lines
+
+
+def _route_summary(route: ResolutionRoute, context: _RenderContext) -> str:
+    """Summarize one route using only its reduced report data."""
+    finder = route.finder_type_name
+    if route.finder_id is not None and route.kind == "captured_claim":
+        finder = context.finder_label(finder, route.finder_id)
+    if route.status != "found" or route.spec_summary is None:
+        return f"{finder} status {route.status}"
+    summary = route.spec_summary
+    loader = "None" if summary.loader is None else summary.loader.type_name
+    origin = summary.origin if type(summary.origin) is str else None
+    return f"{finder}, loader {loader}, origin {_origin_display(origin, context)}"
+
+
+def _route_difference_line(comparison: RouteComparison) -> str:
+    """Describe symmetric semantic differences without choosing a baseline."""
     differences: list[str] = []
-    if comparison.loader_type_changed:
+    if comparison.status_differs:
+        differences.append("resolution status")
+    if comparison.loader_type_differs:
         differences.append("loader type")
-    if comparison.origin_changed:
+    if comparison.origin_differs:
         differences.append("origin")
-    if comparison.cached_changed:
+    if comparison.cached_differs:
         differences.append("cached path")
-    if comparison.package_status_changed:
+    if comparison.package_status_differs:
         differences.append("package/module status")
-    if comparison.omitted_locations:
-        count = len(comparison.omitted_locations)
-        differences.append(f"{count} standard search location{'' if count == 1 else 's'} omitted")
-    if comparison.additional_locations:
-        count = len(comparison.additional_locations)
-        differences.append(f"{count} additional claimed search location{'' if count == 1 else 's'}")
+    if comparison.only_in_left_route:
+        count = len(comparison.only_in_left_route)
+        differences.append(f"{count} search location{'' if count == 1 else 's'} only in captured route")
+    if comparison.only_in_right_route:
+        count = len(comparison.only_in_right_route)
+        differences.append(f"{count} search location{'' if count == 1 else 's'} only in standard path route")
     if comparison.locations_reordered:
         differences.append("search locations reordered")
     detail = "; ".join(differences) if differences else "no comparable semantic differences"
-    phase = "post-hoc claim" if comparison.observed_locations_state == "post_hoc" else "import-time claim"
     qualifier = "" if comparison.complete else "partial; "
-    return f"differences ({qualifier}{phase} vs live replay): {detail}"
+    return f"route differences ({qualifier}captured vs live probe): {detail}"
 
 
 def _structural_comparison_line(finding: Finding) -> str:
-    """Label identity-only evidence separately from the report-time replay."""
+    """Label identity-only evidence separately from a report-time probe."""
     comparison = finding.structural_comparison
     if comparison is None:
         return "structural evidence: unavailable"
-    if comparison.path_hooks_changed is None:
+    return _structural_evidence_line(comparison)
+
+
+def _structural_evidence_line(comparison: StructuralComparison) -> str:
+    """Render one structural comparison without coupling it to a finding."""
+    path_hooks_changed = comparison.path_hooks_changed
+    importer_cache_changed = comparison.importer_cache_changed
+    importer_cache_changed_paths = comparison.importer_cache_changed_paths
+    if path_hooks_changed is None:
         path_hooks = "sys.path_hooks comparison unavailable"
-    elif comparison.path_hooks_changed:
+    elif path_hooks_changed:
         path_hooks = "sys.path_hooks changed since install"
     else:
         path_hooks = "sys.path_hooks unchanged since install"
-    if comparison.importer_cache_changed is None:
+    if importer_cache_changed is None:
         importer_cache = "importer cache comparison unavailable"
-    elif comparison.importer_cache_changed:
-        count = len(comparison.importer_cache_changed_paths)
+    elif importer_cache_changed:
+        count = len(importer_cache_changed_paths)
         noun = "path" if count == 1 else "paths"
         importer_cache = f"importer cache changed for {count} captured search {noun}"
     else:

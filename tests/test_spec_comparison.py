@@ -7,8 +7,8 @@ from collections.abc import Callable, Iterator
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 
-from metapathology import FindSpecCall, ImportObjectRef, SpecSummary
-from metapathology._report_data import _compare_specs, _post_hoc_spec_summary, _spec_finding_kind
+from metapathology import ImportObjectRef, SpecSummary
+from metapathology._report_data import _compare_specs, _post_hoc_spec_summary
 from metapathology._spec import summarize_spec
 
 RunPython = Callable[..., "subprocess.CompletedProcess[str]"]
@@ -20,20 +20,16 @@ def _summary(locations: list[str]) -> SpecSummary:
     return summarize_spec(spec, iterate_foreign_locations=False)[0]
 
 
-def _winner(summary: SpecSummary, origin: str | None = None) -> FindSpecCall:
-    return FindSpecCall(1, "example", "Finder", 1, True, None, origin, (), "sys_path", summary, None, "MainThread", 1)
-
-
 def test_location_comparison_distinguishes_truncation_extension_and_reordering() -> None:
     truncated = _compare_specs(_summary(["a"]), _summary(["a", "b"]))
     extended = _compare_specs(_summary(["a", "b"]), _summary(["a"]))
     reordered = _compare_specs(_summary(["b", "a"]), _summary(["a", "b"]))
     duplicated = _compare_specs(_summary(["a"]), _summary(["a", "a"]))
 
-    assert truncated.omitted_locations == ("b",)
-    assert extended.additional_locations == ("b",)
+    assert truncated.only_in_right_route == ("b",)
+    assert extended.only_in_left_route == ("b",)
     assert reordered.locations_reordered is True
-    assert duplicated.omitted_locations == ("a",)
+    assert duplicated.only_in_right_route == ("a",)
 
 
 def test_cached_path_is_captured_only_from_an_exact_string_origin() -> None:
@@ -54,24 +50,24 @@ def test_cached_path_is_captured_only_from_an_exact_string_origin() -> None:
     assert hostile.cached is None
 
 
-def test_finding_precedence_covers_package_origin_and_generic_differences() -> None:
+def test_route_comparison_preserves_package_origin_and_namespace_differences() -> None:
     module_spec = ModuleSpec("example", loader=None)
     module = summarize_spec(module_spec, iterate_foreign_locations=False)[0]
     package = _summary(["a"])
     package_comparison = _compare_specs(module, package)
-    assert _spec_finding_kind(_winner(module), module, package, package_comparison) == "package_displacement"
+    assert package_comparison.package_status_differs is True
 
     first_spec = ModuleSpec("example", loader=None, origin="first.py")
     second_spec = ModuleSpec("example", loader=None, origin="second.py")
     first = summarize_spec(first_spec, iterate_foreign_locations=False)[0]
     second = summarize_spec(second_spec, iterate_foreign_locations=False)[0]
     origin_comparison = _compare_specs(first, second)
-    assert _spec_finding_kind(_winner(first, "first.py"), first, second, origin_comparison) == "origin_displacement"
+    assert origin_comparison.origin_differs is True
 
     extended = _summary(["a", "b"])
     base = _summary(["a"])
     extension_comparison = _compare_specs(extended, base)
-    assert _spec_finding_kind(_winner(extended), extended, base, extension_comparison) == "spec_difference"
+    assert extension_comparison.only_in_left_route == ("b",)
 
 
 def test_deferred_locations_are_attempted_only_from_the_same_post_hoc_spec() -> None:
@@ -156,21 +152,29 @@ sys.meta_path.insert(0, TruncatingFinder(name, first + "/" + name))
 __import__(name)
 
 document = json.loads(metapathology.render_report(format="json"))
-finding = next(item for item in document["findings"] if item["module"] == name)
-assert finding["kind"] == "namespace_truncation", finding
-assert finding["claim"]["search_path_kind"] == "sys_path"
-assert finding["claim"]["spec"]["locations_state"] == "captured"
-assert finding["path_finder_replay"]["spec"]["locations_state"] == "post_hoc"
-omitted = finding["spec_comparison"]["omitted_locations"]
-assert len(omitted) == 1
-assert os.path.normcase(os.path.normpath(omitted[0])) == os.path.normcase(os.path.normpath(second + "/" + name))
+routes = [item for item in document["resolution_routes"] if item["module"] == name]
+captured = next(item for item in routes if item["kind"] == "captured_claim")
+probe = next(item for item in routes if item["kind"] == "standard_path_probe")
+assert captured["search_path_kind"] == "sys_path"
+assert captured["spec"]["locations_state"] == "captured"
+assert probe["spec"]["locations_state"] == "post_hoc"
+comparison = next(
+    item
+    for item in document["route_comparisons"]
+    if item["left_route_ref"] == captured["id"] and item["right_route_ref"] == probe["id"]
+)
+standard_only = comparison["only_in_right_route"]
+assert len(standard_only) == 1
+assert os.path.normcase(os.path.normpath(standard_only[0])) == os.path.normcase(os.path.normpath(second + "/" + name))
+assert not any(item["module"] == name for item in document["findings"])
 text = metapathology.render_report()
-assert "[namespace-truncation]" in text, text
+assert "resolution route divergences" in text, text
+assert "[namespace-truncation]" not in text, text
 print("OK")
 """
 
 
-def test_namespace_truncation_is_reported_from_real_namespace_paths(
+def test_namespace_route_difference_is_reported_neutrally_without_an_effect(
     run_python: RunPython,
     tmp_path: Path,
 ) -> None:

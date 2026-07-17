@@ -47,16 +47,13 @@ if TYPE_CHECKING:
     from metapathology._monitor import Monitor
 
 
-# Only claims with these origin suffixes get the bypass check; extension
-# modules, builtins, and synthetic origins have no PathFinder baseline.
-_SOURCE_SUFFIXES = (".py", ".pyc")
 _MODULE_FILE_SUFFIXES = (".py", ".pyc", ".pyd", ".so")
 _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # The JSON contract remains experimental until the observation mechanisms in
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 18
+_SCHEMA_MINOR = 19
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -226,50 +223,108 @@ class StandardResolution(_Record):
         self._later_finders = later_finders
 
 
-class ReplayResult(_Record):
-    """PathFinder outcome that does not conflate failure with absence."""
+class ResolutionRoute(_Record):
+    """One captured or probed route to resolving a module name."""
 
     __slots__ = (
+        "_event_seq",
         "_evidence_level",
         "_exception_type_name",
-        "_loader_type_name",
-        "_origin",
+        "_finder_id",
+        "_finder_type_name",
+        "_kind",
+        "_limitations",
+        "_module",
+        "_predicts_alternative_winner",
+        "_purpose",
+        "_route_id",
+        "_search_path",
+        "_search_path_kind",
+        "_search_path_phase",
+        "_signals",
         "_spec_summary",
         "_state_phase",
         "_status",
     )
     _fields = (
+        "route_id",
+        "module",
+        "kind",
+        "purpose",
+        "limitations",
         "evidence_level",
         "state_phase",
+        "predicts_alternative_winner",
+        "finder_type_name",
+        "finder_id",
         "status",
-        "loader_type_name",
-        "origin",
         "spec_summary",
         "exception_type_name",
+        "event_seq",
+        "search_path",
+        "search_path_kind",
+        "search_path_phase",
+        "signals",
     )
+    route_id = _ReadOnlyField[str]("_route_id")
+    module = _ReadOnlyField[str]("_module")
+    kind = _ReadOnlyField[str]("_kind")
+    purpose = _ReadOnlyField[str]("_purpose")
+    limitations = _ReadOnlyField[tuple[str, ...]]("_limitations")
     evidence_level = _ReadOnlyField[str]("_evidence_level")
     state_phase = _ReadOnlyField[str]("_state_phase")
+    predicts_alternative_winner = _ReadOnlyField[bool]("_predicts_alternative_winner")
+    finder_type_name = _ReadOnlyField[str]("_finder_type_name")
+    finder_id = _ReadOnlyField[int | None]("_finder_id")
     status = _ReadOnlyField[str]("_status")
-    loader_type_name = _ReadOnlyField[str | None]("_loader_type_name")
-    origin = _ReadOnlyField[str | None]("_origin")
     spec_summary = _ReadOnlyField[SpecSummary | None]("_spec_summary")
     exception_type_name = _ReadOnlyField[str | None]("_exception_type_name")
+    event_seq = _ReadOnlyField[int | None]("_event_seq")
+    search_path = _ReadOnlyField[tuple[str, ...]]("_search_path")
+    search_path_kind = _ReadOnlyField[str]("_search_path_kind")
+    search_path_phase = _ReadOnlyField[str]("_search_path_phase")
+    signals = _ReadOnlyField[tuple[str, ...]]("_signals")
 
     def __init__(
         self,
+        *,
+        route_id: str,
+        module: str,
+        kind: str,
+        purpose: str,
+        limitations: tuple[str, ...],
+        evidence_level: str,
+        state_phase: str,
+        predicts_alternative_winner: bool,
+        finder_type_name: str,
+        finder_id: int | None,
         status: str,
-        loader_type_name: str | None = None,
-        origin: str | None = None,
-        spec_summary: SpecSummary | None = None,
-        exception_type_name: str | None = None,
+        spec_summary: SpecSummary | None,
+        exception_type_name: str | None,
+        event_seq: int | None,
+        search_path: tuple[str, ...],
+        search_path_kind: str,
+        search_path_phase: str,
+        signals: tuple[str, ...] = (),
     ) -> None:
-        self._evidence_level = "live_replay"
-        self._state_phase = "report"
+        self._route_id = route_id
+        self._module = module
+        self._kind = kind
+        self._purpose = purpose
+        self._limitations = limitations
+        self._evidence_level = evidence_level
+        self._state_phase = state_phase
+        self._predicts_alternative_winner = predicts_alternative_winner
+        self._finder_type_name = finder_type_name
+        self._finder_id = finder_id
         self._status = status
-        self._loader_type_name = loader_type_name
-        self._origin = origin
         self._spec_summary = spec_summary
         self._exception_type_name = exception_type_name
+        self._event_seq = event_seq
+        self._search_path = search_path
+        self._search_path_kind = search_path_kind
+        self._search_path_phase = search_path_phase
+        self._signals = signals
 
 
 class StructuralComparison(_Record):
@@ -309,67 +364,92 @@ class StructuralComparison(_Record):
         self._importer_cache_event_seqs = importer_cache_event_seqs
 
 
-class SpecComparison(_Record):
-    """Field-level differences between a captured claim and live replay."""
+class RouteComparison(_Record):
+    """Neutral semantic differences between two resolution routes."""
 
     __slots__ = (
-        "_additional_locations",
-        "_cached_changed",
+        "_cached_differs",
+        "_comparison_id",
         "_complete",
-        "_loader_type_changed",
+        "_left_locations_state",
+        "_left_route_id",
+        "_loader_type_differs",
         "_locations_reordered",
-        "_observed_locations_state",
-        "_omitted_locations",
-        "_origin_changed",
-        "_package_status_changed",
-        "_replayed_locations_state",
+        "_only_in_left_route",
+        "_only_in_right_route",
+        "_origin_differs",
+        "_package_status_differs",
+        "_right_locations_state",
+        "_right_route_id",
+        "_status_differs",
+        "_structural_comparison",
     )
     _fields = (
+        "comparison_id",
+        "left_route_id",
+        "right_route_id",
         "complete",
-        "loader_type_changed",
-        "origin_changed",
-        "cached_changed",
-        "package_status_changed",
-        "omitted_locations",
-        "additional_locations",
+        "status_differs",
+        "loader_type_differs",
+        "origin_differs",
+        "cached_differs",
+        "package_status_differs",
+        "only_in_left_route",
+        "only_in_right_route",
         "locations_reordered",
-        "observed_locations_state",
-        "replayed_locations_state",
+        "left_locations_state",
+        "right_locations_state",
+        "structural_comparison",
     )
+    comparison_id = _ReadOnlyField[str]("_comparison_id")
+    left_route_id = _ReadOnlyField[str]("_left_route_id")
+    right_route_id = _ReadOnlyField[str]("_right_route_id")
     complete = _ReadOnlyField[bool]("_complete")
-    loader_type_changed = _ReadOnlyField[bool | None]("_loader_type_changed")
-    origin_changed = _ReadOnlyField[bool | None]("_origin_changed")
-    cached_changed = _ReadOnlyField[bool | None]("_cached_changed")
-    package_status_changed = _ReadOnlyField[bool | None]("_package_status_changed")
-    omitted_locations = _ReadOnlyField[tuple[str, ...]]("_omitted_locations")
-    additional_locations = _ReadOnlyField[tuple[str, ...]]("_additional_locations")
+    status_differs = _ReadOnlyField[bool]("_status_differs")
+    loader_type_differs = _ReadOnlyField[bool | None]("_loader_type_differs")
+    origin_differs = _ReadOnlyField[bool | None]("_origin_differs")
+    cached_differs = _ReadOnlyField[bool | None]("_cached_differs")
+    package_status_differs = _ReadOnlyField[bool | None]("_package_status_differs")
+    only_in_left_route = _ReadOnlyField[tuple[str, ...]]("_only_in_left_route")
+    only_in_right_route = _ReadOnlyField[tuple[str, ...]]("_only_in_right_route")
     locations_reordered = _ReadOnlyField[bool | None]("_locations_reordered")
-    observed_locations_state = _ReadOnlyField[str]("_observed_locations_state")
-    replayed_locations_state = _ReadOnlyField[str]("_replayed_locations_state")
+    left_locations_state = _ReadOnlyField[str]("_left_locations_state")
+    right_locations_state = _ReadOnlyField[str]("_right_locations_state")
+    structural_comparison = _ReadOnlyField[StructuralComparison]("_structural_comparison")
 
     def __init__(
         self,
+        comparison_id: str,
+        left_route_id: str,
+        right_route_id: str,
+        status_differs: bool,
         complete: bool,
-        loader_type_changed: bool | None,
-        origin_changed: bool | None,
-        cached_changed: bool | None,
-        package_status_changed: bool | None,
-        omitted_locations: tuple[str, ...],
-        additional_locations: tuple[str, ...],
+        loader_type_differs: bool | None,
+        origin_differs: bool | None,
+        cached_differs: bool | None,
+        package_status_differs: bool | None,
+        only_in_left_route: tuple[str, ...],
+        only_in_right_route: tuple[str, ...],
         locations_reordered: bool | None,
-        observed_locations_state: str,
-        replayed_locations_state: str,
+        left_locations_state: str,
+        right_locations_state: str,
+        structural_comparison: StructuralComparison,
     ) -> None:
+        self._comparison_id = comparison_id
+        self._left_route_id = left_route_id
+        self._right_route_id = right_route_id
+        self._status_differs = status_differs
         self._complete = complete
-        self._loader_type_changed = loader_type_changed
-        self._origin_changed = origin_changed
-        self._cached_changed = cached_changed
-        self._package_status_changed = package_status_changed
-        self._omitted_locations = omitted_locations
-        self._additional_locations = additional_locations
+        self._loader_type_differs = loader_type_differs
+        self._origin_differs = origin_differs
+        self._cached_differs = cached_differs
+        self._package_status_differs = package_status_differs
+        self._only_in_left_route = only_in_left_route
+        self._only_in_right_route = only_in_right_route
         self._locations_reordered = locations_reordered
-        self._observed_locations_state = observed_locations_state
-        self._replayed_locations_state = replayed_locations_state
+        self._left_locations_state = left_locations_state
+        self._right_locations_state = right_locations_state
+        self._structural_comparison = structural_comparison
 
 
 class _StructuralContext:
@@ -408,10 +488,10 @@ class Finding(_Record):
         "_limitations",
         "_module",
         "_module_state_baseline",
-        "_replay",
+        "_route_comparison_id",
+        "_route_ids",
         "_severity",
         "_signals",
-        "_spec_comparison",
         "_structural_comparison",
         "_subject_kind",
         "_supporting_event_seqs",
@@ -430,8 +510,8 @@ class Finding(_Record):
         "signals",
         "subject_kind",
         "supporting_event_seqs",
-        "replay",
-        "spec_comparison",
+        "route_ids",
+        "route_comparison_id",
         "structural_comparison",
     )
     finding_id = _ReadOnlyField[str]("_finding_id")
@@ -447,8 +527,8 @@ class Finding(_Record):
     signals = _ReadOnlyField[tuple[str, ...]]("_signals")
     subject_kind = _ReadOnlyField[str]("_subject_kind")
     supporting_event_seqs = _ReadOnlyField[tuple[int, ...]]("_supporting_event_seqs")
-    replay = _ReadOnlyField[ReplayResult | None]("_replay")
-    spec_comparison = _ReadOnlyField[SpecComparison | None]("_spec_comparison")
+    route_ids = _ReadOnlyField[tuple[str, ...]]("_route_ids")
+    route_comparison_id = _ReadOnlyField[str | None]("_route_comparison_id")
     structural_comparison = _ReadOnlyField[StructuralComparison | None]("_structural_comparison")
 
     def __init__(
@@ -457,8 +537,8 @@ class Finding(_Record):
         kind: str,
         module: str,
         claim: FindSpecCall | None = None,
-        replay: ReplayResult | None = None,
-        spec_comparison: SpecComparison | None = None,
+        route_ids: tuple[str, ...] = (),
+        route_comparison_id: str | None = None,
         structural_comparison: StructuralComparison | None = None,
         deep_call: DeepDiagnosticCall | None = None,
         evidence_level: str = "post_hoc",
@@ -483,8 +563,8 @@ class Finding(_Record):
         self._signals = signals
         self._subject_kind = subject_kind
         self._supporting_event_seqs = supporting_event_seqs
-        self._replay = replay
-        self._spec_comparison = spec_comparison
+        self._route_ids = route_ids
+        self._route_comparison_id = route_comparison_id
         self._structural_comparison = structural_comparison
 
 
@@ -504,9 +584,8 @@ class CausalExplanation(_Record):
         "_kind",
         "_later_finders",
         "_next_observation",
-        "_observed_origin",
         "_omitted_location",
-        "_replayed_origin",
+        "_origin",
         "_standard_attempt_id",
         "_state_after",
         "_state_before",
@@ -525,8 +604,7 @@ class CausalExplanation(_Record):
         "omitted_location",
         "candidate_path",
         "later_finders",
-        "observed_origin",
-        "replayed_origin",
+        "origin",
         "standard_attempt_id",
         "state_before",
         "state_after",
@@ -545,8 +623,7 @@ class CausalExplanation(_Record):
     omitted_location = _ReadOnlyField[str]("_omitted_location")
     candidate_path = _ReadOnlyField[str]("_candidate_path")
     later_finders = _ReadOnlyField[tuple[str, ...]]("_later_finders")
-    observed_origin = _ReadOnlyField[str | None]("_observed_origin")
-    replayed_origin = _ReadOnlyField[str | None]("_replayed_origin")
+    origin = _ReadOnlyField[str | None]("_origin")
     standard_attempt_id = _ReadOnlyField[int | None]("_standard_attempt_id")
     state_before = _ReadOnlyField[ModuleCacheState | None]("_state_before")
     state_after = _ReadOnlyField[ModuleCacheState | None]("_state_after")
@@ -567,8 +644,7 @@ class CausalExplanation(_Record):
         candidate_path: str,
         event_seqs: tuple[int, ...],
         next_observation: str | None,
-        observed_origin: str | None = None,
-        replayed_origin: str | None = None,
+        origin: str | None = None,
         standard_attempt_id: int | None = None,
         later_finders: tuple[str, ...] = (),
         boundary: str | None = None,
@@ -587,8 +663,7 @@ class CausalExplanation(_Record):
         self._cause_finding_id = cause_finding_id
         self._finder_type_name = finder_type_name
         self._omitted_location = omitted_location
-        self._observed_origin = observed_origin
-        self._replayed_origin = replayed_origin
+        self._origin = origin
         self._standard_attempt_id = standard_attempt_id
         self._state_before = state_before
         self._state_after = state_after
@@ -669,6 +744,8 @@ class ReportDocument(_Record):
         "_monitor_enabled",
         "_path_hooks_enabled",
         "_report_errors",
+        "_resolution_routes",
+        "_route_comparisons",
         "_skipped_finders",
         "_standard_finder_status",
         "_standard_resolutions",
@@ -703,6 +780,8 @@ class ReportDocument(_Record):
         "standard_resolutions",
         "standard_finder_status",
         "findings",
+        "resolution_routes",
+        "route_comparisons",
         "finder_contracts",
         "report_errors",
         "cwd",
@@ -737,6 +816,8 @@ class ReportDocument(_Record):
     standard_resolutions = _ReadOnlyField[tuple[StandardResolution, ...]]("_standard_resolutions")
     standard_finder_status = _ReadOnlyField[str]("_standard_finder_status")
     findings = _ReadOnlyField[tuple[Finding, ...]]("_findings")
+    resolution_routes = _ReadOnlyField[tuple[ResolutionRoute, ...]]("_resolution_routes")
+    route_comparisons = _ReadOnlyField[tuple[RouteComparison, ...]]("_route_comparisons")
     finder_contracts = _ReadOnlyField[tuple[FinderContract, ...]]("_finder_contracts")
     report_errors = _ReadOnlyField[tuple[ReportError, ...]]("_report_errors")
     cwd = _ReadOnlyField[str | None]("_cwd")
@@ -774,6 +855,8 @@ class ReportDocument(_Record):
         standard_resolutions: tuple[StandardResolution, ...],
         standard_finder_status: str,
         findings: tuple[Finding, ...],
+        resolution_routes: tuple[ResolutionRoute, ...],
+        route_comparisons: tuple[RouteComparison, ...],
         finder_contracts: tuple[FinderContract, ...],
         report_errors: tuple[ReportError, ...],
         cwd: str | None,
@@ -808,6 +891,8 @@ class ReportDocument(_Record):
         self._standard_resolutions = standard_resolutions
         self._standard_finder_status = standard_finder_status
         self._findings = findings
+        self._resolution_routes = resolution_routes
+        self._route_comparisons = route_comparisons
         self._finder_contracts = finder_contracts
         self._report_errors = report_errors
         self._cwd = cwd
@@ -843,7 +928,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
     )
     previously_active = monitor._begin_report_analysis()
     try:
-        findings = _suspicious_findings(
+        findings, resolution_routes, route_comparisons = _suspicious_findings(
             monitor,
             events,
             monitor.initial_path_hooks,
@@ -853,11 +938,12 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
             module_items,
             loader_inventory.entries,
             finder_contracts,
+            attempts,
             report_errors,
         )
     finally:
         monitor._end_report_analysis(previously_active)
-    explanations = _causal_explanations(findings, attempts, standard_resolutions)
+    explanations = _causal_explanations(findings, attempts, standard_resolutions, route_comparisons)
     try:
         cwd: str | None = os.getcwd()
     except Exception as exc:
@@ -917,6 +1003,8 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         standard_resolutions=standard_resolutions,
         standard_finder_status=monitor.standard_finder_status,
         findings=findings,
+        resolution_routes=resolution_routes,
+        route_comparisons=route_comparisons,
         finder_contracts=tuple(finder_contracts),
         report_errors=tuple(report_errors),
         cwd=cwd,
@@ -1151,9 +1239,10 @@ def _suspicious_findings(
     module_items: list[tuple[object, object]] | None,
     module_metadata: tuple[ModuleMetadata, ...],
     finder_contracts: list[FinderContract],
+    attempts: tuple[ImportAttempt, ...],
     report_errors: list[ReportError],
-) -> tuple[Finding, ...]:
-    """Cross-reference copied calls against a best-effort module snapshot."""
+) -> tuple[tuple[Finding, ...], tuple[ResolutionRoute, ...], tuple[RouteComparison, ...]]:
+    """Build neutral resolution routes, then promote only corroborated effects."""
     winners = {event.fullname: event for event in events if isinstance(event, FindSpecCall) and event.found}
     structural_context = _structural_context(
         events,
@@ -1166,25 +1255,41 @@ def _suspicious_findings(
     findings = _finder_contract_findings(finder_contracts)
     findings.extend(_finder_side_effect_findings(events, len(findings)))
     findings.extend(_module_replacement_findings(events, len(findings)))
+    routes: list[ResolutionRoute] = []
+    comparisons: list[RouteComparison] = []
     baseline = monitor.baseline_modules
     if module_items is None:
         findings.extend(_path_hook_shadow_findings(events, len(findings)))
         findings.extend(_failed_after_mutation_findings(events, len(findings)))
-        return tuple(findings)
+        return tuple(findings), (), ()
     metadata_by_name = {entry.name: entry for entry in module_metadata}
     for name, module in module_items:
         if type(name) is not str or name in baseline or name == "__main__":
             continue
         winner = winners.get(name)
         if winner is not None:
-            finding = _contention_finding(
+            captured_route, standard_route, comparison, structural_comparison = _resolution_routes(
                 name,
                 module,
                 winner,
-                len(findings) + 1,
+                len(routes) + 1,
+                len(comparisons) + 1,
                 structural_context,
                 winner.seq in meta_short_circuit_seqs,
                 report_errors,
+            )
+            routes.extend((captured_route, standard_route))
+            comparisons.append(comparison)
+            finding = _corroborated_route_finding(
+                name,
+                winner,
+                captured_route,
+                standard_route,
+                comparison,
+                structural_comparison,
+                attempts,
+                len(findings) + 1,
+                winner.seq in meta_short_circuit_seqs,
             )
             if finding is not None:
                 findings.append(finding)
@@ -1203,7 +1308,7 @@ def _suspicious_findings(
             )
     findings.extend(_path_hook_shadow_findings(events, len(findings)))
     findings.extend(_failed_after_mutation_findings(events, len(findings)))
-    return tuple(findings)
+    return tuple(findings), tuple(routes), tuple(comparisons)
 
 
 def _finder_contract_findings(contracts: list[FinderContract]) -> list[Finding]:
@@ -1230,11 +1335,14 @@ def _causal_explanations(
     findings: tuple[Finding, ...],
     attempts: tuple[ImportAttempt, ...],
     standard_resolutions: tuple[StandardResolution, ...],
+    route_comparisons: tuple[RouteComparison, ...],
 ) -> tuple[CausalExplanation, ...]:
     """Join namespace loss to descendant attempts and report-time path evidence."""
     explanations: list[CausalExplanation] = []
+    comparisons_by_id = {comparison.comparison_id: comparison for comparison in route_comparisons}
     for finding in findings:
-        if finding.kind != "namespace_truncation" or finding.spec_comparison is None or finding.claim is None:
+        comparison = None if finding.route_comparison_id is None else comparisons_by_id.get(finding.route_comparison_id)
+        if finding.kind != "namespace_truncation" or comparison is None or finding.claim is None:
             continue
         prefix = finding.module + "."
         descendant_groups: dict[str, list[ImportAttempt]] = {}
@@ -1248,51 +1356,31 @@ def _causal_explanations(
         ]
         for attempt in descendants:
             relative_parts = attempt.fullname[len(prefix) :].split(".")
-            match = _omitted_module_candidate(finding.spec_comparison.omitted_locations, relative_parts)
+            if attempt.progress != "failed" or not any(seq > finding.claim.seq for seq in attempt.event_seqs):
+                continue
+            match = _omitted_module_candidate(comparison.only_in_right_route, relative_parts)
             if match is None:
                 continue
             omitted_location, candidate_path = match
-            exact_failure = attempt.progress == "failed"
-            event_seqs = (finding.claim.seq, attempt.start_event_seq, *attempt.event_seqs)
+            event_seqs = (
+                finding.claim.seq,
+                *(seq for seq in attempt.event_seqs if seq > finding.claim.seq),
+            )
             explanations.append(
                 CausalExplanation(
                     explanation_id=f"explanation:{len(explanations) + 1}",
                     kind="namespace_truncation_failure",
-                    confidence="correlated" if exact_failure else "counterfactual",
+                    confidence="correlated",
                     subject=attempt.fullname,
-                    effect_status="failed" if exact_failure else "outcome_unknown",
+                    effect_status="failed",
                     cause_finding_id=finding.finding_id,
                     finder_type_name=finding.claim.finder_type_name,
                     omitted_location=omitted_location,
                     candidate_path=candidate_path,
                     event_seqs=tuple(dict.fromkeys(event_seqs)),
-                    next_observation=None if exact_failure else "enable_deep_import_outcomes",
+                    next_observation=None,
                 )
             )
-    for finding in findings:
-        if (
-            finding.kind not in ("loader_displacement", "origin_displacement", "package_displacement")
-            or finding.claim is None
-            or finding.replay is None
-        ):
-            continue
-        explanations.append(
-            CausalExplanation(
-                explanation_id=f"explanation:{len(explanations) + 1}",
-                kind="custom_claim_displacement",
-                confidence="counterfactual",
-                subject=finding.module,
-                effect_status="custom_claim_selected",
-                cause_finding_id=finding.finding_id,
-                finder_type_name=finding.claim.finder_type_name,
-                omitted_location="",
-                candidate_path="",
-                event_seqs=(finding.claim.seq,),
-                next_observation=None,
-                observed_origin=finding.claim.origin,
-                replayed_origin=finding.replay.origin,
-            )
-        )
     for resolution in standard_resolutions:
         if not resolution.later_finders:
             continue
@@ -1310,7 +1398,7 @@ def _causal_explanations(
                 candidate_path="",
                 event_seqs=event_seqs,
                 next_observation=(None if resolution.evidence_level == "captured" else "enable_deep_import_outcomes"),
-                observed_origin=resolution.origin,
+                origin=resolution.origin,
                 standard_attempt_id=resolution.attempt_id,
                 later_finders=resolution.later_finders,
             )
@@ -1450,16 +1538,6 @@ def _meta_short_circuit_claim_seqs(events: list[MonitorEvent]) -> set[int]:
     return claim_seqs
 
 
-def _is_source_loader(loader_type_name: str | None) -> bool:
-    return loader_type_name is not None and (
-        loader_type_name == "SourceFileLoader" or loader_type_name.endswith("SourceLoader")
-    )
-
-
-def _is_frozen_or_archive_loader(loader_type_name: str | None) -> bool:
-    return loader_type_name in ("FrozenImporter", "zipimporter")
-
-
 def _path_hook_shadow_findings(events: list[MonitorEvent], offset: int) -> list[Finding]:
     """Report paths accepted by distinct hooks across captured deep calls."""
     accepted: dict[str, DeepDiagnosticCall] = {}
@@ -1566,71 +1644,132 @@ def _module_state_changed(before: ModuleCacheState, after: ModuleCacheState) -> 
     return before.state != after.state or before.object_id != after.object_id or before.type_name != after.type_name
 
 
-def _contention_finding(
+def _resolution_routes(
     name: str,
     module: object,
     winner: FindSpecCall,
-    finding_number: int,
+    route_number: int,
+    comparison_number: int,
     structural_context: _StructuralContext,
     meta_short_circuit: bool,
     report_errors: list[ReportError],
-) -> Finding | None:
-    """Compare one custom claim with a report-time PathFinder replay."""
+) -> tuple[ResolutionRoute, ResolutionRoute, RouteComparison, StructuralComparison]:
+    """Describe a captured claim and an independent standard-path probe."""
     observed = winner.spec_summary
-    if observed is None:
-        return None
-    observed = _post_hoc_spec_summary(module, observed)
+    if observed is not None:
+        observed = _post_hoc_spec_summary(module, observed)
     structural_comparison = _structural_comparison(winner.search_path, structural_context)
+    captured_route = ResolutionRoute(
+        route_id=f"route:{route_number}",
+        module=name,
+        kind="captured_claim",
+        purpose="record_selected_custom_meta_path_route",
+        limitations=(),
+        evidence_level="captured",
+        state_phase="import",
+        predicts_alternative_winner=False,
+        finder_type_name=winner.finder_type_name,
+        finder_id=winner.finder_id,
+        status="found",
+        spec_summary=observed,
+        exception_type_name=None,
+        event_seq=winner.seq,
+        search_path=winner.search_path,
+        search_path_kind=winner.search_path_kind,
+        search_path_phase="import",
+        signals=("meta_path_short_circuit",) if meta_short_circuit else (),
+    )
+    target: types.ModuleType | None = None
+    target_available = winner.target_state is None
+    if (
+        winner.target_state is not None
+        and type(module) is types.ModuleType
+        and id(module) == winner.target_state.object_id
+    ):
+        target = module
+        target_available = True
+    standard_route = _probe_standard_path(
+        f"route:{route_number + 1}",
+        name,
+        winner.search_path,
+        winner.search_path_kind,
+        target,
+        target_available,
+    )
+    if standard_route.status == "failed":
+        report_errors.append(ReportError("standard_path_probe", standard_route.exception_type_name or "Exception"))
+    comparison = _compare_routes(
+        f"comparison:{comparison_number}",
+        captured_route.route_id,
+        standard_route.route_id,
+        observed,
+        standard_route.spec_summary,
+        structural_comparison,
+        left_status=captured_route.status,
+        right_status=standard_route.status,
+    )
+    return captured_route, standard_route, comparison, structural_comparison
+
+
+def _corroborated_route_finding(
+    name: str,
+    winner: FindSpecCall,
+    captured_route: ResolutionRoute,
+    standard_route: ResolutionRoute,
+    comparison: RouteComparison,
+    structural_comparison: StructuralComparison,
+    attempts: tuple[ImportAttempt, ...],
+    finding_number: int,
+    meta_short_circuit: bool,
+) -> Finding | None:
+    """Promote a route difference only when a descendant effect corroborates it."""
+    captured = captured_route.spec_summary
+    standard = standard_route.spec_summary
+    if (
+        captured is None
+        or standard is None
+        or captured.is_namespace is not True
+        or standard.is_namespace is not True
+        or not comparison.only_in_right_route
+    ):
+        return None
+    prefix = name + "."
+    exact_failure = False
+    for attempt in attempts:
+        if (
+            not attempt.fullname.startswith(prefix)
+            or attempt.progress != "failed"
+            or not any(seq > winner.seq for seq in attempt.event_seqs)
+        ):
+            continue
+        relative_parts = attempt.fullname[len(prefix) :].split(".")
+        if _omitted_module_candidate(comparison.only_in_right_route, relative_parts) is None:
+            continue
+        exact_failure = True
+    if not exact_failure:
+        return None
     signals: list[str] = []
     if meta_short_circuit:
         signals.append("meta_path_short_circuit")
     if structural_comparison.importer_cache_changed_paths:
         signals.append("importer_cache_changed")
-    replay = _replay_path_finder(name, winner.search_path)
-    if replay.status == "failed":
-        report_errors.append(ReportError("path_finder_replay", replay.exception_type_name or "Exception"))
-        return None
-    if replay.status == "not_found":
-        origin = winner.origin
-        if origin is not None and origin.endswith(_SOURCE_SUFFIXES) and winner.loader_type_name is not None:
-            return Finding(
-                f"finding:{finding_number}",
-                "unfindable",
-                name,
-                winner,
-                replay,
-                structural_comparison=structural_comparison,
-                evidence_level="live_replay",
-                limitations=("replay_uses_report_time_importer_state",),
-                severity="actionable",
-                signals=tuple(signals),
-            )
-        return None
-    replayed = replay.spec_summary
-    if replayed is None:
-        return None
-    spec_comparison = _compare_specs(observed, replayed)
-    kind = _spec_finding_kind(winner, observed, replayed, spec_comparison)
-    if kind is not None:
-        if spec_comparison.loader_type_changed is True and kind != "loader_displacement":
-            signals.append("loader_displacement")
-        severity = _finding_severity(kind, winner.finder_type_name)
-        if severity == "informational" and _is_editable_finder(winner.finder_type_name):
-            signals.append("expected_editable_redirection")
-        return Finding(
-            f"finding:{finding_number}",
-            kind,
-            name,
-            winner,
-            replay,
-            spec_comparison,
-            structural_comparison,
-            evidence_level="live_replay",
-            limitations=("replay_uses_report_time_importer_state",),
-            severity=severity,
-            signals=tuple(signals),
-        )
-    return None
+    return Finding(
+        f"finding:{finding_number}",
+        "namespace_truncation",
+        name,
+        winner,
+        route_ids=(captured_route.route_id, standard_route.route_id),
+        route_comparison_id=comparison.comparison_id,
+        structural_comparison=structural_comparison,
+        evidence_level="correlated",
+        limitations=(
+            "standard_path_probe_uses_report_time_importer_state",
+            "standard_path_probe_does_not_predict_alternative_winner",
+            "standard_path_probe_skips_intervening_meta_path_finders",
+        ),
+        severity="actionable",
+        signals=tuple(signals),
+    )
 
 
 def _post_hoc_spec_summary(module: object, observed: SpecSummary) -> SpecSummary:
@@ -1648,88 +1787,88 @@ def _post_hoc_spec_summary(module: object, observed: SpecSummary) -> SpecSummary
         return observed
 
 
-def _spec_finding_kind(
-    winner: FindSpecCall,
-    observed: SpecSummary,
-    replayed: SpecSummary,
-    comparison: SpecComparison,
-) -> str | None:
-    """Choose the most specific user-facing label supported by the evidence."""
-    if observed.is_namespace is True and replayed.is_namespace is True and comparison.omitted_locations:
-        return "namespace_truncation"
-    if comparison.package_status_changed:
-        return "package_displacement"
-    if _is_source_loader(winner.loader_type_name) and _is_frozen_or_archive_loader(_loader_type(replayed)):
-        return "frozen_source_conflict"
-    if comparison.origin_changed and type(observed.origin) is str and type(replayed.origin) is str:
-        return "origin_displacement"
-    source_claim = winner.origin is not None and winner.origin.endswith(_SOURCE_SUFFIXES)
-    if source_claim and comparison.loader_type_changed:
-        return "loader_displacement"
-    if (
-        comparison.loader_type_changed
-        or comparison.cached_changed
-        or comparison.omitted_locations
-        or comparison.additional_locations
-        or comparison.locations_reordered
-    ):
-        return "spec_difference"
-    return None
-
-
-def _finding_severity(kind: str, finder_type_name: str) -> str:
-    """Triage mechanics without treating expected editable redirection as a defect."""
-    if kind in ("namespace_truncation", "package_displacement", "frozen_source_conflict"):
-        return "actionable"
-    if kind in ("origin_displacement", "loader_displacement") and _is_editable_finder(finder_type_name):
-        return "informational"
-    return "warning"
-
-
-def _is_editable_finder(finder_type_name: str) -> bool:
-    lowered = finder_type_name.lower()
-    return "editable" in lowered or finder_type_name == "ScikitBuildRedirectingFinder"
-
-
-def _compare_specs(observed: SpecSummary, replayed: SpecSummary) -> SpecComparison:
-    """Compare safe semantic fields without inspecting either live spec."""
-    loader_changed = (
+def _compare_routes(
+    comparison_id: str,
+    left_route_id: str,
+    right_route_id: str,
+    left: SpecSummary | None,
+    right: SpecSummary | None,
+    structural_comparison: StructuralComparison,
+    *,
+    left_status: str = "found",
+    right_status: str = "found",
+) -> RouteComparison:
+    """Compare two independent routes without assigning either one authority."""
+    if left is None or right is None:
+        return RouteComparison(
+            comparison_id,
+            left_route_id,
+            right_route_id,
+            left_status != right_status,
+            False,
+            None,
+            None,
+            None,
+            None,
+            (),
+            (),
+            None,
+            "unavailable" if left is None else left.locations_state,
+            "unavailable" if right is None else right.locations_state,
+            structural_comparison,
+        )
+    loader_differs = (
         None
-        if "loader:missing" in observed.unavailable_fields or "loader:missing" in replayed.unavailable_fields
-        else _loader_type(observed) != _loader_type(replayed)
+        if "loader:missing" in left.unavailable_fields or "loader:missing" in right.unavailable_fields
+        else _loader_type(left) != _loader_type(right)
     )
-    origin_changed = _safe_path_value_changed(observed.origin, replayed.origin)
-    cached_changed = _safe_path_value_changed(observed.cached, replayed.cached)
-    package_changed = (
-        None
-        if observed.is_package is None or replayed.is_package is None
-        else observed.is_package != replayed.is_package
+    origin_differs = _safe_path_value_changed(left.origin, right.origin)
+    cached_differs = _safe_path_value_changed(left.cached, right.cached)
+    package_differs = (
+        None if left.is_package is None or right.is_package is None else left.is_package != right.is_package
     )
-    observed_locations = _string_locations(observed)
-    replayed_locations = _string_locations(replayed)
-    omitted: tuple[str, ...] = ()
-    additional: tuple[str, ...] = ()
+    left_locations = _string_locations(left)
+    right_locations = _string_locations(right)
+    only_in_right: tuple[str, ...] = ()
+    only_in_left: tuple[str, ...] = ()
     reordered: bool | None = None
-    if observed_locations is not None and replayed_locations is not None:
-        observed_keys = tuple(_path_key(path) for path in observed_locations)
-        replayed_keys = tuple(_path_key(path) for path in replayed_locations)
-        omitted, additional = _location_delta(observed_locations, observed_keys, replayed_locations, replayed_keys)
-        reordered = not omitted and not additional and observed_keys != replayed_keys
-    locations_complete = not (
-        observed.is_package is True and observed.locations_state in ("deferred", "failed")
-    ) and not (replayed.is_package is True and replayed.locations_state in ("deferred", "failed"))
-    complete = not observed.unavailable_fields and not replayed.unavailable_fields and locations_complete
-    return SpecComparison(
+    if left_locations is not None and right_locations is not None:
+        left_keys = tuple(_path_key(path) for path in left_locations)
+        right_keys = tuple(_path_key(path) for path in right_locations)
+        only_in_right, only_in_left = _location_delta(left_locations, left_keys, right_locations, right_keys)
+        reordered = not only_in_right and not only_in_left and left_keys != right_keys
+    locations_complete = not (left.is_package is True and left.locations_state in ("deferred", "failed")) and not (
+        right.is_package is True and right.locations_state in ("deferred", "failed")
+    )
+    complete = not left.unavailable_fields and not right.unavailable_fields and locations_complete
+    return RouteComparison(
+        comparison_id,
+        left_route_id,
+        right_route_id,
+        left_status != right_status,
         complete,
-        loader_changed,
-        origin_changed,
-        cached_changed,
-        package_changed,
-        omitted,
-        additional,
+        loader_differs,
+        origin_differs,
+        cached_differs,
+        package_differs,
+        only_in_left,
+        only_in_right,
         reordered,
-        observed.locations_state,
-        replayed.locations_state,
+        left.locations_state,
+        right.locations_state,
+        structural_comparison,
+    )
+
+
+def _compare_specs(left: SpecSummary, right: SpecSummary) -> RouteComparison:
+    """Compatibility helper for focused unit tests of neutral spec comparison."""
+    return _compare_routes(
+        "comparison:test",
+        "route:left",
+        "route:right",
+        left,
+        right,
+        StructuralComparison(None, None, (), ()),
     )
 
 
@@ -1926,18 +2065,73 @@ def _cache_finder_signature(finder: ImportObjectRef | None) -> tuple[int | None,
     return finder.object_id, finder.type_name
 
 
-def _replay_path_finder(name: str, search_path: tuple[str, ...]) -> ReplayResult:
-    """Replay PathFinder without reporting a replay failure as not-found."""
+def _probe_standard_path(
+    route_id: str,
+    name: str,
+    search_path: tuple[str, ...],
+    search_path_kind: str,
+    target: types.ModuleType | None,
+    target_available: bool,
+) -> ResolutionRoute:
+    """Probe PathFinder as one route without treating it as the alternative winner."""
+    if not target_available:
+        return _standard_path_route(
+            route_id,
+            name,
+            search_path,
+            search_path_kind,
+            "target_unavailable",
+        )
     try:
-        spec = PathFinder.find_spec(name, search_path)
+        spec = PathFinder.find_spec(name, search_path, target)
         if spec is None:
-            return ReplayResult("not_found")
+            return _standard_path_route(route_id, name, search_path, search_path_kind, "not_found")
         summary, _loader = summarize_spec(spec, iterate_foreign_locations=True)
-        loader_type_name = None if summary.loader is None else summary.loader.type_name
-        origin = summary.origin if type(summary.origin) is str else None
-        return ReplayResult("found", loader_type_name, origin, summary)
-    except Exception as exc:  # A broken finder chain must not break the report.
-        return ReplayResult("failed", exception_type_name=type_name(exc))
+        return _standard_path_route(route_id, name, search_path, search_path_kind, "found", summary)
+    except BaseException as exc:  # A broken finder chain must not break the report.
+        return _standard_path_route(
+            route_id,
+            name,
+            search_path,
+            search_path_kind,
+            "failed",
+            exception_type_name=type_name(exc),
+        )
+
+
+def _standard_path_route(
+    route_id: str,
+    name: str,
+    search_path: tuple[str, ...],
+    search_path_kind: str,
+    status: str,
+    spec_summary: SpecSummary | None = None,
+    exception_type_name: str | None = None,
+) -> ResolutionRoute:
+    """Construct one uniformly qualified standard-path probe result."""
+    return ResolutionRoute(
+        route_id=route_id,
+        module=name,
+        kind="standard_path_probe",
+        purpose="show_standard_path_route_bypassed_by_captured_claim",
+        limitations=(
+            "captured_search_path_with_report_time_path_hook_and_cache_state",
+            "does_not_predict_alternative_winner",
+            "skips_intervening_meta_path_finders",
+        ),
+        evidence_level="live_probe",
+        state_phase="report",
+        predicts_alternative_winner=False,
+        finder_type_name="PathFinder",
+        finder_id=id(PathFinder),
+        status=status,
+        spec_summary=spec_summary,
+        exception_type_name=exception_type_name,
+        event_seq=None,
+        search_path=search_path,
+        search_path_kind=search_path_kind,
+        search_path_phase="import",
+    )
 
 
 def _same_path(a: str | None, b: str | None) -> bool:
@@ -2004,6 +2198,17 @@ def json_document(document: ReportDocument) -> dict[str, object]:
                     standard_finder_calls,
                     document.standard_finder_status,
                 ),
+                {
+                    "capacity": None,
+                    "comparison_count": len(document.route_comparisons),
+                    "completeness": "reported_custom_winners",
+                    "dropped": 0,
+                    "enabled": document.monitor_enabled,
+                    "name": "resolution_route_analysis",
+                    "overflow_policy": "retain_all",
+                    "retained": len(document.resolution_routes),
+                    "shutdown": "synchronous_no_retry",
+                },
                 _mechanism("path_hooks_mutations", document.path_hooks_enabled, path_hook_mutations, "best_effort"),
                 _mechanism(
                     "path_hooks_reassignments",
@@ -2081,6 +2286,8 @@ def json_document(document: ReportDocument) -> dict[str, object]:
         "finder_contracts": [_json_finder_contract(contract) for contract in document.finder_contracts],
         "import_attempts": [_json_import_attempt(attempt) for attempt in document.attempts],
         "standard_resolutions": [_json_standard_resolution(resolution) for resolution in document.standard_resolutions],
+        "resolution_routes": [_json_resolution_route(route) for route in document.resolution_routes],
+        "route_comparisons": [_json_route_comparison(comparison) for comparison in document.route_comparisons],
         "timeline": [_json_event(event) for event in document.events],
         "findings": [_json_finding(finding) for finding in document.findings],
         "explanations": [_json_explanation(explanation) for explanation in document.explanations],
@@ -2269,6 +2476,7 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
                 "search_path": list(event.search_path),
                 "search_path_kind": event.search_path_kind,
                 "spec": None if event.spec_summary is None else _json_spec_summary(event.spec_summary),
+                "target_state": _json_module_state(event.target_state),
                 "thread_name": event.thread_name,
                 "thread_id": event.thread_id,
             }
@@ -2372,6 +2580,67 @@ def _json_standard_resolution(resolution: StandardResolution) -> dict[str, objec
         "loader_type_name": resolution.loader_type_name,
         "origin": resolution.origin,
         "state_phase": resolution.state_phase,
+    }
+
+
+def _json_resolution_route(route: ResolutionRoute) -> dict[str, object]:
+    """Serialize one route without implying that a probe predicts a winner."""
+    summary = route.spec_summary
+    return {
+        "id": route.route_id,
+        "module": route.module,
+        "kind": route.kind,
+        "purpose": route.purpose,
+        "limitations": list(route.limitations),
+        "evidence_level": route.evidence_level,
+        "state_phase": route.state_phase,
+        "predicts_alternative_winner": route.predicts_alternative_winner,
+        "finder_type_name": route.finder_type_name,
+        "finder_id": None if route.finder_id is None else f"0x{route.finder_id:x}",
+        "status": route.status,
+        "spec": None if summary is None else _json_spec_summary(summary),
+        "exception_type_name": route.exception_type_name,
+        "event_ref": None if route.event_seq is None else f"event:{route.event_seq}",
+        "search_path": list(route.search_path),
+        "search_path_kind": route.search_path_kind,
+        "search_path_phase": route.search_path_phase,
+        "signals": list(route.signals),
+    }
+
+
+def _json_route_comparison(comparison: RouteComparison) -> dict[str, object]:
+    """Serialize symmetric route differences and stable route references."""
+    structural = comparison.structural_comparison
+    return {
+        "id": comparison.comparison_id,
+        "left_route_ref": comparison.left_route_id,
+        "right_route_ref": comparison.right_route_id,
+        "complete": comparison.complete,
+        "status_differs": comparison.status_differs,
+        "loader_type_differs": comparison.loader_type_differs,
+        "origin_differs": comparison.origin_differs,
+        "cached_differs": comparison.cached_differs,
+        "package_status_differs": comparison.package_status_differs,
+        "only_in_left_route": list(comparison.only_in_left_route),
+        "only_in_right_route": list(comparison.only_in_right_route),
+        "locations_reordered": comparison.locations_reordered,
+        "left_locations_state": comparison.left_locations_state,
+        "right_locations_state": comparison.right_locations_state,
+        "structural_comparison": {
+            "evidence_level": structural.evidence_level,
+            "importer_cache": {
+                "changed": structural.importer_cache_changed,
+                "changed_paths": list(structural.importer_cache_changed_paths),
+                "change_event_refs": [f"event:{seq}" for seq in structural.importer_cache_event_seqs],
+                "install_snapshot_ref": "snapshot:importer-cache:install",
+                "report_snapshot_ref": "snapshot:importer-cache:report",
+            },
+            "path_hooks": {
+                "changed": structural.path_hooks_changed,
+                "install_snapshot_ref": "snapshot:path-hooks:install",
+                "report_snapshot_ref": "snapshot:path-hooks:report",
+            },
+        },
     }
 
 
@@ -2548,31 +2817,10 @@ def _json_finding(finding: Finding) -> dict[str, object]:
             "outcome": finding.deep_call.outcome,
             "target_state": _json_module_state(finding.deep_call.target_state),
         }
-    if finding.replay is not None:
-        result["path_finder_replay"] = {
-            "evidence_level": finding.replay.evidence_level,
-            "exception_type_name": finding.replay.exception_type_name,
-            "loader_type_name": finding.replay.loader_type_name,
-            "origin": finding.replay.origin,
-            "spec": None if finding.replay.spec_summary is None else _json_spec_summary(finding.replay.spec_summary),
-            "state_phase": finding.replay.state_phase,
-            "status": finding.replay.status,
-        }
-    if finding.spec_comparison is not None:
-        comparison = finding.spec_comparison
-        result["spec_comparison"] = {
-            "additional_locations": list(comparison.additional_locations),
-            "cached_changed": comparison.cached_changed,
-            "complete": comparison.complete,
-            "evidence_level": "captured_vs_live_replay",
-            "loader_type_changed": comparison.loader_type_changed,
-            "locations_reordered": comparison.locations_reordered,
-            "omitted_locations": list(comparison.omitted_locations),
-            "observed_locations_state": comparison.observed_locations_state,
-            "origin_changed": comparison.origin_changed,
-            "package_status_changed": comparison.package_status_changed,
-            "replayed_locations_state": comparison.replayed_locations_state,
-        }
+    if finding.route_ids:
+        result["route_refs"] = list(finding.route_ids)
+    if finding.route_comparison_id is not None:
+        result["route_comparison_ref"] = finding.route_comparison_id
     if finding.structural_comparison is not None:
         comparison = finding.structural_comparison
         result["structural_comparison"] = {
@@ -2611,9 +2859,8 @@ def _json_explanation(explanation: CausalExplanation) -> dict[str, object]:
         "kind": explanation.kind,
         "later_finders": list(explanation.later_finders),
         "next_observation": explanation.next_observation,
-        "observed_origin": explanation.observed_origin,
+        "origin": explanation.origin,
         "omitted_location": explanation.omitted_location,
-        "replayed_origin": explanation.replayed_origin,
         "subject": explanation.subject,
         "standard_attempt_ref": (
             None if explanation.standard_attempt_id is None else f"attempt:{explanation.standard_attempt_id}"
@@ -2642,6 +2889,8 @@ def failed_json_document(error_name: str) -> dict[str, object]:
         },
         "finder_contracts": [],
         "import_attempts": [],
+        "resolution_routes": [],
+        "route_comparisons": [],
         "timeline": [],
         "findings": [],
         "explanations": [],

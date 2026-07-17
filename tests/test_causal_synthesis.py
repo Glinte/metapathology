@@ -68,25 +68,30 @@ else:
     raise AssertionError("truncated namespace unexpectedly found child")
 
 document = json.loads(metapathology.render_report(format="json"))
-finding = next(item for item in document["findings"] if item["kind"] == "namespace_truncation")
-assert finding["severity"] == "actionable"
-assert "meta_path_short_circuit" in finding["signals"]
-explanation = document["explanations"][0]
-assert explanation["kind"] == "namespace_truncation_failure"
-assert explanation["subject"] == "synthesis_ns.child"
-assert explanation["cause_finding_ref"] == finding["id"]
-assert explanation["omitted_location"] == os.path.join(sys.argv[1], "synthesis_ns")
-assert explanation["candidate_path"] == os.path.join(explanation["omitted_location"], "child")
+comparison = next(
+    item for item in document["route_comparisons"] if item["only_in_right_route"]
+)
 if sys.argv[3] == "deep":
+    finding = next(item for item in document["findings"] if item["kind"] == "namespace_truncation")
+    assert finding["severity"] == "actionable"
+    assert "meta_path_short_circuit" in finding["signals"]
+    assert finding["route_comparison_ref"] == comparison["id"]
+    explanation = document["explanations"][0]
+    assert explanation["kind"] == "namespace_truncation_failure"
+    assert explanation["subject"] == "synthesis_ns.child"
+    assert explanation["cause_finding_ref"] == finding["id"]
+    assert explanation["omitted_location"] == os.path.join(sys.argv[1], "synthesis_ns")
+    assert explanation["candidate_path"] == os.path.join(explanation["omitted_location"], "child")
     assert explanation["confidence"] == "correlated"
     assert explanation["effect_status"] == "failed"
     assert explanation["next_observation"] is None
     assert "[correlated] 'synthesis_ns.child' failed" in metapathology.render_report()
 else:
-    assert explanation["confidence"] == "counterfactual"
-    assert explanation["effect_status"] == "outcome_unknown"
-    assert explanation["next_observation"] == "enable_deep_import_outcomes"
-    assert "next observation: enable deep import outcomes" in metapathology.render_report()
+    assert not any(item["kind"] == "namespace_truncation" for item in document["findings"])
+    assert not any(item["kind"] == "namespace_truncation_failure" for item in document["explanations"])
+    text = metapathology.render_report()
+    assert "resolution route divergences" in text
+    assert "[namespace-truncation]" not in text
 print("OK")
 """
 

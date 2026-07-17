@@ -1,6 +1,6 @@
 """Report rendering and output boundaries.
 
-All live-state capture and counterfactual analysis happens once in
+All live-state capture and resolution-route analysis happens once in
 ``_report_data``. The renderers only project that document, while this module
 contains the I/O behavior shared by explicit, CLI, and atexit reporting.
 """
