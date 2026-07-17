@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from importlib.machinery import ModuleSpec
     from os import PathLike
     from types import FrameType, ModuleType
-    from typing import Any, Literal, SupportsIndex, TextIO, TypeVar, overload
+    from typing import Any, Literal, Protocol, SupportsIndex, TextIO, TypeVar, overload
     from typing import cast as _cast
 
     from _typeshed import SupportsRichComparison
@@ -63,7 +63,12 @@ if TYPE_CHECKING:
     _ImportListItemT = TypeVar("_ImportListItemT")
     _MetaPathEntry = MetaPathFinderProtocol
     _PathHook = Callable[[str], PathEntryFinderProtocol]
+
+    class _ImportErrorNameDescriptor(Protocol):
+        def __get__(self, instance: ImportError, owner: type[ImportError]) -> object: ...
+
 else:
+    _ImportErrorNameDescriptor = object
 
     def _cast(_type: object, value: object) -> object:
         """Return ``value`` unchanged; type checkers use ``typing.cast`` above."""
@@ -504,7 +509,8 @@ class Monitor:
             # Read the builtin descriptor directly so a subclass property
             # cannot run foreign code during recording.
             try:
-                name = ImportError.name.__get__(exception, type(exception))
+                descriptor = _cast(_ImportErrorNameDescriptor, ImportError.__dict__["name"])
+                name = descriptor.__get__(exception, type(exception))
             except Exception:
                 name = None
             missing = name if type(name) is str else None
