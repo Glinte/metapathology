@@ -199,66 +199,39 @@ lifecycle details, and integration examples.
 
 ## Reading the report
 
-Start with the chronological evidence timeline. It interleaves resolution
-starts, import-list changes, importer-cache diffs, and finder calls using the
-monitor's shared sequence numbers. Sequence is deterministic capture order,
-not a global wall-clock order across threads. Detailed sections then show how
-finder precedence changed and group recorded `find_spec()` calls by finder.
-The post-hoc loader inventory separately groups all modules present at report
-time by safe loader type and identity, including modules that predate
-installation. It flags disagreement between `__spec__.loader` and
-`__loader__` as metadata evidence and does not materialize lazy modules.
-The standard-resolution section joins that inventory to import-time ordering
-and labels the result `inferred`. With `--deep`, CPython's aggregate
-`PathFinder` result is captured through the reversible profiler and labeled
-`captured`; neither form modifies the shared standard finder classes. The
-report distinguishes built-in, frozen, source, bytecode, extension, zip, and
-namespace outcomes and names later meta-path finders made unreachable by an
-earlier standard result.
-The resolution-route section compares each captured custom claim with an
-independent report-time standard-path probe. It reports status, loader, origin,
-package status, cached path, and namespace-location differences without
-declaring either route correct. The probe calls `PathFinder` with the captured
-search path, but uses report-time path-hook, importer-cache, filesystem, and
-finder state. It also skips any intervening meta-path finders. It therefore
-does **not** predict which finder would win if the captured finder were absent.
+The report leads with a verdict. The first lines state how the target
+finished and what the evidence says, and numbered finding blocks follow with
+their supporting evidence indented beneath them. Here is a trimmed real
+report for a script whose custom finder claimed a namespace package with a
+truncated search path, making `synthesis_ns.child` unimportable:
 
-Raw route differences are not findings. A narrower captured namespace route
-becomes `[namespace-truncation]` only when opt-in deep evidence captures an
-exact failed descendant import whose candidate exists under a location found
-only by the standard path probe. Other finding labels include:
+```text
+== metapathology report ==
+target outcome: raised ModuleNotFoundError for 'synthesis_ns.child' (exit status 1); the failed module appears under unresolved imports below
+verdict: 2 findings (1 actionable, 1 warning); most severe is [namespace-truncation] 'synthesis_ns' — see [1]
+report guide: https://glinte.github.io/metapathology/report/
+...
+-- findings (2: 1 actionable, 1 warning) --
+[1] [correlated] 'synthesis_ns.child' failed after TruncatingFinder truncated its parent namespace
+    omitted location 'installed\synthesis_ns' contains 'installed\synthesis_ns\child'
+    supporting events: #11, #15
+    [namespace-truncation] 'synthesis_ns': descendant failure is correlated with a narrower namespace route from TruncatingFinder
+        locations available only through the standard path probe: 'installed\synthesis_ns'
+        structural evidence: sys.path_hooks unchanged since install; importer cache unchanged for the captured search path
+    corroborating signals: meta path short circuit
+    why it matters: submodules that exist only under the omitted locations cannot be imported while the narrower namespace stays cached
+    this is an actionable finding based on correlated evidence; limitations: ...
+```
 
-- `[no-spec]` means a new `sys.modules` entry has neither a `__spec__` nor a
-  recorded finder claim. It was probably created manually or loaded through
-  an `exec_module()`-style path that is invisible to meta-path finders.
-- `[finder-side-effect]` means an instrumented finder changed its own target's
-  `sys.modules` entry before returning `None` or raising. The captured boundary
-  does not reveal the nested operation that caused the change.
-- `[module-replacement]` means opt-in deep loader evidence captured a module
-  identity change across one `create_module()` or `exec_module()` call, or an
-  `exec_module()` target distinct from the matching `sys.modules` entry. Both
-  objects may still have valid, matching specs. Default mode cannot observe
-  low-level loader calls that leave `sys.modules` unchanged; the monitoring
-  summary labels those identity transitions unobservable unless deep loader
-  diagnostics are enabled.
-- `[legacy-finder-contract]` identifies a captured finder with callable
-  `find_module` but no callable `find_spec`.
-- `[path-hook-shadow]` means distinct captured path-hook boundaries accepted
-  the same path across resolution states.
-- `[failed-after-mutation]` requires an exact opt-in failed import completion
-  after a retained mutation. Mere absence from `sys.modules` never emits it.
-
-Meta-path short circuits and relevant importer-cache changes remain route or
-finding evidence rather than standalone verdicts. Findings are tiered as
-`actionable`, `warning`, or `informational`.
-
-These are diagnostic leads, not necessarily defects. Route records label a
-report-time live probe separately from historical structural evidence: the
-latter compares recorded path-hook and importer-cache identities between
-installation and reporting without calling historical foreign finders.
-Neither reconstructs the exact state at import time. The
-[report guide](https://glinte.github.io/metapathology/report/) explains every
-section and finding category.
+Below the findings, neutral resolution-route divergences compare each
+captured custom claim with an independent report-time standard-path probe
+without declaring either route correct, unresolved imports are joined to the
+target's failure, and the chronological evidence timeline plus per-mechanism
+detail sections carry the full supporting evidence. Findings are tiered as
+`actionable`, `warning`, or `informational`, and every one states its
+evidence level and limitations — they are diagnostic leads, not necessarily
+defects. The [report guide](https://glinte.github.io/metapathology/report/)
+explains every section and finding category.
 
 ## Resource use
 

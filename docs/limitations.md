@@ -30,7 +30,7 @@ cache hits. Manual loading such
 as [`spec_from_file_location()`][spec-from-file] followed by
 [`exec_module()`][exec-module] can avoid both the normal meta-path search and
 its audit coverage; some resulting modules can only be recognized post hoc as
-[`[no-spec]`](report.md#suspicious-findings).
+[`[no-spec]`](report.md#findings-narrative).
 Direct use of lower-level importlib entry points, including
 `importlib.import_module()`, can also perform resolution without crossing the
 builtin import audit boundary on supported CPython versions. Finder wrappers

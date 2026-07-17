@@ -7,17 +7,17 @@ environment installs the current checkout as the `metapathology` command.
 | Issue | Interaction | Expected diagnosis |
 | --- | --- | --- |
 | [beartype#269](https://github.com/beartype/beartype/issues/269) | `runpy` changes a `-m` submodule's identity to `__main__` | Normal `PathFinder`; no finder contention |
-| [beartype#556](https://github.com/beartype/beartype/issues/556) | scikit-build-core editable redirect finder precedes claw's path hook | `ScikitBuildRedirectingFinder` `[bypass]` |
-| [beartype#638](https://github.com/beartype/beartype/issues/638) | Coverage dotted-module lookup, pytest assertion rewriting, and claw loader re-entrancy | Partial-state `ImportError` plus assertion-rewriter `[bypass]` findings |
-| [scikit-build-core#1482](https://github.com/scikit-build/scikit-build-core/issues/1482) | Editable redirect finder truncates a shared namespace package's path | `ScikitBuildRedirectingFinder` claims the namespace before `PathFinder` |
-| [pytest#12179](https://github.com/pytest-dev/pytest/issues/12179) | Boto installs a legacy meta-path importer that pytest calls via `find_spec` | Mutation attribution for `_SixMetaPathImporter` before collection fails |
-| wrapt 1.14.2 | Post-import hooks leave wrapped loader metadata in place | Loader identity mismatch between the chained loader and the original `SourceFileLoader` |
+| [beartype#556](https://github.com/beartype/beartype/issues/556) | scikit-build-core editable redirect finder precedes claw's path hook | `ScikitBuildRedirectingFinder` claims `myproject`; neutral resolution route divergence (no findings) |
+| [beartype#638](https://github.com/beartype/beartype/issues/638) | Coverage dotted-module lookup, pytest assertion rewriting, and claw loader re-entrancy | Partial-state `ImportError` plus `AssertionRewritingHook` resolution route divergences for the pytest-cov modules |
+| [scikit-build-core#1482](https://github.com/scikit-build/scikit-build-core/issues/1482) | Editable redirect finder truncates a shared namespace package's path | `[namespace-truncation]` 'mqt': `ScikitBuildRedirectingFinder` claims the namespace before `PathFinder` |
+| [pytest#12179](https://github.com/pytest-dev/pytest/issues/12179) | Boto installs a legacy meta-path importer that pytest calls via `find_spec` | `[legacy-finder-contract]` `_SixMetaPathImporter`; mutation attribution before collection fails |
+| wrapt 1.14.2 | Post-import hooks leave wrapped loader metadata in place | Resolution route divergence: loader type mismatch between the chained loader and the original `SourceFileLoader` |
 | [importlib_metadata#353](https://github.com/python/importlib_metadata/issues/353) | Current-directory package metadata is skipped even with matching `.egg-info` present | `files("plover")` resolves to `None` instead of package metadata |
 | [importlib_resources#311](https://github.com/python/importlib_resources/issues/311) | Editable-install namespace paths leak synthetic `__path_hook__` entries into `files()` | `MultiplexedPath` rejects the non-directory editable marker |
 | [pwntools#2737](https://github.com/Gallopsled/pwntools/issues/2737) | `pwnlib.shellcraft.*` still relies on a legacy meta-path importer that only implements `find_module` | `LazyImporter` is a nonstandard legacy finder on `sys.meta_path` |
 | [setuptools#3073](https://github.com/pypa/setuptools/issues/3073) | `DistutilsMetaFinder` recursively imports an older setuptools and leaves conflicting `sys.modules` state | Finder attribution around the re-entrant `distutils` import |
-| [discord.py#10017](https://github.com/Rapptz/discord.py/issues/10017) | Extension loading executes a second valid-spec module object instead of reusing `sys.modules` | Known blind spot: the duplicate execution is outside normal finder resolution but retains an ordinary-looking spec |
-| [pip#11812](https://github.com/pypa/pip/issues/11812) | An inherited editable finder claims a build backend before pip's `backend-path` | `_EditableFinder` claims the wrong backend and is reported as a path-hook bypass |
+| [discord.py#10017](https://github.com/Rapptz/discord.py/issues/10017) | Extension loading executes a second valid-spec module object instead of reusing `sys.modules` | With deep loader diagnostics enabled, `[module-replacement]` 'ext' — an actionable finding for the duplicate `SourceFileLoader` execution |
+| [pip#11812](https://github.com/pypa/pip/issues/11812) | An inherited editable finder claims a build backend before pip's `backend-path` | `_EditableFinder` claims the wrong backend; neutral resolution route divergence (no findings) |
 | [distributed#7782](https://github.com/dask/distributed/issues/7782) | `PathFinder` finds a cwd namespace package before setuptools' appended editable finder | Initial finder order explains why `_EditableFinder` never receives the import |
 
 Beartype#599 is another confirmed finder-order bug involving PyInstaller's

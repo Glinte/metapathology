@@ -1,9 +1,13 @@
 # Reading the report
 
-Suspicious findings lead the report, right after the header; finder
-attribution, the chronological evidence timeline, and the detailed mechanism
-sections follow for the supporting evidence. Detail sections with nothing to
-show are collapsed into one final `nothing recorded:` line. The
+The report leads with a verdict: the first lines after the title state how
+the monitored target finished (`target outcome:`) and a one-sentence reading
+of the evidence (`verdict:`), naming the most severe finding when one exists.
+The numbered findings narrative follows the header; neutral route
+divergences, unresolved imports, finder attribution, the chronological
+evidence timeline, and the detailed mechanism sections follow for the
+supporting evidence. Detail sections with nothing to show are collapsed into
+one final `Nothing was recorded for:` line. The
 [library API](api.md#event-records) documents the corresponding structured
 event records.
 
@@ -20,13 +24,19 @@ file output all use the same cutoff-based report document as the human
 renderer. The current experimental schema is identified by:
 
 ```json
-{"name": "metapathology.report", "major": 0, "minor": 19}
+{"name": "metapathology.report", "major": 0, "minor": 20}
 ```
 
 Its top-level sections include `tool`, `process`, `capture`, `snapshots`,
 `loader_inventory`, `import_attempts`, `standard_resolutions`,
 `resolution_routes`, `route_comparisons`, `timeline`, `findings`,
-`explanations`, and `diagnostics`. Timeline events retain their shared sequence
+`explanations`, `summary`, `target_outcome`, and `diagnostics`. The
+`summary` object carries severity counts, the unresolved-import count, and
+references to the top finding and explanation — never prose; headline
+sentences exist only in the text rendering. `target_outcome` records the
+target's completion kind, exception type name, the missing module name for
+`ImportError` subclasses, and the exit status; it is `null` unless the CLI
+(or an embedder calling `Monitor.record_target_outcome`) recorded one. Timeline events retain their shared sequence
 number and receive an `event:<seq>` identifier. Findings reference
 document-scoped routes and comparisons rather than duplicating probe evidence
 or requiring consumers to parse human wording.
@@ -41,10 +51,16 @@ maps with a replace-latest policy.
 
 ## Chronological evidence timeline
 
-The text timeline is the exhaustive, compact projection of the same event list
-used by JSON. It interleaves import audit starts, meta-path and path-hook
-changes, importer-cache diffs, finder calls, and internal errors. Detailed
-mechanism sections remain below it for stacks and fuller values.
+The text timeline is a bounded projection of the same event list used by
+JSON. It interleaves uncached import starts, meta-path and path-hook changes,
+importer-cache diffs, finder probes, and internal errors. Long runs of
+routine events — consecutive uncached import starts and declined probes with
+no claims, mutations, or errors — collapse into one line stating the sequence
+range and counts; any event referenced by a finding or explanation always
+renders expanded with one line of context on each side. Set
+`METAPATHOLOGY_TEXT_TIMELINE=full` to restore the exhaustive per-event
+rendering; the JSON `timeline` is always exhaustive. Detailed mechanism
+sections remain below it for stacks and fuller values.
 
 Sequence numbers reflect acquisition of the monitor's shared recording lock.
 They provide deterministic capture order but do not claim a process-wide
@@ -56,6 +72,8 @@ being repeated per event: a single-threaded capture states
 snapshot identities that stay stable across every audited import are declared
 stable once. When an identity does change, the audit line that observed it
 carries indented continuation lines describing only the changed mechanism.
+Bounded sections point at the exhaustive record with a consistent
+`details in JSON` trailer.
 
 Opt-in deep calls appear as `deep_diagnostic_call` records in JSON and `deep`
 lines in text. Their evidence level is `deep_delegation`. A returned, found,
@@ -78,22 +96,24 @@ cache hits remain invisible because they bypass `_find_and_load`. If either
 the current-thread or future-thread profiler slot is occupied, activation is
 refused without replacing or chaining that callback.
 
-An import-audit line proves only that uncached resolution started. The record
-still captures the copied `sys.meta_path` identity and finder type names plus
-constant-size identities/fingerprints for enabled auxiliary mechanisms; text
-shows them only on deviation, as described above. The preamble states that
-the audit event has no outcome or winner signal: it has no completion signal,
-does not identify the winning finder, and does not fire for `sys.modules`
-cache hits. JSON exposes these records as `import_audit_start` with
-`evidence: resolution_started`.
+An `uncached import started:` line proves only that uncached resolution
+started. The record still captures the copied `sys.meta_path` identity and
+finder type names plus constant-size identities/fingerprints for enabled
+auxiliary mechanisms; text shows them only on deviation, as described above.
+The event has no completion signal, does not identify the winning finder,
+and does not fire for `sys.modules` cache hits. JSON exposes these records
+as `import_audit_start` with `evidence: resolution_started`.
 Lower-level importlib entry points may bypass the builtin audit boundary, so a
 finder call can legitimately appear without a preceding audit-start event.
 
 ## Header
 
-The header opens with one `monitoring:` line naming the enabled mechanisms
-(disabled mechanisms, inactive deep diagnostics, and an inactive early-site
-bootstrap are noted in parentheses). It then shows the `sys.meta_path` and
+The header opens with the `target outcome:` and `verdict:` lines described
+above, then one `monitoring:` line naming the enabled mechanisms (disabled
+default mechanisms and unused opt-ins are noted in parentheses).
+Finder classes installed by well-known environment tooling carry a
+display-only annotation, for example `_Finder (virtualenv startup,
+expected)`; the annotation never affects severity or findings. It then shows the `sys.meta_path` and
 `sys.path_hooks` snapshots — collapsed to a single
 `(unchanged since install)` line when the install and report snapshots are
 identical, and split into `at install:` / `now:` lines otherwise — the
@@ -210,8 +230,9 @@ the list object originally assigned becomes stale.
 
 Cache diffs show string paths added, removed, or switched to a different
 finder identity. A `None` finder is a negative cache entry. Non-string keys
-are counted but never formatted. The text report lists at most 25 changes per
-diff; JSON retains every captured change.
+are counted but never formatted. The text report lists full entries only for
+paths relevant to a finding or captured route (at most 25 per diff) and
+summarizes the rest as counts; JSON retains every captured change.
 
 Snapshots occur at installation, before and after observed path-hook list
 mutations, and at report time. The audit hook only marks a changed
@@ -270,12 +291,29 @@ Structural evidence next to a comparison is identity-only: it says whether
 snapshots. It does not reconstruct the import-time cache or invoke historical
 foreign objects.
 
-## Suspicious findings
+## Findings narrative
 
 Raw status, loader, origin, package, cached-path, and location differences are
 not findings. They remain visible in the resolution-route section. A route
 difference is promoted only when an observed effect corroborates a specific
 mechanism.
+
+The `-- findings --` section renders numbered problem blocks in severity
+order. When a causal explanation links to a finding through its
+`cause_finding_ref`, the explanation headlines the block and the finding
+renders indented beneath it as evidence — one problem, one block. Each block
+ends with a static `why it matters:` consequence line for its kind (when the
+headline does not already state it) and a prose sentence naming the
+severity, evidence level, and limitations. Informational findings compress
+to one line each under an `informational:` subheading. Cross-references use
+the visible block numbers (`see [1]`). A run with no findings states the
+clean result in one sentence.
+
+When the CLI recorded a target failure, imports that started but produced no
+module by report time are listed in a bounded `-- imports that started but
+produced no module --` section; the target's failed module is marked, and a
+conservative note connects legacy-only finders that CPython 3.12+ never
+calls. Failed optional imports also appear there and are normal.
 
 These findings are leads, not verdicts:
 
@@ -320,7 +358,7 @@ Finder-call timeline records include import-time spec summaries. Exact string
 values and exact list/tuple package paths are copied before the spec is returned
 to importlib. Non-string values are represented only by safe type and identity
 metadata. A foreign package-path sequence is marked `deferred` rather than
-iterated in the import hot path. Namespace paths returned by the live replay
+iterated in the import hot path. Namespace paths returned by the standard path probe
 are copied during reporting and marked `post_hoc`. Field comparisons expose
 locations present only in the left or right route, plus reordering, without
 presenting probe state as exact historical proof.
@@ -330,13 +368,13 @@ states: `missing`, explicit `none`, `object` with safe identity/type metadata,
 or `unavailable`. Text timelines omit unchanged pairs but JSON retains them.
 Object identities are process-local evidence and are not stable across runs.
 
-Each replay-based finding separately includes a `structural evidence:` line.
+Each route-comparison-backed finding separately includes a `structural evidence:` line.
 This identity-only comparison says whether `sys.path_hooks` changed between
 the install and report snapshots and whether relevant
 `sys.path_importer_cache` entries changed. JSON links the comparison to those
 snapshots and to passive cache-diff events. It does not call removed or
 invalidated historical finder objects, reconstruct exact import-time state, or
-prove that a structural change caused the replay difference.
+prove that a structural change caused the route difference.
 
 Extension modules, built-ins, synthetic origins, and modules that predate
 installation are not subjected to the source-module bypass check.

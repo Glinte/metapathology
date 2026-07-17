@@ -14,6 +14,8 @@ From the repository root on Windows:
 
 Both runs load `installed-backend/my_backend.py` and print the historical
 `BackendInvalid` condition. The monitored run records `_EditableFinder`
-claiming `my_backend` and reports a bypass because a `PathFinder` replay chooses
-`candidate-backend/my_backend.py`. The harness omits pip's VCS checkout and
-build-isolation setup, which are not necessary to exercise the contention.
+claiming `my_backend` and reports a neutral resolution route divergence
+because an independent standard-path probe for the same module resolves to
+`candidate-backend/my_backend.py` instead. The harness omits pip's VCS
+checkout and build-isolation setup, which are not necessary to exercise the
+contention.

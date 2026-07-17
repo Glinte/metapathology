@@ -29,17 +29,20 @@ historical failure before writing its report:
 INTERNALERROR> ImportError: cannot import name 'claw_state' from partially
 INTERNALERROR> initialized module 'beartype.claw._clawstate'
 
-sys.meta_path at install: [_Finder, BuiltinImporter, FrozenImporter, PathFinder]
-sys.meta_path now: [_Finder, AssertionRewritingHook, ...]
--- resolution route divergences (...) --
+target outcome: completed (exit status 3)
+verdict: 3 informational findings
+sys.meta_path at install: [_Finder (virtualenv startup, expected), BuiltinImporter, FrozenImporter, PathFinder]
+sys.meta_path now: [_DeprecatedModuleFinder, _Finder (virtualenv startup, expected), BuiltinImporter, FrozenImporter, PathFinder]
+-- resolution route divergences (3) --
 'pytest_cov': captured claim compared with an independent standard path probe
-    captured route: AssertionRewritingHook, loader AssertionRewritingHook, ...
-    standard path probe: PathFinder, loader BeartypeSourceFileLoader, ...
-    structural evidence: ...
+    captured route: AssertionRewritingHook, loader AssertionRewritingHook, origin '.venv\Lib\site-packages\pytest_cov\__init__.py'
+    standard path probe: PathFinder, loader BeartypeSourceFileLoader, same origin
+    route differences (captured route vs standard path probe): loader type
+    structural evidence: sys.path_hooks changed since install; importer cache changed for 9 captured search paths
 'pytest_cov.plugin': captured claim compared with an independent standard path probe, ...
 'pytest_cov.engine': captured claim compared with an independent standard path probe, ...
 -- finder attribution (instrumented finders only) --
-AssertionRewritingHook: ... probes, 4 claimed
+AssertionRewritingHook: 437 probes, 4 claimed
 -- sys.meta_path mutations (3) --
 ```
 

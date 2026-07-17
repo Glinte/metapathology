@@ -11,7 +11,7 @@ can run.
 .\reproductions\beartype-269\reproduce.ps1
 ```
 
-Metapathology should show ordinary `PathFinder` handling and no `[bypass]`:
+Metapathology should show ordinary `PathFinder` handling and no findings:
 this was a `runpy` package-identity bug inside beartype rather than finder
 contention. Beartype fixed it in commits `fad062c` and `d4e9e454b1`.
 
@@ -26,14 +26,19 @@ BeartypeClawImportConfException: Beartype configuration associated with module
 configurations associated with hooked modules include:
     {'beartypeproject.my_functions': BeartypeConf(...)}
 
-sys.meta_path (unchanged since install): [_Finder, BuiltinImporter,
-    FrozenImporter, PathFinder]
+target outcome: raised BeartypeClawImportConfException (exit status 1)
+verdict: no import-hook interference detected across 259 monitored imports
+sys.meta_path (unchanged since install): [_Finder (virtualenv startup, expected), BuiltinImporter, FrozenImporter, PathFinder]
+-- findings (0) --
+No import-hook interference detected across 259 monitored imports.
+
 -- finder attribution (instrumented finders only) --
-_Finder: ... probes, 0 claimed
-nothing recorded: sys.meta_path mutations, ..., internal errors
+_Finder: 258 probes, 0 claimed
 ```
 
-There is no `[bypass]` finding. The report also lists `[no-spec]` entries for
-`typing.io` and `typing.re`; those are unrelated compatibility aliases created
-by the standard `typing` module. The failure is the mismatch between runpy's
-execution name and beartype's stored package configuration, not finder order.
+There is no finding. The report also lists `typing.io` and `typing.re` under
+"relevant post-hoc loader inventory" as metadata unavailable for 2
+module-cache entries (`not_module`); those are unrelated compatibility
+aliases created by the standard `typing` module. The failure is the mismatch
+between runpy's execution name and beartype's stored package configuration,
+not finder order.
