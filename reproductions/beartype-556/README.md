@@ -40,12 +40,12 @@ that the invalid argument was not checked. The normalized report excerpt is:
 ```text
 sys.meta_path (unchanged since install): [_Finder, ScikitBuildRedirectingFinder,
     BuiltinImporter, FrozenImporter, PathFinder]
--- suspicious findings (1) --
-[bypass] 'myproject': claimed by ScikitBuildRedirectingFinder,
-    bypassing sys.path_hooks-based tools
-    claimed: loader _ScikitBuildLoaderWrapper, origin 'src/myproject/__init__.py'
-    PathFinder replay: loader BeartypeSourceFileLoader, same origin
-    differences (import-time claim vs live replay): loader type
+-- resolution route divergences (1) --
+'myproject': captured claim compared with an independent standard path probe
+    captured route: ScikitBuildRedirectingFinder, loader _ScikitBuildLoaderWrapper, ...
+    standard path probe: PathFinder, loader BeartypeSourceFileLoader, ...
+    route differences (captured vs live probe): loader type
+    interpretation: the probe does not predict which finder would win if the captured finder were absent
     structural evidence: ...
 -- finder attribution (instrumented finders only) --
 ScikitBuildRedirectingFinder: ... probes, 1 claimed
@@ -53,5 +53,8 @@ ScikitBuildRedirectingFinder: ... probes, 1 claimed
 nothing recorded: sys.meta_path mutations, ..., internal errors
 ```
 
-This directly identifies the cause: scikit-build-core's meta-path finder wins
-before `PathFinder` can reach the path hook installed by `beartype.claw`.
+This identifies the observed mechanics: scikit-build-core's meta-path finder
+claimed the module before `PathFinder` was reached, while an independent
+report-time standard-path probe selected beartype's loader. The difference is
+route evidence, not a claim that `PathFinder` would necessarily win under a
+different meta-path order.
