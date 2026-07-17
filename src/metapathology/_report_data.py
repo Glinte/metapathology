@@ -37,6 +37,35 @@ from metapathology._records import (
     _Record,
     type_name,
 )
+from metapathology._report_schema import (
+    EarlySiteBootstrapJSON,
+    EventJSON,
+    ExplanationJSON,
+    FinderContractJSON,
+    FindingEvidenceJSON,
+    FindingJSON,
+    FrameJSON,
+    FrozenBootstrapJSON,
+    ImportAttemptJSON,
+    ImporterCacheEntryJSON,
+    ImporterCacheReplacementJSON,
+    ImportObjectJSON,
+    ImportObjectValueJSON,
+    LoaderGroupJSON,
+    LoaderInventoryInfo,
+    MechanismJSON,
+    ModuleMetadataJSON,
+    ModuleStateJSON,
+    ReportJSON,
+    ReportStatus,
+    ResolutionRouteJSON,
+    RouteComparisonJSON,
+    SpecSummaryJSON,
+    SpecValueJSON,
+    StandardResolutionJSON,
+    SummaryInfo,
+    TargetOutcomeJSON,
+)
 from metapathology._spec import summarize_spec
 
 TYPE_CHECKING = False
@@ -49,13 +78,9 @@ if TYPE_CHECKING:
 
 _MODULE_FILE_SUFFIXES = (".py", ".pyc", ".pyd", ".so")
 _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
-# The JSON contract remains experimental until the observation mechanisms in
-# roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
-_SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 20
-# TODO(schema 1.0): Define and export a TypedDict for this document before
-# exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
+_SCHEMA_MAJOR = 1
+_SCHEMA_MINOR = 0
 
 
 class ReportError(_Record):
@@ -2280,8 +2305,8 @@ def _same_path(a: str | None, b: str | None) -> bool:
     return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
-def json_document(document: ReportDocument) -> dict[str, object]:
-    """Project one report document onto the experimental JSON schema."""
+def json_document(document: ReportDocument) -> ReportJSON:
+    """Project one report document onto the stable JSON schema."""
     mutations = sum(isinstance(event, MetaPathMutation) for event in document.events)
     reassignments = sum(isinstance(event, MetaPathReassignment) for event in document.events)
     path_hook_mutations = sum(isinstance(event, PathHooksMutation) for event in document.events)
@@ -2292,9 +2317,55 @@ def json_document(document: ReportDocument) -> dict[str, object]:
     deep_calls = sum(isinstance(event, DeepDiagnosticCall) for event in document.events)
     deep_import_events = sum(isinstance(event, DeepImportEvent) for event in document.events)
     standard_finder_calls = sum(isinstance(event, StandardFinderCall) for event in document.events)
+    report_status: ReportStatus = (
+        "partial"
+        if document.report_errors or any(isinstance(event, InternalError) for event in document.events)
+        else "complete"
+    )
     version = sys.version_info
+    mechanisms: list[MechanismJSON] = [
+        _mechanism("meta_path_mutations", document.monitor_enabled, mutations, "best_effort"),
+        _mechanism("meta_path_reassignments", document.monitor_enabled, reassignments, "import_boundaries"),
+        _mechanism("import_audit_starts", document.monitor_enabled, audit_starts, "resolution_starts"),
+        _mechanism("finder_attribution", document.monitor_enabled, calls, "instrumented_finders"),
+        _mechanism(
+            "finder_contracts",
+            document.monitor_enabled,
+            len(document.finder_contracts),
+            "first_observation_per_identity",
+        ),
+        _mechanism("deep_diagnostics", bool(document.deep_diagnostics), deep_calls, "delegated_boundaries"),
+        _mechanism(
+            "deep_import_outcomes",
+            "import_outcomes" in document.deep_diagnostics,
+            deep_import_events,
+            document.deep_import_outcomes_status,
+        ),
+        _mechanism(
+            "standard_finder_aggregate",
+            document.standard_finder_status.startswith("active_"),
+            standard_finder_calls,
+            document.standard_finder_status,
+        ),
+        _route_analysis_mechanism(document),
+        _mechanism("path_hooks_mutations", document.path_hooks_enabled, path_hook_mutations, "best_effort"),
+        _mechanism(
+            "path_hooks_reassignments",
+            document.path_hooks_enabled,
+            path_hook_reassignments,
+            "import_boundaries",
+        ),
+        _cache_snapshot_mechanism(document),
+        _mechanism(
+            "importer_cache_diffs",
+            document.importer_cache_enabled,
+            importer_cache_diffs,
+            "passive_boundaries",
+        ),
+    ]
     return {
         "schema": {"major": _SCHEMA_MAJOR, "minor": _SCHEMA_MINOR, "name": _SCHEMA_NAME},
+        "report_status": report_status,
         "tool": {"name": "metapathology", "version": __version__},
         "generated_at": document.generated_at,
         "process": {
@@ -2313,66 +2384,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
             "early_site_bootstrap": _json_early_site_bootstrap(document.early_site_bootstrap),
             "frozen_bootstrap": _json_frozen_bootstrap(document.frozen_bootstrap),
             "enabled": document.monitor_enabled,
-            "mechanisms": [
-                _mechanism("meta_path_mutations", document.monitor_enabled, mutations, "best_effort"),
-                _mechanism("meta_path_reassignments", document.monitor_enabled, reassignments, "import_boundaries"),
-                _mechanism("import_audit_starts", document.monitor_enabled, audit_starts, "resolution_starts"),
-                _mechanism("finder_attribution", document.monitor_enabled, calls, "instrumented_finders"),
-                _mechanism(
-                    "finder_contracts",
-                    document.monitor_enabled,
-                    len(document.finder_contracts),
-                    "first_observation_per_identity",
-                ),
-                _mechanism("deep_diagnostics", bool(document.deep_diagnostics), deep_calls, "delegated_boundaries"),
-                _mechanism(
-                    "deep_import_outcomes",
-                    "import_outcomes" in document.deep_diagnostics,
-                    deep_import_events,
-                    document.deep_import_outcomes_status,
-                ),
-                _mechanism(
-                    "standard_finder_aggregate",
-                    document.standard_finder_status.startswith("active_"),
-                    standard_finder_calls,
-                    document.standard_finder_status,
-                ),
-                {
-                    "capacity": None,
-                    "comparison_count": len(document.route_comparisons),
-                    "completeness": "reported_custom_winners",
-                    "dropped": 0,
-                    "enabled": document.monitor_enabled,
-                    "name": "resolution_route_analysis",
-                    "overflow_policy": "retain_all",
-                    "retained": len(document.resolution_routes),
-                    "shutdown": "synchronous_no_retry",
-                },
-                _mechanism("path_hooks_mutations", document.path_hooks_enabled, path_hook_mutations, "best_effort"),
-                _mechanism(
-                    "path_hooks_reassignments",
-                    document.path_hooks_enabled,
-                    path_hook_reassignments,
-                    "import_boundaries",
-                ),
-                {
-                    "capacity": 2,
-                    "coalesced": document.importer_cache_coalesced,
-                    "completeness": "passive_boundaries",
-                    "dropped": 0,
-                    "enabled": document.importer_cache_enabled,
-                    "name": "importer_cache_snapshots",
-                    "observations": document.importer_cache_observations,
-                    "overflow_policy": "replace_latest",
-                    "retained": min(document.importer_cache_observations, 2),
-                },
-                _mechanism(
-                    "importer_cache_diffs",
-                    document.importer_cache_enabled,
-                    importer_cache_diffs,
-                    "passive_boundaries",
-                ),
-            ],
+            "mechanisms": mechanisms,
             "modules_since_install": None
             if document.modules_since_install is None
             else list(document.modules_since_install),
@@ -2452,7 +2464,7 @@ def json_document(document: ReportDocument) -> dict[str, object]:
     }
 
 
-def _mechanism(name: str, enabled: bool, retained: int, completeness: str) -> dict[str, object]:
+def _mechanism(name: str, enabled: bool, retained: int, completeness: str) -> MechanismJSON:
     """Describe a lifetime-growing producer without implying perfect observation."""
     return {
         "capacity": None,
@@ -2462,6 +2474,7 @@ def _mechanism(name: str, enabled: bool, retained: int, completeness: str) -> di
         "name": name,
         "overflow_policy": "retain_all",
         "retained": retained,
+        "shutdown": "synchronous_no_retry",
     }
 
 
@@ -2476,10 +2489,11 @@ def _finder_contract_category(contract: FinderContract) -> str:
     return "legacy_only" if legacy == "callable" else "protocol_less"
 
 
-def _json_finder_contract(contract: FinderContract) -> dict[str, object]:
+def _json_finder_contract(contract: FinderContract) -> FinderContractJSON:
     """Project one finder contract without consulting the live finder."""
     return {
         "category": _finder_contract_category(contract),
+        "id": _finder_contract_id(contract),
         "finder_id": f"0x{contract.finder_id:x}",
         "finder_type_name": contract.finder_type_name,
         "find_module": {
@@ -2498,7 +2512,41 @@ def _json_finder_contract(contract: FinderContract) -> dict[str, object]:
     }
 
 
-def _json_early_site_bootstrap(bootstrap: EarlySiteBootstrap | None) -> dict[str, object] | None:
+def _route_analysis_mechanism(document: ReportDocument) -> MechanismJSON:
+    return {
+        "capacity": None,
+        "comparison_count": len(document.route_comparisons),
+        "completeness": "reported_custom_winners",
+        "dropped": 0,
+        "enabled": document.monitor_enabled,
+        "name": "resolution_route_analysis",
+        "overflow_policy": "retain_all",
+        "retained": len(document.resolution_routes),
+        "shutdown": "synchronous_no_retry",
+    }
+
+
+def _cache_snapshot_mechanism(document: ReportDocument) -> MechanismJSON:
+    return {
+        "capacity": 2,
+        "coalesced": document.importer_cache_coalesced,
+        "completeness": "passive_boundaries",
+        "dropped": 0,
+        "enabled": document.importer_cache_enabled,
+        "name": "importer_cache_snapshots",
+        "observations": document.importer_cache_observations,
+        "overflow_policy": "replace_latest",
+        "retained": min(document.importer_cache_observations, 2),
+        "shutdown": "synchronous_no_retry",
+    }
+
+
+def _finder_contract_id(contract: FinderContract) -> str:
+    """Return the document-scoped id for one observed finder contract."""
+    return f"finder-contract:0x{contract.finder_id:x}"
+
+
+def _json_early_site_bootstrap(bootstrap: EarlySiteBootstrap | None) -> EarlySiteBootstrapJSON | None:
     """Serialize early activation provenance without consulting live state."""
     if bootstrap is None:
         return None
@@ -2510,7 +2558,7 @@ def _json_early_site_bootstrap(bootstrap: EarlySiteBootstrap | None) -> dict[str
     }
 
 
-def _json_frozen_bootstrap(bootstrap: FrozenBootstrap | None) -> dict[str, object] | None:
+def _json_frozen_bootstrap(bootstrap: FrozenBootstrap | None) -> FrozenBootstrapJSON | None:
     """Serialize frozen activation provenance without consulting live state."""
     if bootstrap is None:
         return None
@@ -2521,7 +2569,7 @@ def _json_frozen_bootstrap(bootstrap: FrozenBootstrap | None) -> dict[str, objec
     }
 
 
-def _json_module_state(state: ModuleCacheState | None) -> dict[str, object] | None:
+def _json_module_state(state: ModuleCacheState | None) -> ModuleStateJSON | None:
     """Serialize target-module identity evidence."""
     if state is None:
         return None
@@ -2532,9 +2580,9 @@ def _json_module_state(state: ModuleCacheState | None) -> dict[str, object] | No
     }
 
 
-def _json_event(event: MonitorEvent) -> dict[str, object]:
+def _json_event(event: MonitorEvent) -> EventJSON:
     """Serialize a public event record without inspecting foreign objects."""
-    result: dict[str, object] = {"id": f"event:{event.seq}", "seq": event.seq}
+    result: EventJSON = {"id": f"event:{event.seq}", "seq": event.seq, "kind": ""}
     if isinstance(event, ImportAuditStart):
         result.update(
             {
@@ -2693,7 +2741,7 @@ def _json_event(event: MonitorEvent) -> dict[str, object]:
     return result
 
 
-def _json_import_attempt(attempt: ImportAttempt) -> dict[str, object]:
+def _json_import_attempt(attempt: ImportAttempt) -> ImportAttemptJSON:
     """Serialize one derived attempt while retaining links to raw evidence."""
     return {
         "id": f"attempt:{attempt.attempt_id}",
@@ -2707,7 +2755,7 @@ def _json_import_attempt(attempt: ImportAttempt) -> dict[str, object]:
     }
 
 
-def _json_standard_resolution(resolution: StandardResolution) -> dict[str, object]:
+def _json_standard_resolution(resolution: StandardResolution) -> StandardResolutionJSON:
     """Serialize provenance without presenting inference as a raw event."""
     return {
         "attempt_ref": f"attempt:{resolution.attempt_id}",
@@ -2724,7 +2772,7 @@ def _json_standard_resolution(resolution: StandardResolution) -> dict[str, objec
     }
 
 
-def _json_resolution_route(route: ResolutionRoute) -> dict[str, object]:
+def _json_resolution_route(route: ResolutionRoute) -> ResolutionRouteJSON:
     """Serialize one route without implying that a probe predicts a winner."""
     summary = route.spec_summary
     return {
@@ -2749,7 +2797,7 @@ def _json_resolution_route(route: ResolutionRoute) -> dict[str, object]:
     }
 
 
-def _json_route_comparison(comparison: RouteComparison) -> dict[str, object]:
+def _json_route_comparison(comparison: RouteComparison) -> RouteComparisonJSON:
     """Serialize symmetric route differences and stable route references."""
     structural = comparison.structural_comparison
     return {
@@ -2785,7 +2833,7 @@ def _json_route_comparison(comparison: RouteComparison) -> dict[str, object]:
     }
 
 
-def _json_import_object(reference: ImportObjectRef) -> dict[str, object]:
+def _json_import_object(reference: ImportObjectRef) -> ImportObjectJSON:
     """Serialize safe import-object identity metadata."""
     return {
         "name": reference.name,
@@ -2794,13 +2842,14 @@ def _json_import_object(reference: ImportObjectRef) -> dict[str, object]:
     }
 
 
-def _json_spec_value(value: str | ImportObjectRef | None) -> object:
+def _json_spec_value(value: str | ImportObjectRef | None) -> SpecValueJSON:
     if isinstance(value, ImportObjectRef):
-        return {"kind": "object", **_json_import_object(value)}
+        result: ImportObjectValueJSON = {"kind": "object", **_json_import_object(value)}
+        return result
     return value
 
 
-def _json_spec_summary(summary: SpecSummary) -> dict[str, object]:
+def _json_spec_summary(summary: SpecSummary) -> SpecSummaryJSON:
     locations = summary.submodule_search_locations
     return {
         "cached": _json_spec_value(summary.cached),
@@ -2843,7 +2892,7 @@ def _loader_inventory_groups(
     return tuple((loader, tuple(sorted(entries, key=lambda entry: entry.name))) for loader, entries in ordered)
 
 
-def _json_module_metadata(entry: ModuleMetadata) -> dict[str, object]:
+def _json_module_metadata(entry: ModuleMetadata) -> ModuleMetadataJSON:
     """Serialize one safely reduced module-cache entry."""
     return {
         "inspection": entry.inspection,
@@ -2859,26 +2908,28 @@ def _json_module_metadata(entry: ModuleMetadata) -> dict[str, object]:
     }
 
 
-def _json_loader_inventory(inventory: LoaderInventory) -> dict[str, object]:
+def _json_loader_inventory(inventory: LoaderInventory) -> LoaderInventoryInfo:
     """Serialize the exhaustive post-hoc module grouping."""
     unavailable = [entry for entry in inventory.entries if entry.inspection != "available"]
-    return {
-        "available": inventory.available,
-        "evidence": "post_hoc",
-        "groups": [
+    groups: list[LoaderGroupJSON] = []
+    for loader, entries in _loader_inventory_groups(inventory):
+        groups.append(
             {
                 "loader": None if loader is None else _json_import_object(loader),
                 "modules": [_json_module_metadata(entry) for entry in entries],
             }
-            for loader, entries in _loader_inventory_groups(inventory)
-        ],
+        )
+    return {
+        "available": inventory.available,
+        "evidence": "post_hoc",
+        "groups": groups,
         "non_string_keys_omitted": inventory.non_string_keys,
         "phase": "report",
         "unavailable": [_json_module_metadata(entry) for entry in sorted(unavailable, key=lambda item: item.name)],
     }
 
 
-def _json_importer_cache_entry(entry: ImporterCacheEntry) -> dict[str, object]:
+def _json_importer_cache_entry(entry: ImporterCacheEntry) -> ImporterCacheEntryJSON:
     """Serialize one path and its cached finder or negative marker."""
     return {
         "finder": None if entry.finder is None else _json_import_object(entry.finder),
@@ -2886,7 +2937,7 @@ def _json_importer_cache_entry(entry: ImporterCacheEntry) -> dict[str, object]:
     }
 
 
-def _json_importer_cache_replacement(replacement: ImporterCacheReplacement) -> dict[str, object]:
+def _json_importer_cache_replacement(replacement: ImporterCacheReplacement) -> ImporterCacheReplacementJSON:
     """Serialize one cached-finder replacement."""
     return {
         "after": None if replacement.after is None else _json_import_object(replacement.after),
@@ -2895,12 +2946,12 @@ def _json_importer_cache_replacement(replacement: ImporterCacheReplacement) -> d
     }
 
 
-def _json_frame(frame: "FrameSummary") -> dict[str, object]:
+def _json_frame(frame: "FrameSummary") -> FrameJSON:
     """Serialize a captured frame without resolving its source line."""
     return {"filename": frame.filename, "function": frame.name, "lineno": frame.lineno}
 
 
-def _json_finding(finding: Finding) -> dict[str, object]:
+def _json_finding(finding: Finding) -> FindingJSON:
     """Serialize mechanics; human wording is deliberately not contractual."""
     event_refs: list[str] = []
     if finding.claim is not None:
@@ -2913,12 +2964,12 @@ def _json_finding(finding: Finding) -> dict[str, object]:
     if finding.structural_comparison is not None:
         event_refs.extend(f"event:{seq}" for seq in finding.structural_comparison.importer_cache_event_seqs)
     event_refs = list(dict.fromkeys(event_refs))
-    evidence: dict[str, object] = {
+    evidence: FindingEvidenceJSON = {
         "event_refs": event_refs,
         "level": finding.evidence_level,
         "limitations": list(finding.limitations),
     }
-    result: dict[str, object] = {
+    result: FindingJSON = {
         "evidence": evidence,
         "id": finding.finding_id,
         "kind": finding.kind,
@@ -2929,7 +2980,7 @@ def _json_finding(finding: Finding) -> dict[str, object]:
         "subject": {"kind": finding.subject_kind, "value": finding.module},
     }
     if finding.finder_contract is not None:
-        result["finder_contract"] = _json_finder_contract(finding.finder_contract)
+        result["finder_contract_ref"] = _finder_contract_id(finding.finder_contract)
     if finding.claim is not None:
         result["claim"] = {
             "event_ref": f"event:{finding.claim.seq}",
@@ -2947,7 +2998,7 @@ def _json_finding(finding: Finding) -> dict[str, object]:
             evidence["outcome"] = (
                 f"raised:{finding.claim.exception_type_name}"
                 if finding.claim.exception_type_name is not None
-                else "passed"
+                else "declined"
             )
     if finding.deep_call is not None:
         result["deep_call"] = {
@@ -2985,7 +3036,7 @@ def _json_finding(finding: Finding) -> dict[str, object]:
     return result
 
 
-def _json_explanation(explanation: CausalExplanation) -> dict[str, object]:
+def _json_explanation(explanation: CausalExplanation) -> ExplanationJSON:
     """Serialize causal joins without making human prose a schema contract."""
     return {
         "alternatives": list(explanation.alternatives),
@@ -3011,7 +3062,7 @@ def _json_explanation(explanation: CausalExplanation) -> dict[str, object]:
     }
 
 
-def _json_summary(summary: ReportSummary) -> dict[str, object]:
+def _json_summary(summary: ReportSummary) -> SummaryInfo:
     """Serialize the shared counts-and-references summary."""
     return {
         "actionable": summary.actionable,
@@ -3023,7 +3074,7 @@ def _json_summary(summary: ReportSummary) -> dict[str, object]:
     }
 
 
-def _json_target_outcome(outcome: TargetOutcome | None) -> dict[str, object] | None:
+def _json_target_outcome(outcome: TargetOutcome | None) -> TargetOutcomeJSON | None:
     """Serialize the recorded target completion, when one exists."""
     if outcome is None:
         return None
@@ -3035,10 +3086,11 @@ def _json_target_outcome(outcome: TargetOutcome | None) -> dict[str, object] | N
     }
 
 
-def failed_json_document(error_name: str) -> dict[str, object]:
+def failed_json_document(error_name: str) -> ReportJSON:
     """Return valid JSON structure when ordinary report generation fails."""
     return {
         "schema": {"major": _SCHEMA_MAJOR, "minor": _SCHEMA_MINOR, "name": _SCHEMA_NAME},
+        "report_status": "generation_failed",
         "tool": {"name": "metapathology", "version": __version__},
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "process": {"pid": os.getpid()},
@@ -3054,6 +3106,7 @@ def failed_json_document(error_name: str) -> dict[str, object]:
         },
         "finder_contracts": [],
         "import_attempts": [],
+        "standard_resolutions": [],
         "resolution_routes": [],
         "route_comparisons": [],
         "timeline": [],

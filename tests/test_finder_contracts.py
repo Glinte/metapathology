@@ -116,7 +116,11 @@ assert replacement_contract["observation"] == "reassignment"
 assert replacement_contract["observation_event_ref"] is None
 finding = next(item for item in document["findings"] if item["kind"] == "legacy_finder_contract")
 assert finding["subject"] == {"kind": "finder", "value": "LegacyFinder"}
-assert finding["finder_contract"]["finder_id"] == hex(id(finder))
+assert finding["finder_contract_ref"] == f"finder-contract:{hex(id(finder))}"
+assert any(
+    contract["id"] == finding["finder_contract_ref"] and contract["finder_id"] == hex(id(finder))
+    for contract in document["finder_contracts"]
+)
 assert finding["evidence"]["level"] == "captured"
 assert finding["evidence"]["event_refs"] == [event_id]
 text = metapathology.render_report()

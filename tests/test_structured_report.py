@@ -1,8 +1,12 @@
 """Structured report schema and explicit file-output behavior."""
 
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
+
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 RunPython = Callable[..., "subprocess.CompletedProcess[str]"]
 
@@ -31,7 +35,8 @@ import observed_mod
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 0, "minor": 20, "name": "metapathology.report"}
+assert document["schema"] == {"major": 1, "minor": 0, "name": "metapathology.report"}
+assert document["report_status"] == "complete"
 assert isinstance(document["resolution_routes"], list)
 assert isinstance(document["route_comparisons"], list)
 assert document["capture"]["early_site_bootstrap"] is None
@@ -65,6 +70,7 @@ assert mechanisms["finder_contracts"]["overflow_policy"] == "retain_all"
 assert mechanisms["finder_contracts"]["retained"] >= 4
 assert mechanisms["resolution_route_analysis"]["overflow_policy"] == "retain_all"
 assert mechanisms["resolution_route_analysis"]["shutdown"] == "synchronous_no_retry"
+assert all(mechanism["shutdown"] == "synchronous_no_retry" for mechanism in mechanisms.values())
 assert mechanisms["resolution_route_analysis"]["retained"] == len(document["resolution_routes"])
 assert mechanisms["resolution_route_analysis"]["comparison_count"] == len(document["route_comparisons"])
 assert mechanisms["importer_cache_snapshots"]["capacity"] == 2
@@ -118,6 +124,104 @@ def test_explicit_file_write_uses_exact_path(run_python: RunPython, tmp_path: Pa
     assert proc.stdout.strip() == "OK"
     assert destination.is_file()
     assert list(tmp_path.glob("exact.*.json")) == []
+
+
+def test_failure_report_has_the_same_top_level_contract(run_python: RunPython) -> None:
+    proc = run_python(
+        "import metapathology\n"
+        "from metapathology._report_data import failed_json_document\n"
+        "monitor = metapathology.install(report_at_exit=False)\n"
+        "complete = __import__('json').loads(metapathology.render_report(format='json'))\n"
+        "failed = failed_json_document('BrokenReport')\n"
+        "assert set(failed) == set(complete)\n"
+        "assert failed['report_status'] == 'generation_failed'\n"
+        "assert failed['standard_resolutions'] == []\n"
+        "print('OK')\n"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+def test_bundled_json_schema_matches_report_version(run_python: RunPython) -> None:
+    proc = run_python(
+        "import importlib.resources, json\n"
+        "import metapathology\n"
+        "schema = json.loads(importlib.resources.files('metapathology').joinpath('report.schema.json').read_text())\n"
+        "monitor = metapathology.install(report_at_exit=False)\n"
+        "report = json.loads(metapathology.render_report(format='json'))\n"
+        "version = schema['$defs']['SchemaVersion']['properties']\n"
+        "assert version['major']['const'] == report['schema']['major']\n"
+        "assert version['minor']['const'] == report['schema']['minor']\n"
+        "assert set(schema['required']) == set(report)\n"
+        "print('OK')\n"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+def test_bundled_json_schema_is_current() -> None:
+    proc = subprocess.run(
+        [sys.executable, "scripts/generate_report_schema.py", "--check"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+REFERENCE_REPORT = r"""
+import importlib
+import json
+import sys
+
+import metapathology
+
+metapathology.install(report_at_exit=False)
+for index in range(int(sys.argv[1])):
+    importlib.import_module(f"generated_reference_{index}")
+document = json.loads(metapathology.render_report(format="json"))
+
+ids = set()
+for section_name in (
+    "snapshots", "finder_contracts", "import_attempts", "resolution_routes",
+    "route_comparisons", "timeline", "findings", "explanations",
+):
+    for item in document[section_name]:
+        assert item["id"] not in ids, item["id"]
+        ids.add(item["id"])
+
+def check(value, location="report"):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_location = f"{location}.{key}"
+            if key.endswith("_ref"):
+                assert child is None or child in ids, (child_location, child)
+            elif key.endswith("_refs"):
+                assert isinstance(child, list)
+                assert all(reference in ids for reference in child), (child_location, child)
+            else:
+                check(child, child_location)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            check(child, f"{location}[{index}]")
+
+check(document)
+print("OK")
+"""
+
+
+@given(module_count=st.integers(min_value=0, max_value=12))
+@settings(max_examples=6, deadline=None, suppress_health_check=(HealthCheck.function_scoped_fixture,))
+def test_all_document_references_resolve(
+    run_python: RunPython,
+    tmp_path: Path,
+    module_count: int,
+) -> None:
+    for index in range(module_count):
+        (tmp_path / f"generated_reference_{index}.py").write_text(f"VALUE = {index}\n")
+    proc = run_python(REFERENCE_REPORT, str(module_count))
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
 
 
 WRITE_FAILURE = r"""

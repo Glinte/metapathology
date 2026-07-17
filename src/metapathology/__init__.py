@@ -37,6 +37,7 @@ if TYPE_CHECKING:
         SpecSummary,
         StandardFinderCall,
     )
+    from metapathology._report_schema import ReportJSON, ReportStatus
 
 # Keep this in sync with ``project.version`` in pyproject.toml. The package
 # test enforces that invariant without making every CLI invocation import the
@@ -66,6 +67,7 @@ _RECORD_EXPORTS = frozenset(
         "StandardFinderCall",
     )
 )
+_SCHEMA_EXPORTS = frozenset(("ReportJSON", "ReportStatus"))
 
 __all__ = [
     "DeepDiagnosticCall",
@@ -84,6 +86,8 @@ __all__ = [
     "MonitorEvent",
     "PathHooksMutation",
     "PathHooksReassignment",
+    "ReportJSON",
+    "ReportStatus",
     "SpecSummary",
     "StandardFinderCall",
     "__version__",
@@ -104,6 +108,8 @@ def __getattr__(name: str) -> object:
         import metapathology._frozen_bootstrap as module
     elif name in _RECORD_EXPORTS:
         import metapathology._records as module
+    elif name in _SCHEMA_EXPORTS:
+        import metapathology._report_schema as module
     else:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     value = getattr(module, name)

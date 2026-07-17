@@ -65,7 +65,7 @@ def write_report(
 
 
 def render_report(monitor: "Monitor", *, format: "_ReportFormat" = "text") -> str:
-    """Render the full diagnostic report as text or experimental JSON.
+    """Render the full diagnostic report as text or stable JSON.
 
     Ordinary exceptions become a valid failure report. Control-flow
     exceptions outside ``Exception`` continue to propagate unchanged.
@@ -74,7 +74,8 @@ def render_report(monitor: "Monitor", *, format: "_ReportFormat" = "text") -> st
     try:
         document = capture_document(monitor)
         if report_format == "json":
-            return json.dumps(json_document(document), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            json_report = json_document(document)
+            return json.dumps(json_report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         return "\n".join(render_lines(document)) + "\n"
     except Exception as exc:  # The report must never break the host program.
         error_name = type_name(exc)

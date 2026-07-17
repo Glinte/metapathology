@@ -24,6 +24,8 @@ _EXPECTED_PUBLIC_API = frozenset(
         "MonitorEvent",
         "PathHooksMutation",
         "PathHooksReassignment",
+        "ReportJSON",
+        "ReportStatus",
         "SpecSummary",
         "StandardFinderCall",
         "__version__",
