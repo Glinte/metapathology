@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from typing import Literal, NoReturn
 
 _REPORT_FORMATS = ("text", "json")
+_COLOR_MODES = ("auto", "always", "never")
 _DOCUMENTATION_URL = "https://glinte.github.io/metapathology/usage/"
 _MODULE_PROG = "python -m metapathology"
 _CONSOLE_PROG_NAMES = frozenset(("metapathology", "metapathology.exe", "metapathology-script.py"))
@@ -42,6 +43,7 @@ class _Arguments(argparse.Namespace):
         super().__init__()
         self.report_destination: str | None = None
         self.report_format: Literal["text", "json"] | None = None
+        self.report_color: Literal["auto", "always", "never"] | None = None
         self.monitor_path_hooks: bool | None = None
         self.monitor_importer_cache: bool | None = None
         self.deep: bool | None = None
@@ -72,6 +74,12 @@ def _make_parser() -> _ArgumentParser:
         "--report-format",
         choices=_REPORT_FORMATS,
         help="select text or JSON output; defaults to text on stderr and JSON for files",
+    )
+    parser.add_argument(
+        "--color",
+        dest="report_color",
+        choices=_COLOR_MODES,
+        help="color text reports automatically, always, or never",
     )
     parser.add_argument(
         "--path-hook-monitoring",
@@ -139,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
             is_module=True,
             report_destination=parsed.report_destination,
             report_format=parsed.report_format,
+            report_color=parsed.report_color,
             monitor_path_hooks=parsed.monitor_path_hooks,
             monitor_importer_cache=parsed.monitor_importer_cache,
             deep=parsed.deep,
@@ -153,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         is_module=False,
         report_destination=parsed.report_destination,
         report_format=parsed.report_format,
+        report_color=parsed.report_color,
         monitor_path_hooks=parsed.monitor_path_hooks,
         monitor_importer_cache=parsed.monitor_importer_cache,
         deep=parsed.deep,
@@ -170,6 +180,7 @@ def _run(
     is_module: bool,
     report_destination: str | None,
     report_format: "Literal['text', 'json'] | None",
+    report_color: "Literal['auto', 'always', 'never'] | None",
     monitor_path_hooks: bool | None,
     monitor_importer_cache: bool | None,
     deep: bool | None,
@@ -186,6 +197,8 @@ def _run(
         is_module: Select ``python -m``-style execution instead of a script path.
         report_destination: Explicit automatic report path, or None.
         report_format: Explicit report format, or None for environment/default resolution.
+        report_color: Explicit automatic text-report color mode, or None for
+            environment/default resolution.
         monitor_path_hooks: Whether to instrument ``sys.path_hooks``.
         monitor_importer_cache: Whether to observe
             ``sys.path_importer_cache``.
@@ -216,6 +229,7 @@ def _run(
         report_at_exit=False,
         report_destination=report_destination,
         report_format=report_format,
+        report_color=report_color,
         monitor_path_hooks=monitor_path_hooks,
         monitor_importer_cache=monitor_importer_cache,
         deep=deep,

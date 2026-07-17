@@ -79,6 +79,7 @@ def test_help_links_to_usage_documentation(tmp_path: Path) -> None:
     proc = run_cli("--help", cwd=tmp_path)
     assert proc.returncode == 0
     assert proc.stdout.startswith("usage: python -m metapathology")
+    assert "--color {auto,always,never}" in proc.stdout
     assert "\nDocumentation:\n  https://glinte.github.io/metapathology/usage/\n" in proc.stdout
 
 
@@ -129,6 +130,148 @@ def test_invalid_report_format_fails_before_running_target(tmp_path: Path) -> No
     assert proc.returncode == 2
     assert "invalid choice" in proc.stderr
     assert not marker.exists()
+
+
+def test_invalid_color_mode_fails_before_running_target(tmp_path: Path) -> None:
+    marker = tmp_path / "target-ran"
+    script = tmp_path / "prog.py"
+    script.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
+
+    proc = run_cli("--color", "sometimes", str(script), cwd=tmp_path)
+
+    assert proc.returncode == 2
+    assert "invalid choice" in proc.stderr
+    assert not marker.exists()
+
+
+def test_cli_color_modes_control_captured_text_output(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("print('target ran')\n")
+
+    automatic = run_cli(str(script), cwd=tmp_path)
+    forced = run_cli("--color", "always", str(script), cwd=tmp_path)
+    disabled = run_cli("--color", "never", str(script), cwd=tmp_path)
+
+    assert "\x1b[" not in automatic.stderr
+    assert "\x1b[1;36m== metapathology report ==\x1b[0m" in forced.stderr
+    assert "\x1b[32mverdict:\x1b[0m" in forced.stderr
+    assert "\x1b[" not in disabled.stderr
+
+
+def test_failed_warning_report_colors_outcome_and_finding_separately(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text(
+        "import sys\n"
+        "class LegacyFinder:\n"
+        "    def find_module(self, fullname, path=None):\n"
+        "        return None\n"
+        "sys.meta_path.insert(0, LegacyFinder())\n"
+        "import missing_color_dependency\n"
+    )
+
+    proc = run_cli("--color", "always", str(script), cwd=tmp_path)
+
+    assert proc.returncode == 1
+    assert "\x1b[1;31mtarget outcome:\x1b[0m" in proc.stderr
+    assert "\x1b[33mverdict:\x1b[0m" in proc.stderr
+    assert "\x1b[33m[legacy-finder-contract]\x1b[0m" in proc.stderr
+
+
+def test_actionable_report_uses_red_compact_markers(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text(
+        "import importlib.machinery, sys, types\n"
+        "class ReplacingLoader:\n"
+        "    def create_module(self, spec):\n"
+        "        return None\n"
+        "    def exec_module(self, module):\n"
+        "        module.LOADED = True\n"
+        "class Finder:\n"
+        "    def __init__(self):\n"
+        "        self.loader = ReplacingLoader()\n"
+        "    def find_spec(self, fullname, path=None, target=None):\n"
+        "        if fullname != 'color_replacement':\n"
+        "            return None\n"
+        "        return importlib.machinery.ModuleSpec(fullname, self.loader, origin='color.ext')\n"
+        "finder = Finder()\n"
+        "sys.meta_path.insert(0, finder)\n"
+        "import color_replacement\n"
+        "first = color_replacement\n"
+        "spec = first.__spec__\n"
+        "second = types.ModuleType('color_replacement')\n"
+        "second.__spec__ = spec\n"
+        "second.__loader__ = spec.loader\n"
+        "sys.modules['color_replacement'] = second\n"
+        "spec.loader.exec_module(second)\n"
+        "sys.modules['color_replacement'] = first\n"
+    )
+
+    proc = run_cli("--deep-loaders", "--color", "always", str(script), cwd=tmp_path)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "\x1b[32mtarget outcome:\x1b[0m" in proc.stderr
+    assert "\x1b[1;31mverdict:\x1b[0m" in proc.stderr
+    assert "\x1b[1;31m[module-replacement]\x1b[0m" in proc.stderr
+
+
+def test_explicit_cli_color_overrides_environment_and_no_color(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("print('target ran')\n")
+    env = dict(os.environ)
+    env["METAPATHOLOGY_COLOR"] = "always"
+    env["NO_COLOR"] = "1"
+
+    configured = run_cli(str(script), cwd=tmp_path, env=env)
+    disabled = run_cli("--color", "never", str(script), cwd=tmp_path, env=env)
+
+    assert "\x1b[" in configured.stderr
+    assert "\x1b[" not in disabled.stderr
+
+
+def test_text_report_files_are_plain_in_auto_and_colored_when_forced(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("print('target ran')\n")
+    automatic_path = tmp_path / "automatic.txt"
+    forced_path = tmp_path / "forced.txt"
+
+    automatic = run_cli(
+        "--report",
+        str(automatic_path),
+        "--report-format",
+        "text",
+        str(script),
+        cwd=tmp_path,
+    )
+    forced = run_cli(
+        "--report",
+        str(forced_path),
+        "--report-format",
+        "text",
+        "--color",
+        "always",
+        str(script),
+        cwd=tmp_path,
+    )
+
+    assert automatic.returncode == 0, automatic.stderr
+    assert forced.returncode == 0, forced.stderr
+    automatic_report = next(tmp_path.glob("automatic.*.txt")).read_text(encoding="utf-8")
+    forced_report = next(tmp_path.glob("forced.*.txt")).read_text(encoding="utf-8")
+    assert "\x1b[" not in automatic_report
+    assert "\x1b[1;36m== metapathology report ==\x1b[0m" in forced_report
+
+
+def test_invalid_color_environment_falls_back_to_auto_and_is_reported(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("print('target ran')\n")
+    env = dict(os.environ)
+    env["METAPATHOLOGY_COLOR"] = "sometimes"
+
+    proc = run_cli(str(script), cwd=tmp_path, env=env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "\x1b[" not in proc.stderr
+    assert "environment_configuration.METAPATHOLOGY_COLOR" in proc.stderr
 
 
 def test_missing_script_fails_without_report(tmp_path: Path) -> None:

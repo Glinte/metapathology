@@ -55,6 +55,12 @@ _STANDARD_FINDER_IDS = frozenset((id(BuiltinImporter), id(FrozenImporter), id(Pa
 # Max claimed modules listed per finder in the attribution section.
 _MAX_LISTED_MODULES = 25
 _MAX_CACHE_CHANGES_PER_DIFF = 25
+_ANSI_RESET = "\x1b[0m"
+_ANSI_BOLD_CYAN = "\x1b[1;36m"
+_ANSI_BOLD_RED = "\x1b[1;31m"
+_ANSI_GREEN = "\x1b[32m"
+_ANSI_YELLOW = "\x1b[33m"
+_ANSI_CYAN = "\x1b[36m"
 # Loader type names shipped by CPython's import machinery (zipimport
 # included). Their inventory groups are summarized as counts in text; a class
 # merely named like one of these still shows up because any metadata
@@ -87,6 +93,7 @@ class _RenderContext:
     __slots__ = (
         "_base",
         "_base_prefix",
+        "color",
         "comparisons_by_id",
         "finder_ambiguous",
         "hook_ambiguous",
@@ -95,7 +102,8 @@ class _RenderContext:
         "routes_by_id",
     )
 
-    def __init__(self, document: ReportDocument) -> None:
+    def __init__(self, document: ReportDocument, *, color: bool) -> None:
+        self.color = color
         cwd = document.cwd
         if cwd:
             base = os.path.normcase(cwd).rstrip(os.sep)
@@ -177,6 +185,35 @@ class _RenderContext:
         """Per-line thread marker, elided when the whole capture is single-threaded."""
         return "" if self.only_thread is not None else f" [thread {thread_name}]"
 
+    def styled(self, text: str, ansi: str) -> str:
+        """Wrap one semantic token in ANSI escapes when color is enabled."""
+        return f"{ansi}{text}{_ANSI_RESET}" if self.color else text
+
+    def heading(self, text: str) -> str:
+        """Style a report or section heading."""
+        return self.styled(text, _ANSI_BOLD_CYAN)
+
+    def severity(self, text: str, severity: str) -> str:
+        """Style a compact marker according to finding severity."""
+        ansi = {
+            "actionable": _ANSI_BOLD_RED,
+            "warning": _ANSI_YELLOW,
+            "informational": _ANSI_CYAN,
+        }.get(severity, _ANSI_CYAN)
+        return self.styled(text, ansi)
+
+    def positive(self, text: str) -> str:
+        """Style a positive status marker."""
+        return self.styled(text, _ANSI_GREEN)
+
+    def negative(self, text: str) -> str:
+        """Style a failure or removal marker."""
+        return self.styled(text, _ANSI_BOLD_RED)
+
+    def warning(self, text: str) -> str:
+        """Style a warning or replacement marker."""
+        return self.styled(text, _ANSI_YELLOW)
+
 
 def _note_label(ids_by_label: dict[str, set[int]], reference: ImportObjectRef) -> None:
     """Record one displayed label/id pair for ambiguity detection."""
@@ -188,9 +225,9 @@ def _ref_label(reference: ImportObjectRef) -> str:
     return reference.type_name if reference.name is None else reference.name
 
 
-def render_lines(document: ReportDocument) -> list[str]:
+def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
     """Build the report body as a list of lines; the caller adds the trailing newline."""
-    context = _RenderContext(document)
+    context = _RenderContext(document, color=color)
     mutations = _events_of_type(document.events, MetaPathMutation)
     reassignments = _events_of_type(document.events, MetaPathReassignment)
     path_hook_mutations = _events_of_type(document.events, PathHooksMutation)
@@ -205,7 +242,9 @@ def render_lines(document: ReportDocument) -> list[str]:
     counts = {severity: 0 for severity in ("actionable", "warning", "informational")}
     for finding in document.findings:
         counts[finding.severity] = counts.get(finding.severity, 0) + 1
-    summary = ", ".join(f"{count} {severity}" for severity, count in counts.items() if count)
+    summary = ", ".join(
+        f"{count} {context.severity(severity, severity)}" for severity, count in counts.items() if count
+    )
     consumed_comparisons = {
         finding.route_comparison_id for finding in document.findings if finding.route_comparison_id is not None
     }
@@ -214,7 +253,10 @@ def render_lines(document: ReportDocument) -> list[str]:
         for comparison in document.route_comparisons
         if _routes_differ(comparison) and comparison.comparison_id not in consumed_comparisons
     )
-    lines.append(f"-- findings ({len(document.findings)}{': ' + summary if summary else ''}) --")
+    if summary:
+        lines.append(f"{context.heading(f'-- findings ({len(document.findings)}:')} {summary}{context.heading(') --')}")
+    else:
+        lines.append(context.heading(f"-- findings ({len(document.findings)}) --"))
     if not document.findings:
         module_count = 0 if document.modules_since_install is None else len(document.modules_since_install)
         if divergent or document.explanations:
@@ -225,7 +267,7 @@ def render_lines(document: ReportDocument) -> list[str]:
 
     if divergent:
         lines.append("")
-        lines.append(f"-- resolution route divergences ({len(divergent)}) --")
+        lines.append(context.heading(f"-- resolution route divergences ({len(divergent)}) --"))
         for comparison in divergent:
             lines.extend(_route_comparison_lines(comparison, context, mutations))
 
@@ -238,12 +280,12 @@ def render_lines(document: ReportDocument) -> list[str]:
 
     if calls:
         lines.append("")
-        lines.append("-- finder attribution (instrumented finders only) --")
+        lines.append(context.heading("-- finder attribution (instrumented finders only) --"))
         lines.extend(_attribution_lines(calls, context))
     else:
         empty_sections.append("find_spec activity on instrumented finders")
 
-    contract_lines = _finder_contract_lines(document.finder_contracts)
+    contract_lines = _finder_contract_lines(document.finder_contracts, context)
     if contract_lines:
         lines.append("")
         lines.extend(contract_lines)
@@ -262,7 +304,7 @@ def render_lines(document: ReportDocument) -> list[str]:
 
     if mutations:
         lines.append("")
-        lines.append(f"-- sys.meta_path mutations ({len(mutations)}) --")
+        lines.append(context.heading(f"-- sys.meta_path mutations ({len(mutations)}) --"))
         for mutation in mutations:
             lines.extend(_mutation_lines(mutation, context))
     else:
@@ -270,7 +312,7 @@ def render_lines(document: ReportDocument) -> list[str]:
 
     if reassignments:
         lines.append("")
-        lines.append(f"-- sys.meta_path reassignments ({len(reassignments)}) --")
+        lines.append(context.heading(f"-- sys.meta_path reassignments ({len(reassignments)}) --"))
         for reassignment in reassignments:
             lines.extend(_reassignment_lines(reassignment, context))
     else:
@@ -278,7 +320,7 @@ def render_lines(document: ReportDocument) -> list[str]:
 
     if path_hook_mutations:
         lines.append("")
-        lines.append(f"-- sys.path_hooks mutations ({len(path_hook_mutations)}) --")
+        lines.append(context.heading(f"-- sys.path_hooks mutations ({len(path_hook_mutations)}) --"))
         for mutation in path_hook_mutations:
             lines.extend(_path_hooks_mutation_lines(mutation, context))
     else:
@@ -286,7 +328,7 @@ def render_lines(document: ReportDocument) -> list[str]:
 
     if path_hook_reassignments:
         lines.append("")
-        lines.append(f"-- sys.path_hooks reassignments ({len(path_hook_reassignments)}) --")
+        lines.append(context.heading(f"-- sys.path_hooks reassignments ({len(path_hook_reassignments)}) --"))
         for reassignment in path_hook_reassignments:
             lines.extend(_path_hooks_reassignment_lines(reassignment, context))
     else:
@@ -294,7 +336,7 @@ def render_lines(document: ReportDocument) -> list[str]:
 
     if importer_cache_diffs:
         lines.append("")
-        lines.append(f"-- sys.path_importer_cache changes ({len(importer_cache_diffs)}) --")
+        lines.append(context.heading(f"-- sys.path_importer_cache changes ({len(importer_cache_diffs)}) --"))
         for diff in importer_cache_diffs:
             lines.extend(_importer_cache_diff_lines(diff, context))
     else:
@@ -303,7 +345,7 @@ def render_lines(document: ReportDocument) -> list[str]:
     error_count = len(errors) + len(document.report_errors)
     if error_count:
         lines.append("")
-        lines.append(f"-- internal errors ({error_count}) --")
+        lines.append(context.negative(f"-- internal errors ({error_count}) --"))
         lines.extend(_internal_error_line(error) for error in errors)
         lines.extend(f"during report in {error.where}: {error.exception_type_name}" for error in document.report_errors)
     else:
@@ -367,13 +409,15 @@ def _narrative_lines(document: ReportDocument, context: _RenderContext) -> list[
             block.extend("    " + line for line in _finding_lines(finding, context))
         else:
             block.extend(_finding_lines(finding, context))
-        block[0] = f"[{number}] {block[0]}"
+        block[0] = (
+            f"{context.severity(f'[{number}]', finding.severity)} {_style_leading_tag(block[0], finding.severity, context)}"
+        )
         if finding.signals:
             block.append(f"    corroborating signals: {', '.join(item.replace('_', ' ') for item in finding.signals)}")
         consequence = _WHY_IT_MATTERS.get(finding.kind)
         if consequence is not None:
             block.append(f"    why it matters: {consequence}")
-        block.append(f"    {_finding_confidence_line(finding)}")
+        block.append(f"    {_finding_confidence_line(finding, context)}")
         lines.extend(block)
 
     orphan_explanations = [
@@ -388,12 +432,44 @@ def _narrative_lines(document: ReportDocument, context: _RenderContext) -> list[
             explanation, context, explanations_by_id={item.explanation_id: item for item in document.explanations}
         )
         block[0] = f"[{number}] {block[0]}"
+        block[0] = _style_leading_tag(block[0], "warning", context, count=2)
         lines.extend(block)
 
     if informational:
-        lines.append(f"informational ({len(informational)}):")
-        lines.extend(f"    {_finding_lines(finding, context)[0]}" for finding in informational)
+        lines.append(f"{context.severity('informational', 'informational')} ({len(informational)}):")
+        lines.extend(
+            f"    {_style_leading_tag(_finding_lines(finding, context)[0], 'informational', context)}"
+            for finding in informational
+        )
     return lines
+
+
+def render_failure_lines(error_name: str, *, color: bool = False) -> list[str]:
+    """Render the minimal fallback report after document generation fails."""
+    if not color:
+        return ["== metapathology report ==", f"report generation failed: {error_name}"]
+    return [
+        f"{_ANSI_BOLD_CYAN}== metapathology report =={_ANSI_RESET}",
+        f"{_ANSI_BOLD_RED}report generation failed:{_ANSI_RESET} {error_name}",
+    ]
+
+
+def _style_leading_tag(line: str, severity: str, context: _RenderContext, count: int = 1) -> str:
+    """Style up to ``count`` leading bracketed markers without touching captured values."""
+    offset = 0
+    styled = line
+    for _ in range(count):
+        start = styled.find("[", offset)
+        if start < 0 or styled[offset:start].strip():
+            break
+        end = styled.find("]", start + 1)
+        if end < 0:
+            break
+        token = styled[start : end + 1]
+        replacement = context.severity(token, severity)
+        styled = styled[:start] + replacement + styled[end + 1 :]
+        offset = start + len(replacement)
+    return styled
 
 
 _MAX_UNRESOLVED_ATTEMPTS = 25
@@ -406,7 +482,7 @@ def _unresolved_import_lines(document: ReportDocument, context: _RenderContext) 
         return []
     missing = None if document.target_outcome is None else document.target_outcome.missing_module
     ordered = sorted(unresolved, key=lambda attempt: (attempt.fullname != missing, attempt.start_event_seq))
-    lines = [f"-- imports that started but produced no module ({len(unresolved)}) --"]
+    lines = [context.heading(f"-- imports that started but produced no module ({len(unresolved)}) --")]
     lines.append("Failed or abandoned optional imports are normal; entries matter when the target needed the module.")
     for attempt in ordered[:_MAX_UNRESOLVED_ATTEMPTS]:
         marker = " (the target's failed module)" if attempt.fullname == missing else ""
@@ -438,12 +514,13 @@ def _headline_finding_numbers(document: ReportDocument) -> dict[str, int]:
     }
 
 
-def _finding_confidence_line(finding: Finding) -> str:
+def _finding_confidence_line(finding: Finding, context: _RenderContext) -> str:
     """State severity, evidence level, and limitations as one prose sentence."""
     limitations = ", ".join(item.replace("_", " ") for item in finding.limitations)
     suffix = f"; limitations: {limitations}" if limitations else ""
     article = "an" if finding.severity == "actionable" else "a"
-    return f"this is {article} {finding.severity} finding based on {_humanize(finding.evidence_level)} evidence{suffix}"
+    severity = context.severity(finding.severity, finding.severity)
+    return f"this is {article} {severity} finding based on {_humanize(finding.evidence_level)} evidence{suffix}"
 
 
 def _explanation_lines(
@@ -539,12 +616,13 @@ def _deep_effective_module_state(call: DeepDiagnosticCall) -> ModuleCacheState |
 
 def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
     """Summarize mechanism status and interpreter state, collapsing unchanged snapshots."""
-    lines = ["== metapathology report =="]
-    lines.extend(_verdict_lines(document))
+    lines = [context.heading("== metapathology report ==")]
+    lines.extend(_verdict_lines(document, context))
     lines.append("report guide: https://glinte.github.io/metapathology/report/")
     lines.append(_monitoring_line(document))
     if document.deep_diagnostics:
-        lines.append("WARNING: opt-in deep diagnostics replace foreign callables and may perturb identity checks")
+        warning = context.warning("WARNING:")
+        lines.append(f"{warning} opt-in deep diagnostics replace foreign callables and may perturb identity checks")
         lines.append(f"deep mechanisms enabled: {', '.join(document.deep_diagnostics)}")
     if document.deep_import_outcomes_status != "disabled":
         lines.append(f"deep import outcome coverage: {_humanize(document.deep_import_outcomes_status)}")
@@ -612,7 +690,7 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
     return lines
 
 
-def _verdict_lines(document: ReportDocument) -> list[str]:
+def _verdict_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
     """Lead with the target's outcome and a one-sentence reading of the evidence."""
     lines: list[str] = []
     outcome = document.target_outcome
@@ -631,11 +709,13 @@ def _verdict_lines(document: ReportDocument) -> list[str]:
             attempt.fullname == outcome.missing_module for attempt in unresolved
         ):
             line += "; the failed module appears under unresolved imports below"
-        lines.append(line)
+        failed = outcome.kind == "raised" or (outcome.exit_code is not None and outcome.exit_code != 0)
+        prefix = context.negative("target outcome:") if failed else context.positive("target outcome:")
+        lines.append(prefix + line[len("target outcome:") :])
 
     summary = document.summary
     counts = [
-        f"{count} {severity}"
+        f"{count} {context.severity(severity, severity)}"
         for severity, count in (
             ("actionable", summary.actionable),
             ("warning", summary.warning),
@@ -653,14 +733,22 @@ def _verdict_lines(document: ReportDocument) -> list[str]:
     top = next((finding for finding in document.findings if finding.finding_id == summary.top_finding_id), None)
     if top is not None:
         tag = top.kind.replace("_", "-")
-        lines.append(f"verdict: {breakdown}; most severe is [{tag}] '{top.module}' — see [{numbers[top.finding_id]}]")
+        prefix = context.severity("verdict:", top.severity)
+        marker = context.severity(f"[{tag}]", top.severity)
+        number = context.severity(f"[{numbers[top.finding_id]}]", top.severity)
+        lines.append(f"{prefix} {breakdown}; most severe is {marker} '{top.module}' — see {number}")
     elif counts:
-        lines.append(f"verdict: {breakdown}")
+        severity = "warning" if summary.warning else "informational"
+        lines.append(f"{context.severity('verdict:', severity)} {breakdown}")
     elif any(_routes_differ(comparison) for comparison in document.route_comparisons):
-        lines.append("verdict: no findings; neutral resolution route divergences were recorded")
+        lines.append(
+            f"{context.severity('verdict:', 'informational')} no findings; neutral resolution route divergences were recorded"
+        )
     else:
         module_count = 0 if document.modules_since_install is None else len(document.modules_since_install)
-        lines.append(f"verdict: no import-hook interference detected across {module_count} monitored imports")
+        lines.append(
+            f"{context.positive('verdict:')} no import-hook interference detected across {module_count} monitored imports"
+        )
     return lines
 
 
@@ -723,7 +811,7 @@ def _contract_category(contract: FinderContract) -> str:
     return "legacy-only" if legacy == "callable" else "protocol-less"
 
 
-def _finder_contract_lines(contracts: tuple[FinderContract, ...]) -> list[str]:
+def _finder_contract_lines(contracts: tuple[FinderContract, ...], context: _RenderContext) -> list[str]:
     """Render compatibility risks first, with a fixed text-output bound."""
     risky = [
         contract
@@ -735,7 +823,7 @@ def _finder_contract_lines(contracts: tuple[FinderContract, ...]) -> list[str]:
     if not risky:
         return []
     shown = (risky + standard)[:_FINDER_CONTRACT_DISPLAY_LIMIT]
-    lines = [f"-- finder API contracts ({len(contracts)} observed entries) --"]
+    lines = [context.heading(f"-- finder API contracts ({len(contracts)} observed entries) --")]
     if not shown:
         lines.append("(no compatibility risks or standard class entries observed)")
         return lines
@@ -765,7 +853,7 @@ def _finder_contract_lines(contracts: tuple[FinderContract, ...]) -> list[str]:
 
 def _standard_resolution_lines(resolutions: tuple[StandardResolution, ...], context: _RenderContext) -> list[str]:
     """Render a bounded projection without hiding evidence provenance."""
-    lines = [f"-- standard resolution outcomes ({len(resolutions)}) --"]
+    lines = [context.heading(f"-- standard resolution outcomes ({len(resolutions)}) --")]
     for resolution in resolutions[:_STANDARD_RESOLUTION_DISPLAY_LIMIT]:
         origin = "None" if resolution.origin is None else context.quoted_path(resolution.origin)
         line = (
@@ -790,7 +878,7 @@ def _standard_resolution_lines(resolutions: tuple[StandardResolution, ...], cont
 def _timeline_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
     """Render the timeline with shared context hoisted into a preamble."""
     events = document.events
-    lines = [f"-- chronological evidence timeline ({len(events)}) --"]
+    lines = [context.heading(f"-- chronological evidence timeline ({len(events)}) --")]
     lines.append("Events appear in capture order; concurrent events have no global wall-clock order.")
     if context.only_thread is not None:
         lines.append(f"All events on thread {context.only_thread}.")
@@ -998,11 +1086,11 @@ def _timeline_line(event: MonitorEvent, context: _RenderContext) -> str:
     if isinstance(event, ImporterCacheDiff):
         deltas: list[str] = []
         if event.added:
-            deltas.append(f"+{len(event.added)}")
+            deltas.append(context.positive(f"+{len(event.added)}"))
         if event.removed:
-            deltas.append(f"-{len(event.removed)}")
+            deltas.append(context.negative(f"-{len(event.removed)}"))
         if event.replaced:
-            deltas.append(f"~{len(event.replaced)}")
+            deltas.append(context.warning(f"~{len(event.replaced)}"))
         delta = " ".join(deltas) if deltas else "(no string-key changes)"
         return (
             f"#{event.seq} importer cache diff at {_humanize(event.observation)}: {delta}"
@@ -1010,7 +1098,7 @@ def _timeline_line(event: MonitorEvent, context: _RenderContext) -> str:
         )
     if isinstance(event, MetaPathMutation):
         return (
-            f"#{event.seq} sys.meta_path {event.op} {_timeline_delta(event.added, event.removed)}"
+            f"#{event.seq} sys.meta_path {event.op} {_timeline_delta(event.added, event.removed, context)}"
             f"{context.thread_suffix(event.thread_name)}"
         )
     if isinstance(event, MetaPathReassignment):
@@ -1020,7 +1108,8 @@ def _timeline_line(event: MonitorEvent, context: _RenderContext) -> str:
         )
     if isinstance(event, PathHooksMutation):
         return (
-            f"#{event.seq} sys.path_hooks {event.op}: +{len(event.added)} -{len(event.removed)}"
+            f"#{event.seq} sys.path_hooks {event.op}: "
+            f"{context.positive(f'+{len(event.added)}')} {context.negative(f'-{len(event.removed)}')}"
             f"{context.thread_suffix(event.thread_name)}"
         )
     if isinstance(event, PathHooksReassignment):
@@ -1031,13 +1120,13 @@ def _timeline_line(event: MonitorEvent, context: _RenderContext) -> str:
     return _internal_error_line(event)
 
 
-def _timeline_delta(added: tuple[str, ...], removed: tuple[str, ...]) -> str:
+def _timeline_delta(added: tuple[str, ...], removed: tuple[str, ...], context: _RenderContext) -> str:
     """Format a compact meta-path delta."""
     parts: list[str] = []
     if added:
-        parts.append("+" + _names_line(added))
+        parts.append(context.positive("+" + _names_line(added)))
     if removed:
-        parts.append("-" + _names_line(removed))
+        parts.append(context.negative("-" + _names_line(removed)))
     return " ".join(parts) if parts else "(order change)"
 
 
@@ -1066,7 +1155,7 @@ def _loader_inventory_lines(document: ReportDocument, context: _RenderContext) -
     """
     inventory = document.loader_inventory
     if not inventory.available:
-        return ["-- post-hoc loader inventory --", "(sys.modules snapshot unavailable)"]
+        return [context.heading("-- post-hoc loader inventory --"), "(sys.modules snapshot unavailable)"]
     groups: dict[str | None, list[ModuleMetadata]] = {}
     for entry in inventory.entries:
         if entry.inspection != "available":
@@ -1092,7 +1181,9 @@ def _loader_inventory_lines(document: ReportDocument, context: _RenderContext) -
     )
     if not custom and not disagreements and not unavailable and not inventory.non_string_keys:
         return []
-    lines = [f"-- relevant post-hoc loader inventory ({len(inventory.entries)} total entries in JSON) --"]
+    lines = [
+        context.heading(f"-- relevant post-hoc loader inventory ({len(inventory.entries)} total entries in JSON) --")
+    ]
     lines.append("Text shows claimed custom loaders and metadata problems; attribution remains report-time.")
     for label in custom:
         entries = groups[label]

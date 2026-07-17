@@ -86,6 +86,7 @@ _STANDARD_CLASS_FINDERS = (BuiltinImporter, FrozenImporter, PathFinder)
 _STANDARD_CLASS_FINDER_REASON = "standard CPython class finder; expected and deliberately left unchanged"
 _REPORT_DESTINATION_ENV = "METAPATHOLOGY_REPORT"
 _REPORT_FORMAT_ENV = "METAPATHOLOGY_REPORT_FORMAT"
+_REPORT_COLOR_ENV = "METAPATHOLOGY_COLOR"
 _MONITOR_PATH_HOOKS_ENV = "METAPATHOLOGY_MONITOR_PATH_HOOKS"
 _MONITOR_IMPORTER_CACHE_ENV = "METAPATHOLOGY_MONITOR_IMPORTER_CACHE"
 _DEEP_ENV = "METAPATHOLOGY_DEEP"
@@ -360,6 +361,7 @@ class Monitor:
         # passed to write_report() remain unchanged.
         self._report_destination: str | None = None
         self._report_format: Literal["text", "json"] = "text"
+        self._report_color: Literal["auto", "always", "never"] = "auto"
         # Set by the generated .pth activation path. The first activation wins
         # because a later site directory cannot move the evidence cutoff earlier.
         self._early_site_bootstrap: _EarlySiteBootstrapState | None = None
@@ -598,6 +600,7 @@ class Monitor:
         report_at_exit: bool = True,
         report_destination: "str | PathLike[str] | None" = None,
         report_format: "Literal['text', 'json'] | None" = None,
+        report_color: "Literal['auto', 'always', 'never'] | None" = None,
         monitor_path_hooks: bool | None = None,
         monitor_importer_cache: bool | None = None,
         deep: bool | None = None,
@@ -619,6 +622,9 @@ class Monitor:
             report_format: ``"text"`` or ``"json"``. When omitted, consult
                 ``METAPATHOLOGY_REPORT_FORMAT`` and default according to the
                 destination (text for stderr, JSON for a file).
+            report_color: ``"auto"``, ``"always"``, or ``"never"`` for
+                automatic text reports. When omitted, consult
+                ``METAPATHOLOGY_COLOR`` and default to ``"auto"``.
             monitor_path_hooks: Instrument and observe ``sys.path_hooks``.
                 A later true value enables the mechanism; false never disables
                 an already-active mechanism.
@@ -643,9 +649,9 @@ class Monitor:
             # Validate explicit output configuration before touching import
             # state so a caller error cannot leave a partially installed monitor.
             if not was_enabled:
-                self._configure_report(report_destination, report_format, use_environment=True)
-            elif report_destination is not None or report_format is not None:
-                self._configure_report(report_destination, report_format, use_environment=False)
+                self._configure_report(report_destination, report_format, report_color, use_environment=True)
+            elif report_destination is not None or report_format is not None or report_color is not None:
+                self._configure_report(report_destination, report_format, report_color, use_environment=False)
             if not self._enabled:
                 self._enabled = True
                 self._baseline_modules = frozenset(sys.modules)
@@ -709,6 +715,7 @@ class Monitor:
         self,
         destination: "str | PathLike[str] | None",
         format: "Literal['text', 'json'] | None",
+        color: "Literal['auto', 'always', 'never'] | None",
         *,
         use_environment: bool,
     ) -> None:
@@ -733,13 +740,30 @@ class Monitor:
         if resolved_format is None:
             resolved_format = "json" if resolved_destination is not None else "text"
         try:
-            self._report_format = _report.validate_format(resolved_format)
+            validated_format = _report.validate_format(resolved_format)
         except ValueError as exc:
             if not from_environment:
                 raise
-            self._report_format = "json" if resolved_destination is not None else "text"
+            validated_format: Literal["text", "json"] = "json" if resolved_destination is not None else "text"
             self._record_internal_error("report_configuration", exc)
+
+        resolved_color: str | None = color
+        color_from_environment = False
+        if resolved_color is None and use_environment:
+            resolved_color = os.environ.get(_REPORT_COLOR_ENV) or None
+            color_from_environment = resolved_color is not None
+        if resolved_color is None:
+            resolved_color = "auto" if use_environment else self._report_color
+        try:
+            validated_color = _report.validate_color(resolved_color)
+        except ValueError as exc:
+            if not color_from_environment:
+                raise
+            validated_color: Literal["auto", "always", "never"] = "auto"
+            self._record_internal_error(f"environment_configuration.{_REPORT_COLOR_ENV}", exc)
         self._report_destination = resolved_destination
+        self._report_format = validated_format
+        self._report_color = validated_color
 
     def _enable_path_hooks(self) -> None:
         """Install the T1 list around the current ``sys.path_hooks`` contents."""
@@ -1931,9 +1955,10 @@ class Monitor:
         with self._reinstall_lock:
             destination = self._report_destination
             format = self._report_format
+            color = self._report_color
         if destination is not None:
             destination = _pid_destination(destination, os.getpid())
-        _report.write_report(self, destination, format=format)
+        _report.write_report(self, destination, format=format, color=color)
 
 
 class _InstrumentedImportList(list["_ImportListItemT"]):
@@ -2206,6 +2231,7 @@ def install(
     report_at_exit: bool = True,
     report_destination: "str | PathLike[str] | None" = None,
     report_format: "Literal['text', 'json'] | None" = None,
+    report_color: "Literal['auto', 'always', 'never'] | None" = None,
     monitor_path_hooks: bool | None = None,
     monitor_importer_cache: bool | None = None,
     deep: bool | None = None,
@@ -2225,6 +2251,8 @@ def install(
             environment and then default to stderr.
         report_format: ``"text"`` or ``"json"``; the destination determines
             the default when neither the API nor environment configures it.
+        report_color: ``"auto"``, ``"always"``, or ``"never"`` for the
+            automatic text report; None consults ``METAPATHOLOGY_COLOR``.
         monitor_path_hooks: Observe ``sys.path_hooks`` mutations and direct
             reassignment. A later true value enables this mechanism.
         monitor_importer_cache: Passively observe
@@ -2245,6 +2273,7 @@ def install(
         report_at_exit=report_at_exit,
         report_destination=report_destination,
         report_format=report_format,
+        report_color=report_color,
         monitor_path_hooks=monitor_path_hooks,
         monitor_importer_cache=monitor_importer_cache,
         deep=deep,
@@ -2273,25 +2302,36 @@ def write_report(
     destination: "TextIO | str | PathLike[str] | None" = None,
     *,
     format: "Literal['text', 'json']" = "text",
+    color: "Literal['auto', 'always', 'never']" = "auto",
 ) -> None:
     """Write a text or JSON report to stderr, a stream, or an atomic file.
+
+    Args:
+        destination: Output stream or exact file path; None selects stderr.
+        format: Text or stable JSON output.
+        color: ANSI color policy for text output. Auto detects a TTY and
+            honors ``NO_COLOR`` and ``TERM=dumb``.
 
     Raises:
         RuntimeError: If :func:`install` was never called.
         ValueError: If ``format`` is unsupported.
         OSError: If a file or stream write fails.
     """
-    _report.write_report(_require_monitor(), destination, format=format)
+    _report.write_report(_require_monitor(), destination, format=format, color=color)
 
 
-def render_report(*, format: "Literal['text', 'json']" = "text") -> str:
+def render_report(*, format: "Literal['text', 'json']" = "text", color: bool = False) -> str:
     """Return the diagnostic report as text or versioned JSON.
+
+    Args:
+        format: Text or stable JSON output.
+        color: Include ANSI styling in text output. JSON is never styled.
 
     Raises:
         RuntimeError: If :func:`install` was never called.
         ValueError: If ``format`` is unsupported.
     """
-    return _report.render_report(_require_monitor(), format=format)
+    return _report.render_report(_require_monitor(), format=format, color=color)
 
 
 def _pid_destination(path: str, pid: int) -> str:

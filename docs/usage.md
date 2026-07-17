@@ -54,6 +54,7 @@ Put metapathology options before the script or `-m` target:
 ```console
 python -m metapathology --report diagnostics.json path/to/script.py
 python -m metapathology --report diagnostics.txt --report-format text -m package.module
+python -m metapathology --color always path/to/script.py
 python -m metapathology --no-path-hook-monitoring path/to/script.py
 python -m metapathology --no-importer-cache-monitoring path/to/script.py
 python -m metapathology --deep-path-hooks --deep-path-entry-finders --deep-loaders path/to/script.py
@@ -64,6 +65,13 @@ present; otherwise the PID is inserted before the final suffix. For example,
 `diagnostics.json` becomes `diagnostics.1234.json`. The parent directory must
 already exist. Each process writes one selected format, without a collector,
 background worker, or retry loop.
+
+Text reports use `--color auto` by default. Auto mode emits ANSI colors only
+for a TTY destination, and disables them when `NO_COLOR` is nonempty or
+`TERM=dumb`; redirected output and report files are therefore plain. Use
+`--color always` to preserve color through a pipe or in a text file, or
+`--color never` to suppress it. Color supplements the existing words and
+markers and does not change report meaning.
 
 Path-hook monitoring is enabled by default. The disable option leaves the
 exact `sys.path_hooks` list object untouched; options after the target are
@@ -103,6 +111,7 @@ calling `install()`:
 ```console
 METAPATHOLOGY_REPORT=diagnostics-{pid}.json
 METAPATHOLOGY_REPORT_FORMAT=json
+METAPATHOLOGY_COLOR=auto
 METAPATHOLOGY_MONITOR_PATH_HOOKS=true
 METAPATHOLOGY_MONITOR_IMPORTER_CACHE=true
 METAPATHOLOGY_DEEP=false
@@ -116,6 +125,9 @@ Individual deep variables are `METAPATHOLOGY_DEEP_PATH_HOOKS`,
 `METAPATHOLOGY_DEEP_PATH_ENTRY_FINDERS`, `METAPATHOLOGY_DEEP_LOADERS`, and
 `METAPATHOLOGY_DEEP_IMPORT_OUTCOMES`. They override `METAPATHOLOGY_DEEP`.
 Boolean values accept `1/0`, `true/false`, `yes/no`, and `on/off`.
+`METAPATHOLOGY_COLOR` instead accepts `auto`, `always`, or `never`. Explicit
+CLI or `report_color=` values take precedence; explicit `always` also overrides
+`NO_COLOR` and `TERM=dumb`.
 
 ## Observe later `.pth` files
 
@@ -193,7 +205,7 @@ monitor = metapathology.install(report_at_exit=False)
 try:
     import package_under_investigation
 finally:
-    metapathology.write_report(sys.stdout)
+    metapathology.write_report(sys.stdout, color="auto")
     metapathology.uninstall()
 ```
 
@@ -208,6 +220,8 @@ machine-readable report string, or inspect the [structured event
 records](api.md#event-records)
 returned by `monitor.events()`. The returned event list is a snapshot;
 changing it does not alter the monitor.
+`render_report(color=True)` returns ANSI-styled text; its default is plain
+because a returned string has no output destination for auto detection.
 
 Calling `write_report()` or `render_report()` before the first `install()` raises
 `RuntimeError`. See the [Library API](api.md) for the complete public surface

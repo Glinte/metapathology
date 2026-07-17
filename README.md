@@ -43,14 +43,19 @@ Primary: run your program under observation, no code changes needed —
 $ python -m metapathology myscript.py --my-args
 $ python -m metapathology -m pytest tests/
 $ python -m metapathology --report diagnostic.json myscript.py
+$ python -m metapathology --color always myscript.py
 $ python -m metapathology --no-path-hook-monitoring myscript.py
 $ python -m metapathology --no-importer-cache-monitoring myscript.py
 ```
 
 A text report is printed to standard error by default. `--report PATH` writes
 an atomic file instead; files default to JSON, or select text with
-`--report-format text`. An installed `metapathology` command provides a shorter
-equivalent:
+`--report-format text`. Text color defaults to `auto`: ANSI colors are used for
+TTY output except when `NO_COLOR` is nonempty or `TERM=dumb`, and redirected
+output and files remain plain. Use `--color always` or `--color never` to
+override detection. `METAPATHOLOGY_COLOR=auto|always|never` configures automatic
+reports when no CLI or API value is supplied. An installed `metapathology`
+command provides a shorter equivalent:
 
 ```console
 $ metapathology myscript.py --my-args
@@ -180,9 +185,9 @@ events remain available after uninstalling.
 
 For integration with another diagnostic or test harness:
 
-- `metapathology.render_report(format="text")` returns text or stable,
-  schema-versioned JSON as a string;
-- `metapathology.write_report(destination=None, format="text")` writes to
+- `metapathology.render_report(format="text", color=False)` returns plain text,
+  explicitly colored text, or stable schema-versioned JSON as a string;
+- `metapathology.write_report(destination=None, format="text", color="auto")` writes to
   standard error, a text stream, or an atomic file path;
 - `metapathology.get_monitor()` returns the process-wide monitor, or `None`
   before the first call to `install()`; and

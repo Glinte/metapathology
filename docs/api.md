@@ -18,7 +18,7 @@ fail-open startup files described in the [frozen application guide](frozen.md)
 over calling this function directly. Direct calls propagate invalid integration
 and installation errors to the application.
 
-### `install(*, report_at_exit=True, report_destination=None, report_format=None, monitor_path_hooks=None, monitor_importer_cache=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None) -> Monitor`
+### `install(*, report_at_exit=True, report_destination=None, report_format=None, report_color=None, monitor_path_hooks=None, monitor_importer_cache=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None) -> Monitor`
 
 Installs the process-wide monitor and returns it. Repeated calls return and
 enable the same monitor. Only activity after installation can be observed.
@@ -28,6 +28,10 @@ otherwise `METAPATHOLOGY_REPORT` is consulted before defaulting to standard
 error. `report_format` accepts `"text"` or `"json"`; API values override
 `METAPATHOLOGY_REPORT_FORMAT`, and files default to JSON while standard error
 defaults to text.
+`report_color` accepts `"auto"`, `"always"`, or `"never"` for automatic text
+reports. API values override `METAPATHOLOGY_COLOR`; the default `"auto"` colors
+TTY destinations unless `NO_COLOR` is nonempty or `TERM=dumb`. JSON never
+contains ANSI escapes.
 
 `monitor_path_hooks` controls path-hook observation and defaults to true. A later
 true value enables it if initially disabled; false does not disable an active
@@ -70,22 +74,25 @@ no-op.
 Returns the process-wide monitor, or `None` if `install()` has never been
 called.
 
-### `write_report(destination=None, *, format="text") -> None`
+### `write_report(destination=None, *, format="text", color="auto") -> None`
 
 Writes the current report to standard error, a supplied text stream, or a
 string/path-like file destination. Paths are exact for explicit calls and are
 written through a same-directory temporary file plus `os.replace()`. Explicit
 I/O failures are recorded as `InternalError` and re-raised. Raises
 `RuntimeError` before the first installation and `ValueError` for an unknown
-format.
+format or color mode. In `"auto"`, file paths and non-TTY streams remain plain;
+`"always"` deliberately permits ANSI escapes in files.
 
-### `render_report(*, format="text") -> str`
+### `render_report(*, format="text", color=False) -> str`
 
 Returns text or JSON, including its trailing newline. JSON uses the stable
 `metapathology.report` schema version 1.0. The bundled
 `metapathology/report.schema.json` file defines its language-neutral shape;
 `metapathology.ReportJSON` and `metapathology.ReportStatus` expose the Python
 typing contract without eagerly importing the reporting implementation.
+Returned text is plain by default because it has no destination to inspect;
+pass `color=True` for ANSI styling. The flag has no effect on JSON.
 Raises `RuntimeError` before the first installation and `ValueError` for an
 unknown format. Ordinary generation failures degrade to a valid failure
 report rather than propagating.
