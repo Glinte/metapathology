@@ -215,18 +215,19 @@ and labels the result `inferred`. With `--deep`, CPython's aggregate
 report distinguishes built-in, frozen, source, bytecode, extension, zip, and
 namespace outcomes and names later meta-path finders made unreachable by an
 earlier standard result.
-The suspicious-findings section uses these labels:
+The resolution-route section compares each captured custom claim with an
+independent report-time standard-path probe. It reports status, loader, origin,
+package status, cached path, and namespace-location differences without
+declaring either route correct. The probe calls `PathFinder` with the captured
+search path, but uses report-time path-hook, importer-cache, filesystem, and
+finder state. It also skips any intervening meta-path finders. It therefore
+does **not** predict which finder would win if the captured finder were absent.
 
-- `[loader-displacement]` means a custom claim and the report-time live
-  `PathFinder` replay select different loader types.
-- `[unfindable]` means a custom finder claimed a source module that the current
-  live `PathFinder` replay cannot find at all. This is a stronger form of
-  bypass.
-- `[namespace-truncation]` means a custom namespace claim omitted one or more
-  locations found by the current live `PathFinder` replay.
-- `[package-displacement]` and `[origin-displacement]` identify package/module
-  or concrete-origin differences; `[spec-difference]` covers other semantic
-  spec changes such as reordered or extended package paths.
+Raw route differences are not findings. A narrower captured namespace route
+becomes `[namespace-truncation]` only when opt-in deep evidence captures an
+exact failed descendant import whose candidate exists under a location found
+only by the standard path probe. Other finding labels include:
+
 - `[no-spec]` means a new `sys.modules` entry has neither a `__spec__` nor a
   recorded finder claim. It was probably created manually or loaded through
   an `exec_module()`-style path that is invisible to meta-path finders.
@@ -244,22 +245,18 @@ The suspicious-findings section uses these labels:
   `find_module` but no callable `find_spec`.
 - `[path-hook-shadow]` means distinct captured path-hook boundaries accepted
   the same path across resolution states.
-- `[frozen-source-conflict]` is the loader-displacement case where a source
-  claim differs from a frozen or archive loader.
 - `[failed-after-mutation]` requires an exact opt-in failed import completion
   after a retained mutation. Mere absence from `sys.modules` never emits it.
 
-Each claim produces at most one primary finding. Meta-path short circuits,
-relevant importer-cache changes, and less-specific loader differences appear
-as corroborating signals. Findings are tiered as `actionable`, `warning`, or
-`informational`; recognized editable-install redirection is informational
-unless it loses namespace/package behavior.
+Meta-path short circuits and relevant importer-cache changes remain route or
+finding evidence rather than standalone verdicts. Findings are tiered as
+`actionable`, `warning`, or `informational`.
 
-These are diagnostic leads, not necessarily defects. Findings label the current live
-replay separately from historical structural evidence: the latter compares
-recorded path-hook and importer-cache identities between installation and
-reporting without calling historical foreign finders. Neither reconstructs the
-exact state at import time. The
+These are diagnostic leads, not necessarily defects. Route records label a
+report-time live probe separately from historical structural evidence: the
+latter compares recorded path-hook and importer-cache identities between
+installation and reporting without calling historical foreign finders.
+Neither reconstructs the exact state at import time. The
 [report guide](https://glinte.github.io/metapathology/report/) explains every
 section and finding category.
 
@@ -283,6 +280,13 @@ resolution start also retains an `ImportAuditStart`; imports already present
 in `sys.modules` remain cache hits and create no new records. The published reference matrix predates
 audit-start retention and is labeled as a pre-T3 baseline in the performance
 guide.
+
+Report-time route analysis retains two routes and one comparison for every
+reported custom winner and performs one synchronous standard-path probe for
+each. It has no fixed cap, silent dropping, retries, queue, or background
+worker; its cost grows with the number of custom-claimed modules present at
+report time. JSON exposes this policy as the `resolution_route_analysis`
+capture mechanism.
 
 See [limitations and resource behavior](https://glinte.github.io/metapathology/limitations/)
 and the reproducible [speed and memory benchmarks](https://glinte.github.io/metapathology/performance/)
@@ -349,13 +353,13 @@ for the full protocol.
 The standard `BuiltinImporter`, `FrozenImporter`, and `PathFinder` entries are
 classes shared by CPython, so metapathology deliberately leaves them unwrapped.
 
-At exit, the report compares the recorded result with a current live
-`PathFinder.find_spec()` replay over the search path captured with the claim.
-If `PathFinder` cannot find the module or would use a different kind of loader,
-the report notes that the normal `sys.path_hooks` route was skipped. It also
+At exit, the report represents the recorded result as a captured resolution
+route and compares it with an independent `PathFinder.find_spec()` standard
+path probe over the search path captured with the claim. The comparison
+preserves not-found and semantic differences as neutral evidence. It also
 compares install and report-time path-hook order and relevant importer-cache
-identities as historical structural evidence; those objects are never called
-by that comparison.
+identities as historical structural evidence; those historical objects are
+never called by that comparison.
 
 ## Caveats
 

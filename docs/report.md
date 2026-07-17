@@ -20,14 +20,16 @@ file output all use the same cutoff-based report document as the human
 renderer. The current experimental schema is identified by:
 
 ```json
-{"name": "metapathology.report", "major": 0, "minor": 17}
+{"name": "metapathology.report", "major": 0, "minor": 19}
 ```
 
-Its top-level sections are `tool`, `process`, `capture`, `snapshots`, `loader_inventory`,
-`timeline`, `findings`, and `diagnostics`. Timeline events retain their shared
-sequence number and receive an `event:<seq>` identifier. Findings contain
-structured claim and replay evidence rather than requiring consumers to parse
-the human wording.
+Its top-level sections include `tool`, `process`, `capture`, `snapshots`,
+`loader_inventory`, `import_attempts`, `standard_resolutions`,
+`resolution_routes`, `route_comparisons`, `timeline`, `findings`,
+`explanations`, and `diagnostics`. Timeline events retain their shared sequence
+number and receive an `event:<seq>` identifier. Findings reference
+document-scoped routes and comparisons rather than duplicating probe evidence
+or requiring consumers to parse human wording.
 
 Schema 0.x is intentionally allowed to change as the remaining snapshot,
 timeline, inventory, comparison, and finding models are introduced. A
@@ -109,8 +111,9 @@ outside the event window; other site directories may also have run first.
 "standard CPython finders left unwrapped (expected)." They handle built-in,
 frozen, and path-based imports respectively. They are class objects shared by
 the interpreter, so metapathology deliberately does not modify them. This is
-normal and does not indicate degraded installation. The report later uses a
-fresh `PathFinder` call when checking suspicious custom-finder claims.
+normal and does not indicate degraded installation. The report may later use a
+fresh `PathFinder` call for an independent standard-path probe of a captured
+custom claim.
 
 ## Standard resolution outcomes
 
@@ -132,8 +135,8 @@ The header and JSON capture mechanisms report whether aggregate capture is
 active, unsupported on the running CPython, or unavailable because another
 profiler was already installed. In either unavailable case, the report keeps
 the conservative inference rather than replacing or proxying `PathFinder`.
-Live `PathFinder` replay remains separately labeled report-time
-counterfactual evidence and never upgrades attribution.
+The independent standard-path probe remains separately labeled report-time
+evidence and never upgrades attribution or predicts an alternative winner.
 
 Any nonstandard entries that could not be wrapped appear separately under
 "other finders observed but not instrumented." Their calls are not directly
@@ -242,28 +245,44 @@ cannot, and third-party code that directly iterates `sys.meta_path` may require
 encountered a descriptor, unusual dictionary, or inspection error; the report
 does not resolve it by executing foreign code.
 
+## Resolution routes
+
+Each captured custom claim produces a `captured_claim` route. Reporting may
+also produce an independent `standard_path_probe` route by calling
+[`PathFinder.find_spec()`][path-finder] with the captured search path and an
+exact live reload target when one remains available.
+
+Route comparisons preserve these symmetric mechanics:
+
+- found, not-found, failed, or target-unavailable status;
+- loader type, origin, cached path, and package/module status;
+- search locations present only in either route; and
+- search-location reordering.
+
+The probe has `evidence_level=live_probe`, `state_phase=report`, and
+`predicts_alternative_winner=false`. It uses report-time path-hook,
+importer-cache, filesystem, and finder state. It also skips intervening custom
+meta-path finders. Text therefore calls it an independent standard path probe,
+never the finder that "would have won."
+
+Structural evidence next to a comparison is identity-only: it says whether
+`sys.path_hooks` or relevant importer-cache entries changed between retained
+snapshots. It does not reconstruct the import-time cache or invoke historical
+foreign objects.
+
 ## Suspicious findings
 
-Each claim produces at most one primary finding. The most specific supported
-mechanism wins; meta-path short circuits, relevant importer-cache changes, and
-less-specific loader differences remain nested corroborating signals. Findings
-are tiered as `actionable`, `warning`, or `informational`. Recognized editable
-redirection is informational unless namespace or package behavior is lost.
+Raw status, loader, origin, package, cached-path, and location differences are
+not findings. They remain visible in the resolution-route section. A route
+difference is promoted only when an observed effect corroborates a specific
+mechanism.
 
 These findings are leads, not verdicts:
 
-- `[loader-displacement]` — a custom claim and the live
-  [`PathFinder`][path-finder] replay select different loader types.
-- `[unfindable]` — a custom finder claimed a source module that the replay
-  cannot find through the standard path machinery at all. This is the stronger
-  bypass signal.
-- `[namespace-truncation]` — both claims describe namespace packages, but the
-  custom claim omits locations returned by standard path resolution.
-- `[package-displacement]` — package-versus-module status differs.
-- `[origin-displacement]` — both resolutions find concrete modules at
-  different origins.
-- `[spec-difference]` — another comparable spec field differs, such as cached
-  path or package-path ordering/extension.
+- `[namespace-truncation]` — an exact opt-in deep import completion captured a
+  failed descendant after a custom namespace claim, and the standard path
+  route contains a candidate location absent from the captured route. The
+  finding references both routes and their comparison.
 - `[no-spec]` — a new `sys.modules` entry has no
   [`__spec__`][module-spec] and no recorded finder claim. It was likely
   created manually or loaded through a route invisible to meta-path finders.
@@ -280,8 +299,6 @@ These findings are leads, not verdicts:
 - `[path-hook-shadow]` — distinct opt-in path-hook boundaries accepted the
   same path across recorded resolution states. This is structural evidence;
   it does not claim both hooks were reachable in one historical call.
-- `[frozen-source-conflict]` — a source claim differs from a frozen or archive
-  loader. The same live-replay timing limitation applies.
 - `[failed-after-mutation]` — an exact deep import boundary reported `failed`
   after a retained meta-path, path-hook, or importer-cache mutation. Temporal
   ordering alone does not prove that the mutation caused the failure.
@@ -293,21 +310,11 @@ lacks that evidence and therefore never produces this finding.
 [path-finder]: https://docs.python.org/3/library/importlib.html#importlib.machinery.PathFinder
 [module-spec]: https://docs.python.org/3/reference/import.html#import-related-module-attributes
 
-The replay uses the search path captured with the original claim, but it runs
-against the report-time filesystem, path hooks, and importer cache. It is
-labeled `live_replay` in JSON; in text each finding pairs a `claimed:` line
-with a `PathFinder replay:` line (collapsing to `same origin` when only the
-loader differs) and summarizes the field-level comparison on a
-`differences (import-time claim vs live replay):` line. A package can
-therefore produce an intentional or time-sensitive difference.
-
-Every JSON finding contains an `evidence` object. Its primary `level` is one
-of `captured`, `post_hoc`, `live_replay`, `structural_inference`, or
-`speculative_replay`; `event_refs` links retained supporting records and
-`limitations` contains stable machine-readable caveats. Text prints the same
-primary level and caveats below each finding. The sibling `severity` and
-`signals` fields carry triage and corroboration without multiplying headline
-blocks.
+Every JSON finding contains an `evidence` object. Its primary `level` records
+the basis for the promoted effect; `event_refs` links retained supporting
+records and `limitations` contains stable machine-readable caveats. Route and
+comparison objects are document-scoped and referenced by stable IDs rather
+than duplicated inside findings.
 
 Finder-call timeline records include import-time spec summaries. Exact string
 values and exact list/tuple package paths are copied before the spec is returned
@@ -315,8 +322,8 @@ to importlib. Non-string values are represented only by safe type and identity
 metadata. A foreign package-path sequence is marked `deferred` rather than
 iterated in the import hot path. Namespace paths returned by the live replay
 are copied during reporting and marked `post_hoc`. Field comparisons expose
-omitted, additional, and reordered locations without presenting replay state
-as exact historical proof.
+locations present only in the left or right route, plus reordering, without
+presenting probe state as exact historical proof.
 
 Finder and mutable-loader records also expose constant-size target-module
 states: `missing`, explicit `none`, `object` with safe identity/type metadata,

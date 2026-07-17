@@ -73,16 +73,21 @@ separate hooks. Keep the three mechanisms independently toggleable.
    shared stdlib classes. The report must identify `BuiltinImporter`,
    `FrozenImporter`, and `PathFinder` as expected standard class entries,
    explain their roles, and distinguish them from nonstandard skipped finders.
-   Suspicious custom claims get a post-hoc `PathFinder` replay.
+   Custom claims get a captured resolution-route record and may be compared
+   with an independently labeled report-time standard-path probe.
 
-**Spec comparison and bypass detection** (the beartype#556 and
+**Resolution-route comparison and bypass detection** (the beartype#556 and
 scikit-build-core#1482 checks): claim records contain conservative, plain spec
-summaries captured before returning to importlib. At report time, suspicious
-custom claims are replayed through
-`importlib.machinery.PathFinder.find_spec(name, parent_path)` and compared by
-loader, origin, package status, cached path, and namespace search locations.
-Differences state the observed mechanics; they do not declare a third-party
-package defective. Modules
+summaries captured before returning to importlib. At report time, custom
+claims are represented as captured routes and compared with an independent
+`importlib.machinery.PathFinder.find_spec(name, parent_path, target)` probe by
+status, loader, origin, package status, cached path, and namespace search
+locations. The probe uses the captured search path with report-time path-hook,
+importer-cache, filesystem, and finder state. It skips intervening meta-path
+finders and must never be described as predicting the winner if the captured
+finder were removed. Raw route differences are neutral evidence, not findings.
+Only a corroborated observed effect may promote one, such as an exact deep
+descendant failure correlated with a narrower captured namespace route. Modules
 in `sys.modules` with no recorded `find_spec` call are their own bucket
 (manual `exec_module`-style loads).
 
@@ -112,7 +117,7 @@ These came out of the design discussion; they are not optional style.
   iterate over `list(sys.modules.items())` copies, expect slight
   inconsistency, never raise.
 - **The `import` audit event fires before resolution starts**, not when a
-  finder wins — winner attribution comes from layer 3 (or replay), never from
+  finder wins — winner attribution comes from layer 3, never from
   the event itself. It also doesn't fire on `sys.modules` cache hits or
   manual `spec_from_file_location` + `exec_module` loads.
 

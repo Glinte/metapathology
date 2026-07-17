@@ -15,7 +15,9 @@ tool for Python *import resolution and module-loading lifecycle*. It will not
 explain arbitrary exceptions raised by module code, native-library failures,
 incompatible wheels, or missing files beyond showing where resolution or
 loading stopped. Findings must say whether they are based on exact captured
-events, post-hoc state, current replay, or speculation.
+events, post-hoc state, structural inference, or explicitly enabled
+speculation. Independent report-time probes are route evidence and do not
+become findings by themselves.
 
 Three evidence rules apply throughout the roadmap:
 
@@ -31,7 +33,7 @@ Three evidence rules apply throughout the roadmap:
 ## Dependency overview
 
 ```text
-T1 path-hook snapshots ──┬──> T3 evidence timeline ──> T6 counterfactual replay ──> T11 spec comparison
+T1 path-hook snapshots ──┬──> T3 evidence timeline ──> T6 resolution routes ──> T11 semantic comparison
 T2 importer-cache diffs ─┘            │
                                       └──────────────────────────────────────────────┐
 T4 loader inventory ────────────────────────────────────────────────────────────────┤
@@ -228,7 +230,16 @@ queue, collector, retry loop, or silent dropping policy.
 - Schema 0.x is explicitly experimental and covered by round-trip and semantic
   tests; schema 1.0 is the future compatibility boundary.
 
-## T6: Generalize counterfactual replay (implemented)
+## T6: Generalize resolution-route evidence (implemented; revised in schema 0.19)
+
+**Current contract:** A captured custom claim and an independent report-time
+standard-path probe are document-scoped routes. Their comparison is symmetric
+and neutral. The probe uses the captured search path with report-time state,
+skips intervening meta-path finders, and never predicts an alternative winner.
+Raw status, loader, origin, package, cached-path, and namespace-location
+differences are not findings. The original task text below records the path to
+this design; where it says "replay-based finding," schema 0.19 instead emits a
+route comparison and requires a corroborated observed effect for promotion.
 
 **Weakness:** Replay previously asked only what the current `PathFinder` would
 do. It could not contextualize that answer with earlier path-hook or
@@ -255,6 +266,14 @@ real state or reimplementing the path-entry search against a synthetic cache.
 That reimplementation is the expensive part. It remains deferred rather than
 duplicating importlib or mutating global hook/cache state to exclude one hook.
 
+A post-roadmap [investigation and design decision](speculative-replay-design.md)
+narrows any follow-up further. Captured hook-to-finder/cache provenance should
+come first. A bounded, explicitly enabled replay of one displaced cached
+finder is conditionally valuable for beartype#599-style failures; arbitrary
+finder permutations and a general import-resolution simulator are rejected.
+Synthetic single-hook exclusion remains gated on a pinned fixture proving that
+the narrower evidence and probe cannot answer a concrete diagnostic question.
+
 **Dependencies:** T1, T2, and T3.
 
 **Definition of done:**
@@ -264,7 +283,15 @@ duplicating importlib or mutating global hook/cache state to exclude one hook.
   clear.
 - Replay failures are isolated and reported without affecting cleanup.
 
-## T7: Expand contention findings (implemented)
+## T7: Expand contention findings (implemented; raw route findings removed in schema 0.19)
+
+**Current contract:** `loader-displacement`, `origin-displacement`,
+`package-displacement`, `spec-difference`, `unfindable`, and
+`frozen-source-conflict` are no longer emitted from a standard-path difference.
+Those mechanics live in route comparisons. `namespace-truncation` is promoted
+only when an exact deep descendant failure correlates with a location present
+only in the standard path route. The original implementation plan below is
+retained as roadmap history, not as the current report vocabulary.
 
 **Weakness:** `[bypass]`, `[unfindable]`, and `[no-spec]` compress distinct
 failure mechanisms into a small vocabulary. A meta-path short circuit, a
@@ -329,7 +356,7 @@ Findings should describe mechanics, not declare a third-party package broken.
    conflict classifier is completed and tested here.
 
 Every finding carries one primary evidence level from the closed vocabulary
-`captured`, `post_hoc`, `live_replay`, `structural_inference`, or
+`captured`, `post_hoc`, `live_probe`, `structural_inference`, or
 `speculative_replay`. Supporting evidence may have weaker levels, but the
 headline uses the weakest evidence necessary for the claim. Event references
 are emitted only for retained records at or before the report cutoff.
@@ -545,6 +572,12 @@ outside deep instrumentation.
 
 ## T11: Compare spec semantics and namespace search locations (implemented)
 
+**Schema 0.19 correction:** Semantic differences now populate a neutral
+`RouteComparison`. They do not produce displacement, unfindable, or generic
+spec findings. Namespace loss is promoted only with an exact correlated
+descendant failure. Directional fields are `only_in_left_route` and
+`only_in_right_route`, not omitted/additional assertions.
+
 **Weakness addressed:** Replay previously compared whether a custom meta-path claim and
 `PathFinder` select different loader types. That detects many path-hook
 bypasses, but it does not explain differences inside the returned specs. In
@@ -554,7 +587,7 @@ scikit-build-core#1482, the decisive defect is not merely that
 contribution, making `mqt.core` invisible. Earlier reports identified the
 claiming finder but stopped short of showing the omitted namespace path.
 
-**Implementation:** Claim records and counterfactual replay now carry safe,
+**Implementation:** Claim records and standard-path probes now carry safe,
 plain summaries of the observed and replayed specs:
 
 - origin and cached path when they are strings;
@@ -563,12 +596,11 @@ plain summaries of the observed and replayed specs:
 - a copied tuple of string `submodule_search_locations`;
 - the copied string parent path supplied to `find_spec`.
 
-Reports render a field-level comparison for suspicious custom claims and provide
-specific evidence such as `[namespace-truncation]` when a custom namespace spec
-omits locations found by standard path resolution, `[package-displacement]`
-when package status differs, and `[origin-displacement]` when both resolutions
-find a module at different origins. State what differs rather than declaring
-which package is defective.
+Reports render a field-level route comparison for custom claims. Package,
+origin, loader, cached-path, and search-location differences remain neutral.
+`[namespace-truncation]` requires the additional exact failed-descendant
+correlation described above. State what differs rather than declaring which
+package is defective.
 
 Recording remains conservative. It does not call `repr()` or `str()` on spec,
 loader, path, or location objects. Only copy values already known to be strings
@@ -578,7 +610,7 @@ isolated diagnostics rather than import failures. If obtaining a safe semantic
 summary inside the finder wrapper would require iterating foreign code, defer
 that portion to report time and label it post-hoc.
 
-Namespace replay also has a timing limitation: `PathFinder.find_spec` against
+The namespace probe also has a timing limitation: `PathFinder.find_spec` against
 the current parent path may already reflect a namespace truncated by the
 custom parent claim. Where possible, replay a top-level namespace against the
 recorded import-time parent path and distinguish this from reconstruction based
@@ -597,7 +629,7 @@ infer namespace truncation from loader differences.
   summaries shared by the text and JSON reports.
 - Tests cover extended, truncated, reordered, malformed, and concurrently
   changing search-location sequences.
-- Reports distinguish import-time observations, current live replay, and
+- Reports distinguish import-time observations, current live probes, and
   reconstructed or speculative comparisons.
 - Spec comparison never changes the target's import result and cannot make a
   malformed third-party spec fail earlier than it otherwise would.
@@ -862,6 +894,13 @@ attempt and boundary identities, and exact loader transitions depend on T10.
 
 ## T15: Synthesize evidence into causal explanations (implemented)
 
+**Schema 0.19 correction:** Synthesis no longer emits
+`custom_claim_displacement` explanations or outcome-unknown namespace
+explanations from a probe alone. A namespace explanation requires an exact
+failed descendant completion and uses `correlated` confidence. Other raw route
+differences remain in the route-comparison section without a causal claim. The
+original recommendation below is retained as roadmap history.
+
 **Weakness:** Even a chronological report can force users to reconstruct the
 cause from finder calls, mutations, cache state, module metadata, and replay.
 A thorough log is not yet a diagnosis.
@@ -942,6 +981,13 @@ explanation when optional deep evidence is unavailable.
 - Ambiguous and contradictory evidence produces alternatives or `unknown`, not
   a confident single cause.
 
+A post-roadmap [report-presentation design](report-presentation-design.md)
+plans the communication layer above this synthesis: a leading verdict,
+target-outcome correlation, merged explanation/finding narrative blocks,
+bounded timelines, and neutral route vocabulary. Its later stages are
+sequenced after the resolution-route evidence refactor and the
+[speculative replay](speculative-replay-design.md) Phase 0 fixes.
+
 ## T16: Attribute standard path-resolution outcomes (implemented)
 
 **Weakness:** `BuiltinImporter`, `FrozenImporter`, and `PathFinder` are shared
@@ -967,9 +1013,9 @@ linked to its T13 attempt, while preserving the provenance of each input:
    the import-time meta-path snapshot but absent from the attempt's calls may
    be reported as unreachable only after an inferred or captured earlier
    standard result.
-3. Keep T11 `PathFinder` replay in its existing `live_replay` report-time
-   phase. It may corroborate an inference but never upgrades historical
-   evidence or becomes an event reference.
+3. Keep T11's independent standard-path probe in its `live_probe` report-time
+   phase. It may contextualize an inference but never upgrades historical
+   evidence, becomes an event reference, or predicts an alternative winner.
 4. In deep mode, extend the existing reversible profiling observer to the
    runtime-discovered Python code object for `PathFinder.find_spec`. Its return
    event records an import-safe semantic spec summary and exact attempt/thread

@@ -170,14 +170,16 @@ shadowing or replacing the class entry.
 
 [find-spec]: https://docs.python.org/3/library/importlib.html#importlib.abc.MetaPathFinder.find_spec
 
-## Bypass comparison
+## Resolution-route comparison
 
-For a loaded `.py` or `.pyc` module claimed by a finder other than
-`PathFinder`, the report asks `PathFinder.find_spec()` what the normal
-path-based machinery would find using the search path captured during the
-original call. A missing result, or a different loader or origin, shows that
-the actual import did not take the usual `PathFinder` route.
+For a module claimed by a finder other than `PathFinder`, the report keeps the
+claim as a captured resolution route. It then asks `PathFinder.find_spec()`
+what the standard path machinery finds using the search path captured during
+the original call. The result is a separate, independent standard-path probe.
 
-This is evidence about import routing, not automatically a defect. Continue
-with [Reading the report](report.md) for the finding categories and their
-caveats.
+The probe uses report-time path-hook, importer-cache, filesystem, and finder
+state, and it does not execute custom meta-path finders between the captured
+finder and `PathFinder`. A missing result or semantic difference therefore
+describes two routes; it does not predict which finder would win if the
+captured finder were absent. Continue with [Reading the report](report.md) for
+the route fields, finding promotion rules, and caveats.

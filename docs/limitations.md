@@ -85,21 +85,29 @@ clear-and-repopulate sequence entirely between full observations may be
 visible only in the final state or missed altogether. Non-string keys are
 counted but omitted without inspection.
 
-## Replay is diagnostic
+## Standard-path probes are diagnostic
 
-Bypass detection replays `PathFinder` at report time. It uses the search path
-captured with the original finder call, but the filesystem and other import
-state may have changed. The accompanying historical structural comparison is
-also bounded: it compares install and report snapshots plus passive cache-diff
-events, not a reconstructed import-time cache. Historical finder objects are
-identified but never called. A difference is a reason to investigate, not
-proof of a bug. Source bypass findings still require `.py` or `.pyc` origins,
-while package, namespace, and other spec-semantic comparisons require both
-claims to expose comparable safe fields.
-Calling `PathFinder.find_spec()` can populate
-`sys.path_importer_cache`; replay therefore has that standard-library side
-effect even though metapathology suppresses its own event recording during
-report analysis.
+Route comparison probes `PathFinder` at report time. It uses the search path
+captured with the original finder call, but the filesystem, path hooks,
+importer cache, and finder state may have changed. It also skips custom
+meta-path finders that would run before `PathFinder`. The probe is therefore
+not a prediction of the winner under a modified meta-path order.
+
+The accompanying historical structural comparison is bounded: it compares
+install and report snapshots plus passive cache-diff events, not a
+reconstructed import-time cache. Historical finder objects are identified but
+never called. Raw differences remain route evidence and do not become
+findings without a corroborated observed effect.
+
+Calling `PathFinder.find_spec()` can populate `sys.path_importer_cache`; the
+probe therefore has that standard-library side effect even though
+metapathology suppresses its own hot-path event producers during report
+analysis.
+
+Route analysis is exhaustive for reported custom winners: each produces a
+captured route, one standard-path probe route, and one comparison. There is no
+fixed cap, dropping, retry loop, queue, or background worker. Report latency
+and document size therefore grow with the number of custom-claimed modules.
 
 Finder-contract auditing intentionally ignores protocols available only
 through `__getattr__`, custom `__getattribute__`, or a descriptor that must be
