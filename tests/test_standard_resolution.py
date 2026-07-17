@@ -117,7 +117,7 @@ def test_deep_report_captures_source_resolution(run_python: RunPython, tmp_path:
         "if event['id'] == resolution['component_event_refs'][0])\n"
         f"assert component['path'] == {str(module_dir)!r}\n"
         "text = metapathology.render_report()\n"
-        "assert 'standard finder aggregate coverage: active_path_finder_aggregate' in text\n"
+        "assert 'standard finder aggregate coverage: active path finder aggregate' in text\n"
         "assert '[captured standard resolution]' in text\n"
         "print('OK')\n"
     )

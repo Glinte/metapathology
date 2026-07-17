@@ -131,6 +131,7 @@ metapathology.install(report_at_exit=False)
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 text = metapathology.render_report()
+assert "informational (1):" in text, text
 assert "[no-spec]" in text, text
 assert "ghost_mod" in text, text
 print("OK")
@@ -156,16 +157,17 @@ def test_standard_unwrapped_finders_are_explained(run_python: RunPython) -> None
     assert proc.returncode == 0, proc.stderr
     assert "report guide: https://glinte.github.io/metapathology/report/" in proc.stdout
     assert "standard CPython finders left unwrapped (expected)" in proc.stdout
-    assert "interpreter-shared classes handle built-in, frozen, and sys.path imports" in proc.stdout
-    assert "Custom claims may be compared with an independent standard path probe below" in proc.stdout
+    assert "custom claims are compared with an independent standard path probe below" in proc.stdout
     assert "BuiltinImporter: class entry" not in proc.stdout
     assert "FrozenImporter: class entry" not in proc.stdout
     assert "PathFinder: class entry" not in proc.stdout
     assert "monitoring: sys.meta_path, sys.path_hooks, sys.path_importer_cache" in proc.stdout
-    assert "low-level loader identity transitions unobservable" in proc.stdout
+    assert "opt-in deep diagnostics and early site bootstrap available but not used for this run" in proc.stdout
+    assert "unobservable" not in proc.stdout
     assert "sys.meta_path (unchanged since install):" in proc.stdout
+    assert "Nothing was recorded for:" in proc.stdout
     assert (
-        "nothing recorded: sys.meta_path mutations, sys.meta_path reassignments, "
+        "sys.meta_path mutations, sys.meta_path reassignments, "
         "sys.path_hooks mutations, sys.path_hooks reassignments" in proc.stdout
     )
     assert "-- sys.path_hooks mutations (0) --" not in proc.stdout

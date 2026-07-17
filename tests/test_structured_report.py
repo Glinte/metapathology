@@ -31,7 +31,7 @@ import observed_mod
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 0, "minor": 19, "name": "metapathology.report"}
+assert document["schema"] == {"major": 0, "minor": 20, "name": "metapathology.report"}
 assert isinstance(document["resolution_routes"], list)
 assert isinstance(document["route_comparisons"], list)
 assert document["capture"]["early_site_bootstrap"] is None
@@ -154,7 +154,7 @@ def test_explicit_file_failure_is_recorded_and_raised(run_python: RunPython, tmp
 
 def test_report_document_uses_hand_written_slots(run_python: RunPython) -> None:
     proc = run_python(
-        "from metapathology._report_data import LoaderInventory, ReportDocument\n"
+        "from metapathology._report_data import LoaderInventory, ReportDocument, ReportSummary\n"
         "assert '__dataclass_fields__' not in ReportDocument.__dict__\n"
         "assert '__slots__' in ReportDocument.__dict__\n"
         "document = ReportDocument(\n"
@@ -171,7 +171,10 @@ def test_report_document_uses_hand_written_slots(run_python: RunPython) -> None:
         "    standard_finder_status='disabled', findings=(), finder_contracts=(),\n"
         "    early_site_bootstrap=None, frozen_bootstrap=None,\n"
         "    deep_diagnostics=(), deep_import_outcomes_status='disabled',\n"
-        "    report_errors=(), cwd=None, argv=(),\n"
+        "    report_errors=(),\n"
+        "    summary=ReportSummary(actionable=0, warning=0, informational=0,\n"
+        "                          unresolved_import_count=0, top_finding_id=None, top_explanation_id=None),\n"
+        "    target_outcome=None, cwd=None, argv=(),\n"
         ")\n"
         "try:\n"
         "    document.cutoff_seq = 1\n"

@@ -237,9 +237,13 @@ def _run(
             runpy.run_path(target, run_name="__main__")
     except SystemExit as exc:
         exit_code = _exit_code(exc)
-    except Exception:
+        monitor.record_target_outcome(exit_code=exit_code)
+    except Exception as exc:
         traceback.print_exc()
         exit_code = 1
+        monitor.record_target_outcome(exception=exc, exit_code=exit_code)
+    else:
+        monitor.record_target_outcome(exit_code=exit_code)
     finally:
         # Reporting is diagnostic-only and must not replace the target's exit
         # status when stderr or a configured file is unusable.

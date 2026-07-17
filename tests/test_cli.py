@@ -344,3 +344,51 @@ def test_concurrent_workers_do_not_overwrite_reports(tmp_path: Path) -> None:
     assert len(reports) == 2
     pids = {json.loads(report.read_text(encoding="utf-8"))["process"]["pid"] for report in reports}
     assert len(pids) == 2
+
+
+def test_target_failure_is_correlated_with_unresolved_imports(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text(
+        "import sys\n"
+        "class LazyImporter:\n"
+        "    def find_module(self, fullname, path=None):\n"
+        "        return None\n"
+        "sys.meta_path.insert(0, LazyImporter())\n"
+        "import missing_lazy_dependency\n"
+    )
+    proc = run_cli(str(script), cwd=tmp_path)
+
+    assert proc.returncode == 1
+    assert "target outcome: raised ModuleNotFoundError for 'missing_lazy_dependency'" in proc.stderr
+    assert "the failed module appears under unresolved imports below" in proc.stderr
+    assert "most severe is [legacy-finder-contract] 'LazyImporter'" in proc.stderr
+    assert "-- imports that started but produced no module" in proc.stderr
+    assert "'missing_lazy_dependency': progress started, began at event #" in proc.stderr
+    assert "(the target's failed module)" in proc.stderr
+    assert "LazyImporter was on sys.meta_path but accepts only the legacy find_module protocol" in proc.stderr
+
+    destination = tmp_path / "report.json"
+    proc = run_cli("--report", str(destination), str(script), cwd=tmp_path)
+    assert proc.returncode == 1
+    document = json.loads(next(tmp_path.glob("report.*.json")).read_text(encoding="utf-8"))
+    assert document["target_outcome"] == {
+        "kind": "raised",
+        "exception_type_name": "ModuleNotFoundError",
+        "missing_module": "missing_lazy_dependency",
+        "exit_code": 1,
+    }
+    assert document["summary"]["unresolved_import_count"] >= 1
+    assert document["summary"]["top_finding_ref"] == "finding:1"
+
+
+def test_clean_target_reports_a_clean_verdict_in_the_first_two_lines(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("print('target ran')\n")
+
+    proc = run_cli(str(script), cwd=tmp_path)
+
+    assert proc.returncode == 0, proc.stderr
+    lines = proc.stderr.splitlines()
+    start = lines.index("== metapathology report ==")
+    assert lines[start + 1] == "target outcome: completed (exit status 0)"
+    assert lines[start + 2].startswith("verdict: no import-hook interference detected across")

@@ -85,7 +85,12 @@ if sys.argv[3] == "deep":
     assert explanation["confidence"] == "correlated"
     assert explanation["effect_status"] == "failed"
     assert explanation["next_observation"] is None
-    assert "[correlated] 'synthesis_ns.child' failed" in metapathology.render_report()
+    text = metapathology.render_report()
+    assert "[1] [correlated] 'synthesis_ns.child' failed" in text
+    assert "    [namespace-truncation] 'synthesis_ns':" in text
+    assert "why it matters:" in text
+    assert "this is an actionable finding based on correlated evidence" in text
+    assert "cause: finding:" not in text
 else:
     assert not any(item["kind"] == "namespace_truncation" for item in document["findings"])
     assert not any(item["kind"] == "namespace_truncation_failure" for item in document["explanations"])

@@ -53,7 +53,7 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 # roadmap T2--T7 have supplied their real event and evidence shapes.
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 0
-_SCHEMA_MINOR = 19
+_SCHEMA_MINOR = 20
 # TODO(schema 1.0): Define and export a TypedDict for this document before
 # exposing a public mapping-returning API; the 0.x shape is intentionally fluid.
 
@@ -69,6 +69,77 @@ class ReportError(_Record):
     def __init__(self, where: str, exception_type_name: str) -> None:
         self._where = where
         self._exception_type_name = exception_type_name
+
+
+class TargetOutcome(_Record):
+    """Plain reduction of how the monitored target finished."""
+
+    __slots__ = ("_exception_type_name", "_exit_code", "_kind", "_missing_module")
+    _fields = ("kind", "exception_type_name", "missing_module", "exit_code")
+    kind = _ReadOnlyField[str]("_kind")
+    exception_type_name = _ReadOnlyField[str | None]("_exception_type_name")
+    missing_module = _ReadOnlyField[str | None]("_missing_module")
+    exit_code = _ReadOnlyField[int | None]("_exit_code")
+
+    def __init__(
+        self,
+        kind: str,
+        exception_type_name: str | None,
+        missing_module: str | None,
+        exit_code: int | None,
+    ) -> None:
+        self._kind = kind
+        self._exception_type_name = exception_type_name
+        self._missing_module = missing_module
+        self._exit_code = exit_code
+
+
+class ReportSummary(_Record):
+    """Counts and top references shared by the text verdict and JSON summary.
+
+    Holds only identifiers and counts; the headline prose itself is composed
+    by the text renderer so no human sentences enter the JSON contract.
+    """
+
+    __slots__ = (
+        "_actionable",
+        "_informational",
+        "_top_explanation_id",
+        "_top_finding_id",
+        "_unresolved_import_count",
+        "_warning",
+    )
+    _fields = (
+        "actionable",
+        "warning",
+        "informational",
+        "unresolved_import_count",
+        "top_finding_id",
+        "top_explanation_id",
+    )
+    actionable = _ReadOnlyField[int]("_actionable")
+    warning = _ReadOnlyField[int]("_warning")
+    informational = _ReadOnlyField[int]("_informational")
+    unresolved_import_count = _ReadOnlyField[int]("_unresolved_import_count")
+    top_finding_id = _ReadOnlyField[str | None]("_top_finding_id")
+    top_explanation_id = _ReadOnlyField[str | None]("_top_explanation_id")
+
+    def __init__(
+        self,
+        *,
+        actionable: int,
+        warning: int,
+        informational: int,
+        unresolved_import_count: int,
+        top_finding_id: str | None,
+        top_explanation_id: str | None,
+    ) -> None:
+        self._actionable = actionable
+        self._warning = warning
+        self._informational = informational
+        self._unresolved_import_count = unresolved_import_count
+        self._top_finding_id = top_finding_id
+        self._top_explanation_id = top_explanation_id
 
 
 class SkippedFinder(_Record):
@@ -749,6 +820,8 @@ class ReportDocument(_Record):
         "_skipped_finders",
         "_standard_finder_status",
         "_standard_resolutions",
+        "_summary",
+        "_target_outcome",
     )
     _fields = (
         "generated_at",
@@ -784,6 +857,8 @@ class ReportDocument(_Record):
         "route_comparisons",
         "finder_contracts",
         "report_errors",
+        "summary",
+        "target_outcome",
         "cwd",
         "argv",
     )
@@ -820,6 +895,8 @@ class ReportDocument(_Record):
     route_comparisons = _ReadOnlyField[tuple[RouteComparison, ...]]("_route_comparisons")
     finder_contracts = _ReadOnlyField[tuple[FinderContract, ...]]("_finder_contracts")
     report_errors = _ReadOnlyField[tuple[ReportError, ...]]("_report_errors")
+    summary = _ReadOnlyField[ReportSummary]("_summary")
+    target_outcome = _ReadOnlyField[TargetOutcome | None]("_target_outcome")
     cwd = _ReadOnlyField[str | None]("_cwd")
     argv = _ReadOnlyField[tuple[str, ...]]("_argv")
 
@@ -859,6 +936,8 @@ class ReportDocument(_Record):
         route_comparisons: tuple[RouteComparison, ...],
         finder_contracts: tuple[FinderContract, ...],
         report_errors: tuple[ReportError, ...],
+        summary: ReportSummary,
+        target_outcome: TargetOutcome | None,
         cwd: str | None,
         argv: tuple[str, ...],
     ) -> None:
@@ -895,6 +974,8 @@ class ReportDocument(_Record):
         self._route_comparisons = route_comparisons
         self._finder_contracts = finder_contracts
         self._report_errors = report_errors
+        self._summary = summary
+        self._target_outcome = target_outcome
         self._cwd = cwd
         self._argv = argv
 
@@ -944,6 +1025,18 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
     finally:
         monitor._end_report_analysis(previously_active)
     explanations = _causal_explanations(findings, attempts, standard_resolutions, route_comparisons)
+    outcome_state = monitor.target_outcome
+    target_outcome = (
+        None
+        if outcome_state is None
+        else TargetOutcome(
+            outcome_state.kind,
+            outcome_state.exception_type_name,
+            outcome_state.missing_module,
+            outcome_state.exit_code,
+        )
+    )
+    summary = _report_summary(findings, explanations, attempts)
     try:
         cwd: str | None = os.getcwd()
     except Exception as exc:
@@ -1007,8 +1100,54 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         route_comparisons=route_comparisons,
         finder_contracts=tuple(finder_contracts),
         report_errors=tuple(report_errors),
+        summary=summary,
+        target_outcome=target_outcome,
         cwd=cwd,
         argv=tuple(argv),
+    )
+
+
+_SEVERITY_RANK = {"actionable": 0, "warning": 1, "informational": 2}
+
+
+def unresolved_attempts(attempts: tuple[ImportAttempt, ...]) -> tuple[ImportAttempt, ...]:
+    """Attempts that started, produced no module by report time, and drew no finder claim."""
+    return tuple(
+        attempt
+        for attempt in attempts
+        if attempt.presence == "absent_at_report" and attempt.progress in ("started", "failed", "finder_raised")
+    )
+
+
+def _report_summary(
+    findings: tuple[Finding, ...],
+    explanations: tuple[CausalExplanation, ...],
+    attempts: tuple[ImportAttempt, ...],
+) -> ReportSummary:
+    """Reduce counts and top references; headline prose stays in the text renderer."""
+    counts = {"actionable": 0, "warning": 0, "informational": 0}
+    for finding in findings:
+        counts[finding.severity] = counts.get(finding.severity, 0) + 1
+    top_finding = min(
+        (finding for finding in findings if finding.severity != "informational"),
+        key=lambda item: (_SEVERITY_RANK.get(item.severity, 1), item.finding_id),
+        default=None,
+    )
+    top_explanation = next(
+        (
+            explanation
+            for explanation in explanations
+            if top_finding is not None and explanation.cause_finding_id == top_finding.finding_id
+        ),
+        None,
+    )
+    return ReportSummary(
+        actionable=counts["actionable"],
+        warning=counts["warning"],
+        informational=counts["informational"],
+        unresolved_import_count=len(unresolved_attempts(attempts)),
+        top_finding_id=None if top_finding is None else top_finding.finding_id,
+        top_explanation_id=None if top_explanation is None else top_explanation.explanation_id,
     )
 
 
@@ -2291,6 +2430,8 @@ def json_document(document: ReportDocument) -> dict[str, object]:
         "timeline": [_json_event(event) for event in document.events],
         "findings": [_json_finding(finding) for finding in document.findings],
         "explanations": [_json_explanation(explanation) for explanation in document.explanations],
+        "summary": _json_summary(document.summary),
+        "target_outcome": _json_target_outcome(document.target_outcome),
         "diagnostics": {
             "internal_error_refs": [
                 f"event:{event.seq}" for event in document.events if isinstance(event, InternalError)
@@ -2870,6 +3011,30 @@ def _json_explanation(explanation: CausalExplanation) -> dict[str, object]:
     }
 
 
+def _json_summary(summary: ReportSummary) -> dict[str, object]:
+    """Serialize the shared counts-and-references summary."""
+    return {
+        "actionable": summary.actionable,
+        "warning": summary.warning,
+        "informational": summary.informational,
+        "unresolved_import_count": summary.unresolved_import_count,
+        "top_finding_ref": summary.top_finding_id,
+        "top_explanation_ref": summary.top_explanation_id,
+    }
+
+
+def _json_target_outcome(outcome: TargetOutcome | None) -> dict[str, object] | None:
+    """Serialize the recorded target completion, when one exists."""
+    if outcome is None:
+        return None
+    return {
+        "kind": outcome.kind,
+        "exception_type_name": outcome.exception_type_name,
+        "missing_module": outcome.missing_module,
+        "exit_code": outcome.exit_code,
+    }
+
+
 def failed_json_document(error_name: str) -> dict[str, object]:
     """Return valid JSON structure when ordinary report generation fails."""
     return {
@@ -2894,6 +3059,15 @@ def failed_json_document(error_name: str) -> dict[str, object]:
         "timeline": [],
         "findings": [],
         "explanations": [],
+        "summary": {
+            "actionable": 0,
+            "warning": 0,
+            "informational": 0,
+            "unresolved_import_count": 0,
+            "top_finding_ref": None,
+            "top_explanation_ref": None,
+        },
+        "target_outcome": None,
         "diagnostics": {
             "internal_error_refs": [],
             "report_errors": [{"exception_type_name": error_name, "where": "report_generation"}],

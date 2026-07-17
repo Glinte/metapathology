@@ -58,12 +58,11 @@ text = metapathology.render_report()
 timeline = text.split("-- chronological evidence timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
 positions = [timeline.index(f"#{event.seq}") for event in (hook, cache, start, claim)]
 assert positions == sorted(positions), timeline
-assert "resolution started for 'timeline_target'" in timeline
-assert "the audit event has no outcome or winner signal" in timeline
-assert "capture order; concurrent events are not a global wall-clock order" in timeline
+assert "uncached import started: 'timeline_target'" in timeline
+assert "Events appear in capture order; concurrent events have no global wall-clock order" in timeline
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 0, "minor": 19, "name": "metapathology.report"}
+assert document["schema"] == {"major": 0, "minor": 20, "name": "metapathology.report"}
 audit = next(
     event
     for event in document["timeline"]
@@ -144,6 +143,7 @@ def test_monitor_identities_do_not_join_threads_by_reused_name(run_python: RunPy
 
 AUDIT_SHAPES = r"""
 import importlib
+import os
 import sys
 
 import metapathology
@@ -189,10 +189,11 @@ except ModuleNotFoundError:
     pass
 else:
     raise AssertionError("missing import unexpectedly succeeded")
+os.environ["METAPATHOLOGY_TEXT_TIMELINE"] = "full"
 text = metapathology.render_report()
-line = next(line for line in text.splitlines() if "metapathology_missing_timeline_module" in line)
-assert "resolution started" in line, line
-assert "the audit event has no outcome or winner signal" in text
+timeline = text.split("-- chronological evidence timeline", 1)[1]
+line = next(line for line in timeline.splitlines() if "metapathology_missing_timeline_module" in line)
+assert "uncached import started" in line, line
 print("OK")
 """
 
@@ -297,6 +298,213 @@ def test_audit_start_precedes_reassignment_recovery_and_uninstall_is_inert(
     (tmp_path / "reassignment_timeline_module.py").write_text("VALUE = 1\n", encoding="utf-8")
 
     proc = run_python(REASSIGNMENT)
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+COLLAPSE_RUN = r"""
+import sys
+
+import metapathology
+from metapathology import FindSpecCall, ImportAuditStart
+
+class DecliningFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        return None
+
+monitor = metapathology.install(report_at_exit=False)
+sys.meta_path.insert(0, DecliningFinder())
+
+for name in ("collapse_missing_one", "collapse_missing_two", "collapse_missing_three"):
+    try:
+        __import__(name)
+    except ModuleNotFoundError:
+        pass
+    else:
+        raise AssertionError(f"{name} unexpectedly resolved")
+
+events = monitor.events()
+collapsible_lines = []
+for event in events:
+    if isinstance(event, ImportAuditStart):
+        collapsible_lines.append(f"#{event.seq} uncached import started")
+    elif isinstance(event, FindSpecCall) and not event.found and event.exception_type_name is None:
+        collapsible_lines.append(f"#{event.seq} DecliningFinder probed")
+
+text = metapathology.render_report()
+timeline = text.split("-- chronological evidence timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
+assert "collapsed; details in JSON timeline" in timeline, timeline
+for line in collapsible_lines:
+    assert line not in timeline, (line, timeline)
+print("OK")
+"""
+
+
+def test_run_of_four_or_more_collapsible_events_collapses(run_python: RunPython) -> None:
+    proc = run_python(COLLAPSE_RUN)
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+CLAIM_SPLITS_RUN = r"""
+import sys
+from importlib.machinery import PathFinder
+
+import metapathology
+from metapathology import FindSpecCall
+
+class DecliningFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "claim_split_target":
+            return PathFinder.find_spec(fullname, path, target)
+        return None
+
+metapathology.install(report_at_exit=False)
+sys.meta_path.insert(0, DecliningFinder())
+
+for name in ("claim_split_missing_one", "claim_split_missing_two"):
+    try:
+        __import__(name)
+    except ModuleNotFoundError:
+        pass
+
+import claim_split_target
+
+for name in ("claim_split_missing_three", "claim_split_missing_four"):
+    try:
+        __import__(name)
+    except ModuleNotFoundError:
+        pass
+
+monitor = metapathology.get_monitor()
+events = monitor.events()
+claim = next(
+    event for event in events
+    if isinstance(event, FindSpecCall) and event.fullname == "claim_split_target" and event.found
+)
+
+text = metapathology.render_report()
+timeline = text.split("-- chronological evidence timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
+assert f"#{claim.seq} DecliningFinder probed 'claim_split_target': claimed" in timeline, timeline
+print("OK")
+"""
+
+
+def test_claim_in_middle_of_collapsible_run_splits_the_collapse(run_python: RunPython, tmp_path: Path) -> None:
+    (tmp_path / "claim_split_target.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    proc = run_python(CLAIM_SPLITS_RUN)
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+FINDING_REFERENCED_EVENT = r"""
+import importlib.machinery
+import json
+import sys
+
+import metapathology
+
+class TruncatingFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname != "ref_ns":
+            return None
+        spec = importlib.machinery.ModuleSpec(fullname, None, is_package=True)
+        spec.submodule_search_locations = [sys.argv[2]]
+        return spec
+
+class DecliningFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        return None
+
+sys.path.insert(0, sys.argv[1])
+metapathology.install(report_at_exit=False, deep_import_outcomes=True)
+sys.meta_path.insert(0, TruncatingFinder())
+sys.meta_path.insert(0, DecliningFinder())
+
+for name in ("ref_pad_one", "ref_pad_two"):
+    try:
+        __import__(name)
+    except ModuleNotFoundError:
+        pass
+
+try:
+    import ref_ns.child
+except ModuleNotFoundError:
+    pass
+else:
+    raise AssertionError("truncated namespace unexpectedly found child")
+
+for name in ("ref_pad_three", "ref_pad_four"):
+    try:
+        __import__(name)
+    except ModuleNotFoundError:
+        pass
+
+document = json.loads(metapathology.render_report(format="json"))
+explanation = next(item for item in document["explanations"] if item["kind"] == "namespace_truncation_failure")
+referenced_seqs = [int(ref.split(":", 1)[1]) for ref in explanation["event_refs"]]
+assert referenced_seqs, explanation
+
+text = metapathology.render_report()
+timeline = text.split("-- chronological evidence timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
+for seq in referenced_seqs:
+    assert f"#{seq} " in timeline, (seq, timeline)
+print("OK")
+"""
+
+
+def test_event_referenced_by_explanation_renders_expanded_inside_a_run(run_python: RunPython, tmp_path: Path) -> None:
+    omitted_root = tmp_path / "installed"
+    child = omitted_root / "ref_ns" / "child"
+    child.mkdir(parents=True)
+    (child / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
+    claimed = tmp_path / "editable" / "ref_ns"
+    claimed.mkdir(parents=True)
+
+    proc = run_python(FINDING_REFERENCED_EVENT, str(omitted_root), str(claimed))
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+TIMELINE_FULL_ESCAPE_HATCH = r"""
+import os
+import sys
+
+import metapathology
+from metapathology import FindSpecCall, ImportAuditStart
+
+os.environ["METAPATHOLOGY_TEXT_TIMELINE"] = "full"
+
+class DecliningFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        return None
+
+monitor = metapathology.install(report_at_exit=False)
+sys.meta_path.insert(0, DecliningFinder())
+
+for name in ("full_missing_one", "full_missing_two", "full_missing_three"):
+    try:
+        __import__(name)
+    except ModuleNotFoundError:
+        pass
+
+events = monitor.events()
+text = metapathology.render_report()
+timeline = text.split("-- chronological evidence timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
+assert "collapsed;" not in timeline, timeline
+for event in events:
+    assert f"#{event.seq} " in timeline, (event, timeline)
+print("OK")
+"""
+
+
+def test_timeline_full_env_var_disables_collapsing(run_python: RunPython) -> None:
+    proc = run_python(TIMELINE_FULL_ESCAPE_HATCH)
 
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "OK"

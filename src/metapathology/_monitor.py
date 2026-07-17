@@ -192,6 +192,24 @@ class _FrozenBootstrapState:
         self.boundary = boundary
 
 
+class _TargetOutcomeState:
+    """Plain reduction of how the monitored target finished."""
+
+    __slots__ = ("exception_type_name", "exit_code", "kind", "missing_module")
+
+    def __init__(
+        self,
+        kind: str,
+        exception_type_name: str | None,
+        missing_module: str | None,
+        exit_code: int | None,
+    ) -> None:
+        self.kind = kind
+        self.exception_type_name = exception_type_name
+        self.missing_module = missing_module
+        self.exit_code = exit_code
+
+
 class _ThreadState(threading.local):
     """Per-thread re-entrancy state with a default for newly seen threads."""
 
@@ -390,6 +408,10 @@ class Monitor:
         self._deep_hook_wrappers: dict[int, tuple[object, object]] = {}
         self._deep_finder_patches: dict[int, tuple[object, object]] = {}
         self._deep_loader_patches: dict[int, tuple[object, tuple[tuple[str, object], ...]]] = {}
+        # How the monitored target finished, recorded by the CLI (or any
+        # embedder) before the report is written. Reduced to plain data at
+        # record time; exception messages are never captured.
+        self._target_outcome: _TargetOutcomeState | None = None
 
     @property
     def enabled(self) -> bool:
@@ -458,6 +480,35 @@ class Monitor:
     def baseline_modules(self) -> frozenset[str]:
         """Names present in ``sys.modules`` at install time."""
         return self._baseline_modules
+
+    @property
+    def target_outcome(self) -> "_TargetOutcomeState | None":
+        """Plain reduction of the target's completion, if one was recorded."""
+        return self._target_outcome
+
+    def record_target_outcome(self, exception: BaseException | None = None, exit_code: int | None = None) -> None:
+        """Record how the monitored target finished, reduced to plain data.
+
+        Only the exception's type name and, for ``ImportError`` subclasses,
+        its ``name`` attribute are read; the message is never stringified.
+
+        Args:
+            exception: The exception that ended the target, or None.
+            exit_code: The process exit status the target run produces.
+        """
+        if exception is None:
+            self._target_outcome = _TargetOutcomeState("completed", None, None, exit_code)
+            return
+        missing: str | None = None
+        if isinstance(exception, ImportError):
+            # Read the builtin descriptor directly so a subclass property
+            # cannot run foreign code during recording.
+            try:
+                name = ImportError.name.__get__(exception, type(exception))
+            except Exception:
+                name = None
+            missing = name if type(name) is str else None
+        self._target_outcome = _TargetOutcomeState("raised", type_name(exception), missing, exit_code)
 
     def events(self) -> list[MonitorEvent]:
         """Return a snapshot of all recorded events, in capture order."""
