@@ -582,8 +582,11 @@ class FindSpecCall(_Record):
         origin: ``spec.origin`` when it is a string (a file path for
             filesystem imports), else None.
         search_path: Snapshot of the path passed to ``find_spec``, or of
-            ``sys.path`` for a top-level import. Used to replay ``PathFinder``
-            against import-time state rather than mutable report-time state.
+            ``sys.path`` for a top-level import. Used by report-time probes
+            without substituting a mutable report-time search path.
+        target_state: Identity-only snapshot of the reload target, when one
+            was passed to ``find_spec``. A report-time probe only reuses the
+            object if that exact identity remains available.
         exception_type_name: Type name of the exception if ``find_spec``
             raised instead of returning; ``found`` is False in that case.
         thread_name: Name of the thread that ran the import.
@@ -603,6 +606,7 @@ class FindSpecCall(_Record):
         "_search_path_kind",
         "_seq",
         "_spec_summary",
+        "_target_state",
         "_thread_id",
         "_thread_name",
     )
@@ -622,6 +626,7 @@ class FindSpecCall(_Record):
         "exception_type_name",
         "thread_name",
         "thread_id",
+        "target_state",
     )
     seq = _ReadOnlyField[int]("_seq")
     fullname = _ReadOnlyField[str]("_fullname")
@@ -638,6 +643,7 @@ class FindSpecCall(_Record):
     exception_type_name = _ReadOnlyField[str | None]("_exception_type_name")
     thread_name = _ReadOnlyField[str]("_thread_name")
     thread_id = _ReadOnlyField[int]("_thread_id")
+    target_state = _ReadOnlyField[ModuleCacheState | None]("_target_state")
 
     def __init__(
         self,
@@ -656,6 +662,7 @@ class FindSpecCall(_Record):
         thread_id: int,
         module_state_before: ModuleCacheState | None = None,
         module_state_after: ModuleCacheState | None = None,
+        target_state: ModuleCacheState | None = None,
     ) -> None:
         self._seq = seq
         self._fullname = fullname
@@ -672,6 +679,7 @@ class FindSpecCall(_Record):
         self._exception_type_name = exception_type_name
         self._thread_name = thread_name
         self._thread_id = thread_id
+        self._target_state = target_state
 
 
 class DeepDiagnosticCall(_Record):

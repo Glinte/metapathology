@@ -447,7 +447,12 @@ class Monitor:
 
     def _current_path_hook_refs(self) -> tuple[ImportObjectRef, ...]:
         """Copy current path-hook identities for report capture."""
-        return tuple(_import_object_ref(hook) for hook in list(sys.path_hooks))
+        return tuple(_import_object_ref(self._original_path_hook(hook)) for hook in list(sys.path_hooks))
+
+    def _original_path_hook(self, hook: object) -> object:
+        """Normalize one deep wrapper to the foreign hook it delegates to."""
+        wrapped = self._deep_hook_wrappers.get(id(hook))
+        return hook if wrapped is None else wrapped[1]
 
     @property
     def baseline_modules(self) -> frozenset[str]:
@@ -518,15 +523,17 @@ class Monitor:
             if self._frozen_bootstrap is None:
                 self._frozen_bootstrap = state
 
-    def _begin_report_analysis(self) -> bool:
-        """Keep report-time replays from recording activity after their evidence cutoff."""
+    def _begin_report_analysis(self) -> tuple[bool, bool]:
+        """Make every monitor producer inert during report-time foreign calls."""
         previously_active = self._local.active
+        previously_reporting = getattr(self._local, "report_analysis", False)
         self._local.active = True
-        return previously_active
+        self._local.report_analysis = True
+        return previously_active, previously_reporting
 
-    def _end_report_analysis(self, previously_active: bool) -> None:
+    def _end_report_analysis(self, previous: tuple[bool, bool]) -> None:
         """Restore this thread's re-entrancy state after report analysis."""
-        self._local.active = previously_active
+        self._local.active, self._local.report_analysis = previous
 
     def install(
         self,
@@ -714,7 +721,7 @@ class Monitor:
 
     def _profile_import_boundary(self, frame: "FrameType", event: str, arg: object) -> None:
         """Record paired entry and completion for the captured ``_find_and_load`` code."""
-        if not self._enabled or not self._deep_import_outcomes:
+        if not self._enabled or not self._deep_import_outcomes or getattr(self._local, "report_analysis", False):
             return
         try:
             if frame.f_code is self._path_finder_code:
@@ -813,7 +820,7 @@ class Monitor:
 
         @functools.wraps(hook, assigned=(), updated=())
         def wrapped(path: str) -> "PathEntryFinderProtocol":
-            if not self._enabled:
+            if not self._enabled or getattr(self._local, "report_analysis", False):
                 return hook(path)
             if self._deep_local.active:
                 self._record_deep_call("path_hook", hook_id, hook_name, None, path, "unobserved_reentrant", None)
@@ -846,11 +853,19 @@ class Monitor:
 
             @functools.wraps(original, assigned=(), updated=())
             def wrapped(fullname: str, target: object = None) -> object:
-                if not self._enabled:
+                if not self._enabled or getattr(self._local, "report_analysis", False):
                     return original(fullname, target)
+                target_state = None if target is None else ModuleCacheState("object", id(target), type_name(target))
                 if self._deep_local.active:
                     self._record_deep_call(
-                        "path_entry_finder", finder_id, finder_name, fullname, path, "unobserved_reentrant", None
+                        "path_entry_finder",
+                        finder_id,
+                        finder_name,
+                        fullname,
+                        path,
+                        "unobserved_reentrant",
+                        None,
+                        target_state=target_state,
                     )
                     return original(fullname, target)
                 self._deep_local.active = True
@@ -859,7 +874,14 @@ class Monitor:
                         spec = original(fullname, target)
                     except BaseException as exc:
                         self._record_deep_call(
-                            "path_entry_finder", finder_id, finder_name, fullname, path, "raised", type(exc).__name__
+                            "path_entry_finder",
+                            finder_id,
+                            finder_name,
+                            fullname,
+                            path,
+                            "raised",
+                            type(exc).__name__,
+                            target_state=target_state,
                         )
                         raise
                     self._record_deep_call(
@@ -870,6 +892,7 @@ class Monitor:
                         path,
                         "found" if spec is not None else "not_found",
                         None,
+                        target_state=target_state,
                     )
                     if spec is not None:
                         self._instrument_deep_loader(safe_spec_loader(spec))
@@ -906,7 +929,7 @@ class Monitor:
                 @functools.wraps(original_create, assigned=(), updated=())
                 def wrapped_create(spec: object) -> object:
                     fullname = safe_spec_name(spec)
-                    if not self._enabled:
+                    if not self._enabled or getattr(self._local, "report_analysis", False):
                         return original_create(spec)
                     if self._deep_local.active:
                         self._record_deep_call(
@@ -968,7 +991,7 @@ class Monitor:
                 def wrapped_exec(module: object) -> object:
                     fullname = safe_module_name(module)
                     target_state = ModuleCacheState("object", id(module), type_name(module))
-                    if not self._enabled:
+                    if not self._enabled or getattr(self._local, "report_analysis", False):
                         return original_exec(module)
                     if self._deep_local.active:
                         self._record_deep_call(
@@ -1347,8 +1370,8 @@ class Monitor:
             ):
                 old_hooks = tuple(expected_path_hooks)
                 new_hooks = tuple(current_path_hooks)
-                old_hook_contents = tuple(_import_object_ref(hook) for hook in old_hooks)
-                new_hook_contents = tuple(_import_object_ref(hook) for hook in new_hooks)
+                old_hook_contents = tuple(_import_object_ref(self._original_path_hook(hook)) for hook in old_hooks)
+                new_hook_contents = tuple(_import_object_ref(self._original_path_hook(hook)) for hook in new_hooks)
                 path_replacement = _InstrumentedPathHooks(new_hooks, self)
                 self._instrumented_path_hooks = path_replacement
                 sys.path_hooks = path_replacement
@@ -1594,6 +1617,7 @@ class Monitor:
                         exception_type_name,
                         module_state_before,
                         module_state_after,
+                        None if target is None else ModuleCacheState("object", id(target), type_name(target)),
                     )
             finally:
                 self._local.active = False
@@ -1647,6 +1671,7 @@ class Monitor:
         exception_type_name: str | None,
         module_state_before: ModuleCacheState,
         module_state_after: ModuleCacheState,
+        target_state: ModuleCacheState | None,
     ) -> None:
         """Record one ``find_spec`` call, reducing the spec to primitives before taking the lock.
 
@@ -1692,6 +1717,7 @@ class Monitor:
                         thread_id=thread_id,
                         module_state_before=module_state_before,
                         module_state_after=module_state_after,
+                        target_state=target_state,
                     )
                 )
         except Exception as exc:
@@ -1771,8 +1797,8 @@ class Monitor:
         try:
             if not self._enabled or not self._path_hooks_enabled or mutated is not self._instrumented_path_hooks:
                 return
-            added_refs = tuple(_import_object_ref(hook) for hook in added)
-            removed_refs = tuple(_import_object_ref(hook) for hook in removed)
+            added_refs = tuple(_import_object_ref(self._original_path_hook(hook)) for hook in added)
+            removed_refs = tuple(_import_object_ref(self._original_path_hook(hook)) for hook in removed)
             if self._deep_path_hooks:
                 for added_hook in added:
                     if id(added_hook) in self._deep_hook_wrappers:
@@ -1782,7 +1808,7 @@ class Monitor:
                     for index, current in enumerate(mutated):
                         if current is added_hook:
                             list.__setitem__(mutated, index, wrapper)
-            contents_after = tuple(_import_object_ref(hook) for hook in list(mutated))
+            contents_after = tuple(_import_object_ref(self._original_path_hook(hook)) for hook in list(mutated))
             observed_hooks = (*added, *removed, *mutated)
             thread_name = threading.current_thread().name
             stack = _capture_stack(frame)
