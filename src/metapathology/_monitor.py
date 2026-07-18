@@ -15,6 +15,7 @@ import sys
 import threading
 import traceback
 import types
+import warnings
 from contextlib import suppress
 from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 
@@ -96,6 +97,10 @@ _DEEP_LOADERS_ENV = "METAPATHOLOGY_DEEP_LOADERS"
 _DEEP_IMPORT_OUTCOMES_ENV = "METAPATHOLOGY_DEEP_IMPORT_OUTCOMES"
 _TRUE_ENV_VALUES = frozenset(("1", "true", "yes", "on"))
 _FALSE_ENV_VALUES = frozenset(("0", "false", "no", "off"))
+_IMPLEMENTATION_NAME = sys.implementation.name
+_UNSUPPORTED_IMPLEMENTATION_WARNING = (
+    f"metapathology supports CPython only; monitoring on {_IMPLEMENTATION_NAME!r} may be incomplete or inaccurate"
+)
 
 
 def _raw_protocol_value(value: object, evidence: str, defined_by: str) -> FinderProtocol:
@@ -653,6 +658,8 @@ class Monitor:
             elif report_destination is not None or report_format is not None or report_color is not None:
                 self._configure_report(report_destination, report_format, report_color, use_environment=False)
             if not self._enabled:
+                if _IMPLEMENTATION_NAME != "cpython":
+                    warnings.warn(_UNSUPPORTED_IMPLEMENTATION_WARNING, RuntimeWarning, stacklevel=3)
                 self._enabled = True
                 self._baseline_modules = frozenset(sys.modules)
                 current = sys.meta_path

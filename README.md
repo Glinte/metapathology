@@ -35,6 +35,13 @@ Full guides are published at
 They cover usage, import-system concepts, report interpretation, the library
 API, limitations, and development.
 
+The universal `py3-none-any` wheel can be installed and imported on other
+Python implementations so environments and packaging tools can inspect it.
+Monitoring remains supported only on CPython; calling `install()` (including
+through the CLI) emits a `RuntimeWarning` elsewhere because results may be
+incomplete or inaccurate. The optional early-site bootstrap rejects
+non-CPython interpreters instead of continuing.
+
 ## Usage
 
 Primary: run your program under observation, no code changes needed —
@@ -341,8 +348,10 @@ never called by that comparison.
 
 ## Caveats
 
-- CPython only (relies on the `import` audit event and import-system
-  internals).
+- Monitoring is supported on CPython only (it relies on the `import` audit
+  event and import-system internals). Other implementations can install and
+  import the universal wheel, but starting normal CLI/API monitoring emits a
+  `RuntimeWarning`; the CPython-specific early-site bootstrap rejects them.
 - Normal CLI/API monitoring begins when `metapathology` is installed. Finders
   and hooks added earlier by `.pth` files appear in the initial snapshots. The
   opt-in early-site bootstrap can move this boundary into site initialization,

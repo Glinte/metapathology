@@ -63,6 +63,27 @@ def test_install_and_uninstall_restore_meta_path(run_python: RunPython) -> None:
     assert "OK" in proc.stdout
 
 
+def test_install_warns_once_when_starting_on_unsupported_implementation(run_python: RunPython) -> None:
+    proc = run_python(
+        "import warnings\n"
+        "import metapathology._monitor as monitor_module\n"
+        "monitor_module._IMPLEMENTATION_NAME = 'pypy'\n"
+        "monitor_module._UNSUPPORTED_IMPLEMENTATION_WARNING = (\n"
+        "    \"metapathology supports CPython only; monitoring on 'pypy' may be incomplete or inaccurate\"\n"
+        ")\n"
+        "with warnings.catch_warnings(record=True) as caught:\n"
+        "    warnings.simplefilter('always')\n"
+        "    monitor = monitor_module.install(report_at_exit=False)\n"
+        "    assert monitor_module.install(report_at_exit=False) is monitor\n"
+        "monitor_module.uninstall()\n"
+        "assert len(caught) == 1, caught\n"
+        "warning = caught[0]\n"
+        "assert warning.category is RuntimeWarning, warning.category\n"
+        "assert str(warning.message) == monitor_module._UNSUPPORTED_IMPLEMENTATION_WARNING\n"
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
 MUTATIONS = """
 import sys
 import metapathology
