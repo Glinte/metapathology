@@ -3,6 +3,7 @@ name = "metapathology"
 version = "0.4.2"
 description = "Diagnose which finders handle imports and how sys.meta_path changes"
 readme = "README.md"
+license = "MIT"
 authors = [
     { name = "Glinte", email = "96855131+Glinte@users.noreply.github.com" }
 ]
@@ -16,7 +17,6 @@ keywords = [
 classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
