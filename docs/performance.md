@@ -83,8 +83,8 @@ uv run --script scripts/benchmark.py
 ```
 
 The summary first reports fresh-process startup, package import, deferred
-monitor-API import, direct-script, and monitored-CLI timings. The import graph
-separates three cases:
+monitor-API import, direct-script, and monitored-CLI timings. By default, the
+import graph separates two cases:
 
 - `native` uses only the controlled standard-finder path and measures one
   retained audit-start record per synthetic builtin import, without
@@ -92,7 +92,10 @@ separates three cases:
 - `attributed` installs the same delegating instance finder in control and
   monitored processes. The monitored process retains an audit-start plus one
   finder-call record per synthetic import.
-- `deep` enables every opt-in deep diagnostic around the controlled
+
+Pass `--include-deep` to add a third case:
+
+- `deep` (enabled by `--include-deep`) enables every opt-in deep diagnostic around the controlled
   standard-finder path. This measures the delegated path-hook,
   path-entry-finder, loader, and CPython import-outcome capture path.
 
@@ -177,10 +180,18 @@ text shows at most 50 risk/standard entries while JSON remains exhaustive.
 ## Run the environment matrix
 
 The repository's [**Benchmarks** GitHub Actions workflow][benchmark-workflow]
-is manually triggered with `workflow_dispatch`. By default it benchmarks
+is manually triggered with `workflow_dispatch`. It benchmarks the default
+monitoring configuration on
 Python 3.10 and 3.14 on Linux, Windows, and macOS at 100, 1,000, and 5,000
 operations. Workload sizes, timing repetitions, memory repetitions, and the
 shuffle seed can be changed in the dispatch form.
+
+The separate [**Deep benchmarks** workflow][deep-benchmark-workflow] runs only
+the opt-in deep scenario at 100 and 1,000 operations with five timing and
+three memory samples. Deep capture and report generation retain exhaustive
+evidence, so its costs are intentionally kept out of the normal regression
+matrix. Use its dispatch inputs to investigate a specific environment at a
+larger size.
 
 Each matrix job adds its Markdown table to the workflow summary and uploads a
 30-day artifact containing:
@@ -197,4 +208,5 @@ before treating a small percentage change as significant.
 
 [benchmark-script]: https://github.com/Glinte/metapathology/blob/main/scripts/benchmark.py
 [benchmark-workflow]: https://github.com/Glinte/metapathology/actions/workflows/benchmark.yml
+[deep-benchmark-workflow]: https://github.com/Glinte/metapathology/actions/workflows/deep-benchmark.yml
 [reference-run]: https://github.com/Glinte/metapathology/actions/runs/29398284346

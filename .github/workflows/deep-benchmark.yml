@@ -1,0 +1,91 @@
+name: Deep benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      counts:
+        description: Comma-separated workload sizes (keep these small; deep capture is exhaustive)
+        required: true
+        default: "100,1000"
+        type: string
+      repeats:
+        description: Fresh processes per timing point
+        required: true
+        default: "5"
+        type: string
+      memory-repeats:
+        description: Fresh processes per memory point
+        required: true
+        default: "3"
+        type: string
+      seed:
+        description: Trial-order shuffle seed
+        required: true
+        default: "0"
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: deep-benchmarks-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+        python-version:
+          - "3.10"
+          - "3.14"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.28"
+          enable-cache: true
+
+      - name: Run benchmark
+        shell: pwsh
+        env:
+          BENCHMARK_COUNTS: ${{ inputs.counts }}
+          BENCHMARK_REPEATS: ${{ inputs.repeats }}
+          BENCHMARK_MEMORY_REPEATS: ${{ inputs['memory-repeats'] }}
+          BENCHMARK_SEED: ${{ inputs.seed }}
+          TARGET_PYTHON: ${{ matrix.python-version }}
+        run: |
+          uv run --python "$env:TARGET_PYTHON" --script scripts/benchmark.py `
+            --expect-python "$env:TARGET_PYTHON" `
+            --counts "$env:BENCHMARK_COUNTS" `
+            --repeats "$env:BENCHMARK_REPEATS" `
+            --memory-repeats "$env:BENCHMARK_MEMORY_REPEATS" `
+            --seed "$env:BENCHMARK_SEED" `
+            --deep-only `
+            --output-dir benchmark-results
+
+      - name: Add benchmark summary
+        shell: pwsh
+        run: Get-Content benchmark-results/summary.md | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: metapathology-deep-benchmark-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: benchmark-results
+          if-no-files-found: error
+          retention-days: 30

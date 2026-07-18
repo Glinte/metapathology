@@ -44,7 +44,8 @@ from matplotlib import pyplot as plt
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _SCRIPT_DIR.parent
 _WORKER = _SCRIPT_DIR / "_benchmark_worker.py"
-_SCENARIOS = ("native", "attributed", "deep", "mutation")
+_DEFAULT_SCENARIOS = ("native", "attributed", "mutation")
+_DEEP_SCENARIO = "deep"
 _STARTUP_CASES = ("process", "package_import", "monitor_api_import", "direct_script", "monitored_script")
 _COLORS = {False: "#6b7280", True: "#2563eb"}
 _DEFAULT_COUNTS = "100,1000,5000"
@@ -83,6 +84,17 @@ def _parse_args() -> argparse.Namespace:
         help="result directory (default: .cache/metapathology-benchmarks/<timestamp>)",
     )
     parser.add_argument("--quick", action="store_true", help="use two small points and one sample for a smoke run")
+    scenario_group = parser.add_mutually_exclusive_group()
+    scenario_group.add_argument(
+        "--include-deep",
+        action="store_true",
+        help="include the expensive opt-in deep-diagnostics import workload",
+    )
+    scenario_group.add_argument(
+        "--deep-only",
+        action="store_true",
+        help="run only the expensive opt-in deep-diagnostics import workload",
+    )
     args = parser.parse_args()
     try:
         args.target = inspect_python(args.python)
@@ -96,6 +108,12 @@ def _parse_args() -> argparse.Namespace:
         args.counts = [10, 50]
         args.repeats = 1
         args.memory_repeats = 1
+    if args.deep_only:
+        args.scenarios = (_DEEP_SCENARIO,)
+    elif args.include_deep:
+        args.scenarios = (*_DEFAULT_SCENARIOS, _DEEP_SCENARIO)
+    else:
+        args.scenarios = _DEFAULT_SCENARIOS
     return args
 
 
@@ -263,10 +281,11 @@ def _sample(
     repeats: int,
     memory_repeats: int,
     seed: int,
+    scenarios: tuple[str, ...],
 ) -> list[_Record]:
     rows: list[_Record] = []
     trials: list[tuple[str, int, bool, str, int]] = []
-    for scenario in _SCENARIOS:
+    for scenario in scenarios:
         for count in counts:
             for monitored in (False, True):
                 for metric, samples in (("time", repeats), ("memory", memory_repeats)):
@@ -314,9 +333,10 @@ def _startup_median(rows: list[_Record], case: str) -> float:
     return statistics.median(float(row["elapsed_seconds"]) for row in rows if row["case"] == case)
 
 
-def _plot_imports(rows: list[_Record], counts: list[int], output: Path) -> None:
+def _plot_imports(rows: list[_Record], counts: list[int], output: Path, scenarios: tuple[str, ...]) -> None:
     figure, axes = plt.subplots(2, 3, figsize=(18, 8), constrained_layout=True)
-    for column, scenario in enumerate(("native", "attributed", "deep")):
+    import_scenarios = tuple(scenario for scenario in scenarios if scenario != "mutation")
+    for column, scenario in enumerate(import_scenarios):
         axis = axes.flat[column]
         for monitored in (False, True):
             elapsed = _median_series(rows, counts, scenario, "time", monitored, "elapsed_seconds")
@@ -332,11 +352,15 @@ def _plot_imports(rows: list[_Record], counts: list[int], output: Path) -> None:
         axis.set_ylabel("median elapsed (ms)")
         axis.grid(alpha=0.25)
         axis.legend()
+    for axis in axes.flat[len(import_scenarios) : 3]:
+        axis.set_visible(False)
 
     slowdown_axis = axes.flat[3]
     memory_axis = axes.flat[4]
     report_axis = axes.flat[5]
-    for scenario, color in (("native", "#059669"), ("attributed", "#dc2626"), ("deep", "#7c3aed")):
+    colors = {"native": "#059669", "attributed": "#dc2626", "deep": "#7c3aed"}
+    for scenario in import_scenarios:
+        color = colors[scenario]
         control = _median_series(rows, counts, scenario, "time", False, "elapsed_seconds")
         monitored = _median_series(rows, counts, scenario, "time", True, "elapsed_seconds")
         slowdown_axis.plot(
@@ -426,7 +450,12 @@ def _plot_mutations(rows: list[_Record], counts: list[int], output: Path) -> Non
 
 
 def _write_summary(
-    rows: list[_Record], startup_rows: list[_Record], counts: list[int], target: PythonMetadata, output: Path
+    rows: list[_Record],
+    startup_rows: list[_Record],
+    counts: list[int],
+    target: PythonMetadata,
+    output: Path,
+    scenarios: tuple[str, ...],
 ) -> None:
     lines = [
         "# metapathology benchmark",
@@ -464,7 +493,8 @@ def _write_summary(
             "| --- | ---: | ---: | ---: | ---: | ---: |",
         )
     )
-    for scenario in ("native", "attributed", "deep"):
+    import_scenarios = tuple(scenario for scenario in scenarios if scenario != "mutation")
+    for scenario in import_scenarios:
         for count in counts:
             control_time = statistics.median(_values(rows, scenario, "time", False, count, "elapsed_seconds"))
             monitored_time = statistics.median(_values(rows, scenario, "time", True, count, "elapsed_seconds"))
@@ -479,13 +509,13 @@ def _write_summary(
             "",
             "## JSON report rendering",
             "",
-            "The report is rendered after the workload. It is not included in the import or mutation timing above.",
+            "The report is rendered after the workload. It is not included in the workload timing above.",
             "",
             "| Scenario | Modules / pairs | Render time (ms) | Render peak allocation (KiB) | JSON size (KiB) |",
             "| --- | ---: | ---: | ---: | ---: |",
         )
     )
-    for scenario in (*("native", "attributed", "deep"), "mutation"):
+    for scenario in scenarios:
         for count in counts:
             report_time = statistics.median(_values(rows, scenario, "time", True, count, "report_seconds"))
             report_peak = statistics.median(_values(rows, scenario, "memory", True, count, "report_peak_bytes"))
@@ -493,24 +523,29 @@ def _write_summary(
             lines.append(
                 f"| {scenario} | {count} | {report_time * 1_000:.3f} | {report_peak / 1024:.2f} | {report_size / 1024:.2f} |"
             )
-    lines.extend(
-        (
-            "",
-            "## `sys.meta_path` mutation workload",
-            "",
-            "| Pop/append pairs | Control (ms) | Monitored (ms) | Time ratio | Retained overhead (KiB) |",
-            "| ---: | ---: | ---: | ---: | ---: |",
+    if "mutation" in scenarios:
+        lines.extend(
+            (
+                "",
+                "## `sys.meta_path` mutation workload",
+                "",
+                "| Pop/append pairs | Control (ms) | Monitored (ms) | Time ratio | Retained overhead (KiB) |",
+                "| ---: | ---: | ---: | ---: | ---: |",
+            )
         )
-    )
-    for count in counts:
-        control_time = statistics.median(_values(rows, "mutation", "time", False, count, "elapsed_seconds"))
-        monitored_time = statistics.median(_values(rows, "mutation", "time", True, count, "elapsed_seconds"))
-        control_memory = statistics.median(_values(rows, "mutation", "memory", False, count, "traced_current_bytes"))
-        monitored_memory = statistics.median(_values(rows, "mutation", "memory", True, count, "traced_current_bytes"))
-        lines.append(
-            f"| {count} | {control_time * 1_000:.3f} | {monitored_time * 1_000:.3f} "
-            f"| {monitored_time / control_time:.3f}x | {(monitored_memory - control_memory) / 1024:.2f} |"
-        )
+        for count in counts:
+            control_time = statistics.median(_values(rows, "mutation", "time", False, count, "elapsed_seconds"))
+            monitored_time = statistics.median(_values(rows, "mutation", "time", True, count, "elapsed_seconds"))
+            control_memory = statistics.median(
+                _values(rows, "mutation", "memory", False, count, "traced_current_bytes")
+            )
+            monitored_memory = statistics.median(
+                _values(rows, "mutation", "memory", True, count, "traced_current_bytes")
+            )
+            lines.append(
+                f"| {count} | {control_time * 1_000:.3f} | {monitored_time * 1_000:.3f} "
+                f"| {monitored_time / control_time:.3f}x | {(monitored_memory - control_memory) / 1024:.2f} |"
+            )
     lines.extend(
         (
             "",
@@ -550,6 +585,7 @@ def main() -> int:
             args.repeats,
             args.memory_repeats,
             args.seed,
+            args.scenarios,
         )
     target = args.target
     document = {
@@ -564,6 +600,7 @@ def main() -> int:
             "repeats": args.repeats,
             "memory_repeats": args.memory_repeats,
             "seed": args.seed,
+            "scenarios": args.scenarios,
         },
         "startup_rows": startup_rows,
         "rows": rows,
@@ -571,15 +608,17 @@ def main() -> int:
     data_path = output / "benchmark.json"
     data_path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     import_graph = output / "imports.png"
-    mutation_graph = output / "mutations.png"
+    mutation_graph = output / "mutations.png" if "mutation" in args.scenarios else None
     summary_path = output / "summary.md"
-    _plot_imports(rows, args.counts, import_graph)
-    _plot_mutations(rows, args.counts, mutation_graph)
-    _write_summary(rows, startup_rows, args.counts, target, summary_path)
+    _plot_imports(rows, args.counts, import_graph, args.scenarios)
+    if mutation_graph is not None:
+        _plot_mutations(rows, args.counts, mutation_graph)
+    _write_summary(rows, startup_rows, args.counts, target, summary_path, args.scenarios)
     print(f"raw data:       {data_path}")
     print(f"summary:        {summary_path}")
     print(f"import graph:   {import_graph}")
-    print(f"mutation graph: {mutation_graph}")
+    if mutation_graph is not None:
+        print(f"mutation graph: {mutation_graph}")
     return 0
 
 
