@@ -57,7 +57,7 @@ compatibility contract. Otherwise prefer semantic assertions.
 
 ## Performance benchmarks
 
-Run the startup, import-throughput, mutation, and memory benchmark from the
+Run the startup, import-throughput, mutation, report-rendering, and memory benchmark from the
 repository root:
 
 ```console
@@ -84,7 +84,10 @@ measures the controlled standard-finder path with one retained audit-start
 record per synthetic import;
 `attributed` installs the same delegating instance finder in both control and
 monitored processes so every synthetic import exercises both an audit-start
-and a retained finder-call record. Mutation samples perform repeated
+and a retained finder-call record. `deep` enables every opt-in deep diagnostic
+around the controlled standard-finder path. Each monitored sample separately
+renders a JSON report after the workload, measuring report-time analysis
+without folding it into throughput. Mutation samples perform repeated
 `pop`/`append` pairs and therefore include the monitor's intentional
 stack-capture cost. Trials are
 shuffled to balance system warm-up; `--seed` controls and records that order.

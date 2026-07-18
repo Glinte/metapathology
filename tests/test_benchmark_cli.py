@@ -94,7 +94,7 @@ def test_import_workloads_cross_the_audit_boundary(tmp_path: Path) -> None:
         source if existing_pythonpath is None else os.pathsep.join((source, existing_pythonpath))
     )
 
-    def run(scenario: str) -> int:
+    def run(scenario: str) -> dict[str, object]:
         proc = subprocess.run(
             [
                 sys.executable,
@@ -119,11 +119,20 @@ def test_import_workloads_cross_the_audit_boundary(tmp_path: Path) -> None:
             timeout=_WORKER_TIMEOUT_SECONDS,
         )
         assert proc.returncode == 0, proc.stderr
-        result = cast("dict[str, object]", json.loads(proc.stdout))
-        event_count = result["event_count"]
-        assert isinstance(event_count, int)
-        return event_count
+        return cast("dict[str, object]", json.loads(proc.stdout))
 
     # The package itself adds one resolution in addition to the two modules.
-    assert run("native") == 3
-    assert run("attributed") == 6
+    native = run("native")
+    attributed = run("attributed")
+    deep = run("deep")
+    native_event_count = native["event_count"]
+    assert native_event_count == 3
+    assert isinstance(native_event_count, int)
+    assert attributed["event_count"] == 6
+    deep_event_count = deep["event_count"]
+    assert isinstance(deep_event_count, int)
+    assert deep_event_count > native_event_count
+    assert isinstance(deep["report_seconds"], float)
+    assert deep["report_seconds"] > 0
+    assert isinstance(deep["report_bytes"], int)
+    assert deep["report_bytes"] > 0

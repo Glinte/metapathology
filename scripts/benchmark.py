@@ -44,7 +44,7 @@ from matplotlib import pyplot as plt
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _SCRIPT_DIR.parent
 _WORKER = _SCRIPT_DIR / "_benchmark_worker.py"
-_SCENARIOS = ("native", "attributed", "mutation")
+_SCENARIOS = ("native", "attributed", "deep", "mutation")
 _STARTUP_CASES = ("process", "package_import", "monitor_api_import", "direct_script", "monitored_script")
 _COLORS = {False: "#6b7280", True: "#2563eb"}
 _DEFAULT_COUNTS = "100,1000,5000"
@@ -315,9 +315,9 @@ def _startup_median(rows: list[_Record], case: str) -> float:
 
 
 def _plot_imports(rows: list[_Record], counts: list[int], output: Path) -> None:
-    figure, axes = plt.subplots(2, 2, figsize=(12, 8), constrained_layout=True)
-    for column, scenario in enumerate(("native", "attributed")):
-        axis = axes[0][column]
+    figure, axes = plt.subplots(2, 3, figsize=(18, 8), constrained_layout=True)
+    for column, scenario in enumerate(("native", "attributed", "deep")):
+        axis = axes.flat[column]
         for monitored in (False, True):
             elapsed = _median_series(rows, counts, scenario, "time", monitored, "elapsed_seconds")
             axis.plot(
@@ -333,9 +333,10 @@ def _plot_imports(rows: list[_Record], counts: list[int], output: Path) -> None:
         axis.grid(alpha=0.25)
         axis.legend()
 
-    slowdown_axis = axes[1][0]
-    memory_axis = axes[1][1]
-    for scenario, color in (("native", "#059669"), ("attributed", "#dc2626")):
+    slowdown_axis = axes.flat[3]
+    memory_axis = axes.flat[4]
+    report_axis = axes.flat[5]
+    for scenario, color in (("native", "#059669"), ("attributed", "#dc2626"), ("deep", "#7c3aed")):
         control = _median_series(rows, counts, scenario, "time", False, "elapsed_seconds")
         monitored = _median_series(rows, counts, scenario, "time", True, "elapsed_seconds")
         slowdown_axis.plot(
@@ -351,6 +352,13 @@ def _plot_imports(rows: list[_Record], counts: list[int], output: Path) -> None:
             (after - before) / (1024 * 1024) for before, after in zip(control_memory, monitored_memory, strict=True)
         ]
         memory_axis.plot(counts, overhead, marker="o", label=scenario, color=color)
+        report_axis.plot(
+            counts,
+            [value * 1_000 for value in _median_series(rows, counts, scenario, "time", True, "report_seconds")],
+            marker="o",
+            label=scenario,
+            color=color,
+        )
     slowdown_axis.axhline(1.0, color="#111827", linewidth=1)
     slowdown_axis.set_title("Import slowdown")
     slowdown_axis.set_xlabel("imported modules")
@@ -363,13 +371,18 @@ def _plot_imports(rows: list[_Record], counts: list[int], output: Path) -> None:
     memory_axis.set_ylabel("monitored - control (MiB)")
     memory_axis.grid(alpha=0.25)
     memory_axis.legend()
+    report_axis.set_title("JSON report rendering")
+    report_axis.set_xlabel("imported modules")
+    report_axis.set_ylabel("median elapsed (ms)")
+    report_axis.grid(alpha=0.25)
+    report_axis.legend()
     figure.suptitle("metapathology import overhead")
     figure.savefig(output, dpi=160)
     plt.close(figure)
 
 
 def _plot_mutations(rows: list[_Record], counts: list[int], output: Path) -> None:
-    figure, axes = plt.subplots(1, 3, figsize=(15, 4.5), constrained_layout=True)
+    figure, axes = plt.subplots(1, 4, figsize=(20, 4.5), constrained_layout=True)
     control = _median_series(rows, counts, "mutation", "time", False, "elapsed_seconds")
     monitored = _median_series(rows, counts, "mutation", "time", True, "elapsed_seconds")
     for enabled, elapsed in ((False, control), (True, monitored)):
@@ -400,6 +413,10 @@ def _plot_mutations(rows: list[_Record], counts: list[int], output: Path) -> Non
     axes[2].axhline(0.0, color="#111827", linewidth=1)
     axes[2].set_title("Retained Python-memory overhead")
     axes[2].set_ylabel("monitored - control (MiB)")
+    report = _median_series(rows, counts, "mutation", "time", True, "report_seconds")
+    axes[3].plot(counts, [value * 1_000 for value in report], marker="o", color="#7c3aed")
+    axes[3].set_title("JSON report rendering")
+    axes[3].set_ylabel("median elapsed (ms)")
     for axis in axes:
         axis.set_xlabel("pop/append pairs")
         axis.grid(alpha=0.25)
@@ -447,7 +464,7 @@ def _write_summary(
             "| --- | ---: | ---: | ---: | ---: | ---: |",
         )
     )
-    for scenario in ("native", "attributed"):
+    for scenario in ("native", "attributed", "deep"):
         for count in counts:
             control_time = statistics.median(_values(rows, scenario, "time", False, count, "elapsed_seconds"))
             monitored_time = statistics.median(_values(rows, scenario, "time", True, count, "elapsed_seconds"))
@@ -456,6 +473,25 @@ def _write_summary(
             lines.append(
                 f"| {scenario} | {count} | {control_time * 1_000:.3f} | {monitored_time * 1_000:.3f} "
                 f"| {monitored_time / control_time:.3f}x | {(monitored_memory - control_memory) / 1024:.2f} |"
+            )
+    lines.extend(
+        (
+            "",
+            "## JSON report rendering",
+            "",
+            "The report is rendered after the workload. It is not included in the import or mutation timing above.",
+            "",
+            "| Scenario | Modules / pairs | Render time (ms) | Render peak allocation (KiB) | JSON size (KiB) |",
+            "| --- | ---: | ---: | ---: | ---: |",
+        )
+    )
+    for scenario in (*("native", "attributed", "deep"), "mutation"):
+        for count in counts:
+            report_time = statistics.median(_values(rows, scenario, "time", True, count, "report_seconds"))
+            report_peak = statistics.median(_values(rows, scenario, "memory", True, count, "report_peak_bytes"))
+            report_size = statistics.median(_values(rows, scenario, "time", True, count, "report_bytes"))
+            lines.append(
+                f"| {scenario} | {count} | {report_time * 1_000:.3f} | {report_peak / 1024:.2f} | {report_size / 1024:.2f} |"
             )
     lines.extend(
         (
@@ -517,7 +553,7 @@ def main() -> int:
         )
     target = args.target
     document = {
-        "schema_version": 3,
+        "schema_version": 4,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "benchmark_driver_python": sys.version,
         "benchmark_driver_platform": platform.platform(),

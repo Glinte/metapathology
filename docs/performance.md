@@ -84,7 +84,7 @@ uv run --script scripts/benchmark.py
 
 The summary first reports fresh-process startup, package import, deferred
 monitor-API import, direct-script, and monitored-CLI timings. The import graph
-separates two cases:
+separates three cases:
 
 - `native` uses only the controlled standard-finder path and measures one
   retained audit-start record per synthetic builtin import, without
@@ -92,6 +92,14 @@ separates two cases:
 - `attributed` installs the same delegating instance finder in control and
   monitored processes. The monitored process retains an audit-start plus one
   finder-call record per synthetic import.
+- `deep` enables every opt-in deep diagnostic around the controlled
+  standard-finder path. This measures the delegated path-hook,
+  path-entry-finder, loader, and CPython import-outcome capture path.
+
+Every monitored sample then renders the JSON report after its workload. That
+separate measurement includes report-time route analysis and loader inventory,
+without folding report cost into import or mutation throughput. The graphs and
+summary show report-render time and allocation peak, plus rendered JSON size.
 
 The mutation graph measures repeated `pop`/`append` pairs, including stack
 capture. Timing and memory trials are separate so `tracemalloc` does not alter

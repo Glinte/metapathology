@@ -21,8 +21,9 @@ import metapathology
 _ResultValue = int | float | str
 # Keep implementation-module loading outside timed and traced regions, as it
 # was before the package began exposing its public API lazily. Startup cases in
-# benchmark.py measure that one-time cost separately.
+# benchmark.py measure the one-time public-API cost separately.
 _install = metapathology.install
+_render_report = metapathology.render_report
 
 
 class _DelegatingFinder:
@@ -82,7 +83,7 @@ def _package_name(value: str) -> str:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--scenario", choices=("native", "attributed", "mutation"), required=True)
+    parser.add_argument("--scenario", choices=("native", "attributed", "deep", "mutation"), required=True)
     parser.add_argument("--metric", choices=("time", "memory"), required=True)
     parser.add_argument("--count", type=_positive_int, required=True)
     parser.add_argument("--package", type=_package_name, required=True)
@@ -102,7 +103,13 @@ def _prepare(
     install_seconds = 0.0
     if args.monitored:
         started = time.perf_counter()
-        monitor = _install(report_at_exit=False)
+        monitor = _install(
+            report_at_exit=False,
+            deep_path_hooks=args.scenario == "deep",
+            deep_path_entry_finders=args.scenario == "deep",
+            deep_loaders=args.scenario == "deep",
+            deep_import_outcomes=args.scenario == "deep",
+        )
         install_seconds = time.perf_counter() - started
     mutation_finder = None
     if args.scenario == "mutation":
@@ -133,10 +140,20 @@ def _time_trial(args: argparse.Namespace) -> dict[str, _ResultValue]:
     started = time.perf_counter_ns()
     _run_workload(args, names, mutation_finder)
     elapsed_ns = time.perf_counter_ns() - started
+    event_count = _event_count(monitor)
+    report_seconds = 0.0
+    report_bytes = 0
+    if monitor is not None:
+        report_started = time.perf_counter_ns()
+        report = _render_report(format="json")
+        report_seconds = (time.perf_counter_ns() - report_started) / 1_000_000_000
+        report_bytes = len(report.encode("utf-8"))
     return {
         "elapsed_seconds": elapsed_ns / 1_000_000_000,
-        "event_count": _event_count(monitor),
+        "event_count": event_count,
         "install_seconds": install_seconds,
+        "report_seconds": report_seconds,
+        "report_bytes": report_bytes,
     }
 
 
@@ -158,11 +175,17 @@ def _memory_trial(args: argparse.Namespace) -> dict[str, _ResultValue]:
         raise RuntimeError("benchmark parent closed the memory-trial handshake")
     _run_workload(args, names, mutation_finder)
     gc.collect()
-    current, peak = tracemalloc.get_traced_memory()
+    current, _ = tracemalloc.get_traced_memory()
+    tracemalloc.reset_peak()
+    if monitor is not None:
+        report = _render_report(format="json")
+        del report
+    gc.collect()
+    _, report_peak = tracemalloc.get_traced_memory()
     return {
         "event_count": _event_count(monitor),
         "traced_current_bytes": current - after_install,
-        "traced_peak_bytes": peak - after_install,
+        "report_peak_bytes": report_peak - current,
     }
 
 
