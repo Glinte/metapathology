@@ -262,9 +262,9 @@ snapshot, and every diff. Full cache observations happen at path-hook mutation
 boundaries and report time; the import audit hook performs only an O(1)
 identity-and-length cache fingerprint check. Each observed builtin-import
 resolution start also retains an `ImportAuditStart`; imports already present
-in `sys.modules` remain cache hits and create no new records. The published reference matrix predates
-audit-start retention and is labeled as a pre-T3 baseline in the performance
-guide.
+in `sys.modules` remain cache hits and create no new records. The current
+reference matrix in the performance guide includes audit-start retention,
+report rendering, and a separate deep-diagnostics workload.
 
 Report-time route analysis retains two routes and one comparison for every
 reported custom winner and performs one synchronous standard-path probe for

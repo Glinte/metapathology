@@ -117,33 +117,45 @@ and peak traced allocations, and sampled peak RSS growth. Treat small timing
 differences as noise unless they persist across more repetitions and dedicated
 hardware.
 
-## Pre-T3 reference results
+## Current reference results
 
-A [default environment-matrix run][reference-run] measured commit `56f0d5b`
-on GitHub-hosted Linux, Windows, and macOS runners with CPython 3.10 and 3.14.
+A [default environment-matrix run][reference-run] and separate
+[deep-diagnostics run][deep-reference-run] measured the current benchmark on
+GitHub-hosted Linux, Windows, and macOS runners with CPython 3.10 and 3.14.
 Each environment used five fresh-process timing samples and three memory
-samples per point. This commit predates retained audit-start records, so these
-numbers are a historical v0.3 baseline and do not describe the current native
-scenario. Run the benchmark on the current revision when sizing T3 captures.
+samples per point. The tables take the median within each environment, then
+show the range and median across the six environments.
 
-The 5,000-operation points produced these cross-environment results:
+The default monitor's 5,000-operation points produced these results:
 
-| Measure | Range | Median across environments |
+| Measure | Cross-environment range | Median |
 | --- | ---: | ---: |
-| Monitor installation | 0.021–0.045 ms | 0.030 ms |
-| 5,000 native imports, monitored/control time | 0.90–1.05x | 1.03x |
-| 5,000 attributed imports, monitored/control time | 1.01–1.17x | 1.11x |
-| Retained memory per attributed finder-call record | 148–151 bytes | 150 bytes |
-| Monitored `pop`/`append` pair | 16–42 µs | 30 µs |
-| Retained memory per mutation record | 672–836 bytes | 754 bytes |
+| Monitor installation | 0.107–0.671 ms | 0.207 ms |
+| Native imports, monitored/control time | 0.96–1.19x | 1.10x |
+| Attributed imports, monitored/control time | 1.18–1.65x | 1.35x |
+| Retained overhead per native import | 335–349 bytes | 342 bytes |
+| Retained overhead per attributed import | 934–1,014 bytes | 974 bytes |
+| Monitored `pop`/`append` pair | 21.8–42.3 µs | 39.9 µs |
+| Retained overhead per `pop`/`append` pair | 1.31–1.63 KiB | 1.47 KiB |
+| Native JSON report rendering | 0.163–0.775 s | 0.355 s |
+| Attributed JSON report rendering | 0.564–3.033 s | 1.375 s |
 
-In that pre-T3 revision, the native result approximated imports without any
-retained per-import record, while the attributed result included search-path
-snapshots and finder-call records. Current runs retain audit starts in both
-scenarios.
-Mutation ratios are intentionally not summarized: a plain-list `pop`/`append`
-pair is so short that a relative multiplier exaggerates the practical cost;
-the absolute microseconds per pair are more useful.
+The deep monitor's 1,000-import point produced these results:
+
+| Measure | Cross-environment range | Median |
+| --- | ---: | ---: |
+| Monitored/control time | 7.06–15.34x | 13.08x |
+| Monitored import time | 0.72–2.17 s | 1.40 s |
+| Retained overhead per import | 3.65–4.38 KiB | 4.01 KiB |
+| JSON report rendering | 2.69–32.79 s | 11.24 s |
+| JSON report peak allocation | 24.94–51.46 MiB | 38.19 MiB |
+| Rendered JSON size | 6.98–7.22 MiB | 7.19 MiB |
+
+Deep report rendering has a pronounced interpreter-version split in this
+run: Python 3.14 took 2.69–4.69 seconds, while Python 3.10 took 17.79–32.79
+seconds. Mutation ratios are intentionally not summarized: a plain-list
+`pop`/`append` pair is so short that a relative multiplier exaggerates the
+practical cost; the absolute microseconds per pair are more useful.
 
 These figures describe synthetic workloads on shared hosted runners, not a
 performance guarantee. Real applications can probe several instrumentable
@@ -199,7 +211,8 @@ Each matrix job adds its Markdown table to the workflow summary and uploads a
 - `benchmark.json` with all measurements and environment metadata;
 - `summary.md` with median tables;
 - `imports.png`; and
-- `mutations.png`.
+- `mutations.png` for the default workflow. The deep-only workflow has no
+  mutation workload and therefore omits this graph.
 
 Hosted runners are shared, variable machines. Their results are useful for
 cross-platform shape and large regressions, but they are not a stable
@@ -209,4 +222,5 @@ before treating a small percentage change as significant.
 [benchmark-script]: https://github.com/Glinte/metapathology/blob/main/scripts/benchmark.py
 [benchmark-workflow]: https://github.com/Glinte/metapathology/actions/workflows/benchmark.yml
 [deep-benchmark-workflow]: https://github.com/Glinte/metapathology/actions/workflows/deep-benchmark.yml
-[reference-run]: https://github.com/Glinte/metapathology/actions/runs/29398284346
+[reference-run]: https://github.com/Glinte/metapathology/actions/runs/29637641815
+[deep-reference-run]: https://github.com/Glinte/metapathology/actions/runs/29638973492
