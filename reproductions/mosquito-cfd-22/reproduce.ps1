@@ -15,7 +15,7 @@ try {
     }
 
     Write-Host "`n=== Same failure with deep metapathology evidence ==="
-    uv run --no-sync python -m metapathology --deep --report report.json --report-format json -m pytest -q --cov=eager_source.normalization tests/test_normalization.py
+    uv run --no-sync python -m metapathology --deep -m pytest -q --cov=eager_source.normalization tests/test_normalization.py
     if ($LASTEXITCODE -eq 0) {
         throw "The monitored dotted-module command unexpectedly succeeded."
     }
