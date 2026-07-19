@@ -30,9 +30,20 @@ no finder call for metapathology to record.
 ## The meta path and path hooks
 
 For a name that is not cached, Python asks each finder in
-[`sys.meta_path`][sys-meta-path], in order, to return a module spec. Returning
-`None` passes the request to the next finder. Returning a spec claims the
-module and stops the search.
+[`sys.meta_path`][sys-meta-path], in order, to return a module spec by calling
+its `find_spec()` method. Returning `None` passes the request to the next
+finder. Returning a spec means the finder found the module, and the search
+stops.
+
+A [module spec](https://docs.python.org/3/library/importlib.html#importlib.machinery.ModuleSpec)
+is a small object describing a found module: its name, its *origin* (usually
+the file path), and the *loader* that will execute it. Python stores it as
+the module's `__spec__` attribute, which is how the report can tell, after
+the fact, how a module was loaded. For a package, the spec also carries the
+search locations that become the package's `__path__` — a
+[namespace package](https://docs.python.org/3/reference/import.html#namespace-packages)
+may list several directories there, and submodule imports search all of
+them.
 
 A normal CPython process includes three class-based finders:
 
@@ -75,8 +86,8 @@ the import process in different places.
 
 A CPython [`sys.addaudithook()`][audit-hook] callback observes the documented
 [`import` audit event][audit-events]. For normal import statements and
-`__import__()` calls, the event says that uncached resolution is starting; it
-does not say which finder will claim the module or whether the import will
+`__import__()` calls, the event says that Python is starting to search for a module that is not in `sys.modules`; it
+does not say which finder will find the module or whether the import will
 finish. Metapathology immediately copies the module name,
 `sys.meta_path` identity and finder type names, plus constant-size fingerprints
 from the enabled path-hook and importer-cache mechanisms, into an
@@ -118,7 +129,7 @@ finder-call recording.
 It remains a real `list` rather than a proxy, so code that iterates, slices, or
 checks `isinstance(sys.meta_path, list)` continues to work. The exact supported
 operations and known blind spots are listed under [runtime perturbation and
-cleanup](limitations.md#runtime-perturbation-and-cleanup).
+cleanup](limitations.md#runtime-changes-and-cleanup).
 
 ### Changes to the `sys.path_hooks` list
 
@@ -161,25 +172,25 @@ protocol. The first observation of each distinct finder is retained, including
 the insertion mutation sequence when one was captured, so instrumentation
 cannot make the original contract appear more modern than it was.
 
-Default reports can still infer a standard result by joining import-time
-ordering with conservative post-hoc loader metadata. The inference label is
-important: metadata may have changed after loading. Opt-in deep import
-outcomes also profile the runtime-discovered `PathFinder.find_spec` code object
-when CPython exposes it, capturing the aggregate returned spec without
-shadowing or replacing the class entry.
+When no custom finder found a module, the report can still infer which
+standard finder handled it by combining import order with module metadata
+read at report time. Such entries are labeled `[inferred]` because metadata
+may have changed after loading. The opt-in `--deep-import-outcomes` mechanism
+instead records real `PathFinder` results, without shadowing or replacing the
+shared class.
 
 [find-spec]: https://docs.python.org/3/library/importlib.html#importlib.abc.MetaPathFinder.find_spec
 
-## Resolution-route comparison
+## The report-time comparison
 
-For a module claimed by a finder other than `PathFinder`, the report keeps the
-claim as a captured resolution route. It then asks `PathFinder.find_spec()`
-what the standard path machinery finds using the search path captured during
-the original call. The result is a separate, independent standard-path probe.
+For a module found by a finder other than `PathFinder`, the report records
+the spec that finder returned. It then calls `PathFinder.find_spec()` with
+the same name and search path to see what the standard path machinery finds.
+The two results are shown side by side in the report.
 
-The probe uses report-time path-hook, importer-cache, filesystem, and finder
-state, and it does not execute custom meta-path finders between the captured
-finder and `PathFinder`. A missing result or semantic difference therefore
-describes two routes; it does not predict which finder would win if the
-captured finder were absent. Continue with [Reading the report](report.md) for
-the route fields, finding promotion rules, and caveats.
+The fresh `PathFinder` call runs at report time — against current path
+hooks, importer cache, filesystem, and finder state — and it skips other
+custom meta path finders. A difference between the two results is therefore
+evidence to investigate, not proof of what would have happened had the
+custom finder been absent. Continue with [Reading the report](report.md) for
+how these comparisons are presented and when they become findings.

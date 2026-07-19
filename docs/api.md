@@ -111,8 +111,9 @@ competing monitors is not supported because import state is process-global.
   is currently active.
 - `deep_diagnostics: tuple[str, ...]` — explicitly enabled inline delegation
   mechanisms.
-- `standard_finder_status: str` — whether exact aggregate `PathFinder`
-  profiling is active, unavailable, unsupported, or inactive after cleanup.
+- `standard_finder_status: str` — whether exact `PathFinder` result capture
+  (`deep_import_outcomes`) is active, unavailable, unsupported, or inactive
+  after cleanup.
 - `initial_importer_cache: tuple[ImporterCacheEntry, ...]` — string-keyed
   cache entries captured when importer-cache monitoring was enabled.
 - `baseline_modules: frozenset[str]` — `sys.modules` names at installation.
@@ -135,7 +136,7 @@ across record types. `MonitorEvent` includes the event classes below.
 
 ### `DeepDiagnosticCall`
 
-Records one opt-in delegated boundary with the mechanism, safe object
+Records one opt-in deep-diagnostic call with the mechanism, safe object
 identity/type, module or path, outcome, exception type, and thread. The
 `unobserved_reentrant` outcome means a nested call delegated normally while
 the per-thread guard suppressed exact nested instrumentation. Modern mutable
@@ -145,11 +146,11 @@ the target's `ModuleCacheState` at entry and return or exception exit.
 
 ### `StandardFinderCall`
 
-Records a successful aggregate `PathFinder` result captured by the opt-in
-reversible profiler. It links the semantic `SpecSummary` to the exact T13
+Records a `PathFinder` result captured by the opt-in reversible profiler
+(`deep_import_outcomes`). It links the `SpecSummary` to the exact import
 attempt and thread without modifying the shared `PathFinder` class. No record
-is invented when runtime code-object discovery or profiler ownership prevents
-capture; consult `Monitor.standard_finder_status` and the report fallback.
+is created when the profiler could not be activated; consult
+`Monitor.standard_finder_status` and the report's stated fallback.
 
 ### `ImportAuditStart`
 
@@ -174,12 +175,12 @@ replacements are not probed.
 
 ### `FindSpecCall`
 
-Records the module name, finder type and identity, whether the finder claimed
+Records the module name, finder type and identity, whether the finder found
 the module, loader type, origin, captured search path and whether it represented
 `sys.path` or a parent package path, a `SpecSummary`, the exception type if the
 finder raised, and the thread name.
-The record also carries `module_state_before` and `module_state_after` from the
-finder delegation boundary. A changed pair does not reconstruct nested import
+The record also carries `module_state_before` and `module_state_after`,
+captured around the wrapped call. A changed pair does not reconstruct nested import
 activity or temporary intermediate objects.
 
 ### `SpecSummary`

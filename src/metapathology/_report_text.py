@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 _PACKAGE_DIR = os.path.normcase(os.path.dirname(os.path.abspath(__file__)))
 # Max non-noise frames shown per stack in the report.
 _STACK_DISPLAY_FRAMES = 5
+_REPORT_GUIDE_URL = "https://glinte.github.io/metapathology/report/"
 _STANDARD_RESOLUTION_DISPLAY_LIMIT = 50
 _FINDER_CONTRACT_DISPLAY_LIMIT = 50
 _STANDARD_FINDER_IDS = frozenset((id(BuiltinImporter), id(FrozenImporter), id(PathFinder)))
@@ -260,14 +261,19 @@ def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
     if not document.findings:
         module_count = 0 if document.modules_since_install is None else len(document.modules_since_install)
         if divergent or document.explanations:
-            lines.append("No findings were synthesized; the route divergences below are neutral evidence.")
+            lines.append("No problems were found. The comparisons below are informational.")
         else:
             lines.append(f"No import-hook interference detected across {module_count} monitored imports.")
     lines.extend(_narrative_lines(document, context))
 
     if divergent:
         lines.append("")
-        lines.append(context.heading(f"-- resolution route divergences ({len(divergent)}) --"))
+        lines.append(context.heading(f"-- modules found by a custom finder ({len(divergent)}) --"))
+        lines.append(
+            "For each module, the recorded result is compared with a fresh PathFinder search over the same"
+            " path, run at report time. The fresh search reflects current state; it does not show which finder"
+            " would have won during the run."
+        )
         for comparison in divergent:
             lines.extend(_route_comparison_lines(comparison, context, mutations))
 
@@ -280,10 +286,11 @@ def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
 
     if calls:
         lines.append("")
-        lines.append(context.heading("-- finder attribution (instrumented finders only) --"))
+        lines.append(context.heading("-- finder calls --"))
+        lines.append("Standard CPython finders are not wrapped, so their calls do not appear here.")
         lines.extend(_attribution_lines(calls, context))
     else:
-        empty_sections.append("find_spec activity on instrumented finders")
+        empty_sections.append("finder calls")
 
     contract_lines = _finder_contract_lines(document.finder_contracts, context)
     if contract_lines:
@@ -294,7 +301,7 @@ def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
         lines.append("")
         lines.extend(_standard_resolution_lines(document.standard_resolutions, context))
     else:
-        empty_sections.append("standard resolution outcomes")
+        empty_sections.append("imports attributed to standard finders")
 
     if document.events:
         lines.append("")
@@ -413,11 +420,12 @@ def _narrative_lines(document: ReportDocument, context: _RenderContext) -> list[
             f"{context.severity(f'[{number}]', finding.severity)} {_style_leading_tag(block[0], finding.severity, context)}"
         )
         if finding.signals:
-            block.append(f"    corroborating signals: {', '.join(item.replace('_', ' ') for item in finding.signals)}")
+            block.extend(f"    note: {_signal_description(signal)}" for signal in finding.signals)
         consequence = _WHY_IT_MATTERS.get(finding.kind)
         if consequence is not None:
             block.append(f"    why it matters: {consequence}")
         block.append(f"    {_finding_confidence_line(finding, context)}")
+        block.append(f"    guide: {_REPORT_GUIDE_URL}#{finding.kind.replace('_', '-')}")
         lines.extend(block)
 
     orphan_explanations = [
@@ -483,15 +491,15 @@ def _unresolved_import_lines(document: ReportDocument, context: _RenderContext) 
     missing = None if document.target_outcome is None else document.target_outcome.missing_module
     ordered = sorted(unresolved, key=lambda attempt: (attempt.fullname != missing, attempt.start_event_seq))
     lines = [context.heading(f"-- imports that started but produced no module ({len(unresolved)}) --")]
-    lines.append("Failed or abandoned optional imports are normal; entries matter when the target needed the module.")
+    lines.append("Failed optional imports are normal; an entry matters when your program needed the module.")
     for attempt in ordered[:_MAX_UNRESOLVED_ATTEMPTS]:
-        marker = " (the target's failed module)" if attempt.fullname == missing else ""
+        marker = " (the failed module)" if attempt.fullname == missing else ""
         lines.append(
-            f"'{attempt.fullname}': progress {_humanize(attempt.progress)}, began at event #{attempt.start_event_seq}"
-            f"{marker}{context.thread_suffix(attempt.thread_name)}"
+            f"'{attempt.fullname}': import started at event #{attempt.start_event_seq}, "
+            f"{_progress_description(attempt.progress)}{marker}{context.thread_suffix(attempt.thread_name)}"
         )
     if len(ordered) > _MAX_UNRESOLVED_ATTEMPTS:
-        lines.append(f"... and {len(ordered) - _MAX_UNRESOLVED_ATTEMPTS} more; details in JSON")
+        lines.append(f"... and {len(ordered) - _MAX_UNRESOLVED_ATTEMPTS} more; full list in the JSON report")
     numbers = _headline_finding_numbers(document)
     legacy = [finding for finding in document.findings if finding.kind == "legacy_finder_contract"]
     for finding in legacy:
@@ -540,7 +548,7 @@ def _explanation_lines(
         ]
         if explanation.next_observation == "enable_deep_import_outcomes":
             lines.append(
-                "    next observation: enable deep import outcomes to confirm whether the descendant import failed"
+                "    next step: rerun with --deep-import-outcomes to confirm whether the submodule import failed"
             )
         return lines
     if explanation.kind == "standard_winner_precedence":
@@ -553,13 +561,13 @@ def _explanation_lines(
         if explanation.standard_attempt_id is not None:
             lines.append(f"    attempt: attempt:{explanation.standard_attempt_id}")
         if explanation.next_observation == "enable_deep_import_outcomes":
-            lines.append("    next observation: enable deep import outcomes to capture the standard winner")
+            lines.append("    next step: rerun with --deep-import-outcomes to record the actual PathFinder result")
         return lines
     if explanation.kind == "finder_side_effect":
         outcome = "raised" if explanation.effect_status == "finder_raised" else "returned None"
         return [
             f"[captured] {explanation.finder_type_name} {outcome} after changing sys.modules['{explanation.subject}']",
-            f"    {explanation.boundary} boundary: {_module_transition(explanation.state_before, explanation.state_after)}",
+            f"    during {_bare_boundary_label(explanation.boundary)}: {_module_transition(explanation.state_before, explanation.state_after)}",
             "    nested activity was not observed; the boundary delta does not identify the internal cause",
         ]
     if explanation.kind == "module_replacement":
@@ -570,7 +578,7 @@ def _explanation_lines(
         )
         return [
             f"[captured] {explanation.finder_type_name} {action} '{explanation.subject}'",
-            f"    {explanation.boundary} boundary: {_module_transition(explanation.state_before, explanation.state_after)}",
+            f"    during {_bare_boundary_label(explanation.boundary)}: {_module_transition(explanation.state_before, explanation.state_after)}",
             "    both endpoint identities are exact; intermediate steps remain unknown",
         ]
     if explanation.kind == "ambiguous_contention":
@@ -618,16 +626,19 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
     """Summarize mechanism status and interpreter state, collapsing unchanged snapshots."""
     lines = [context.heading("== metapathology report ==")]
     lines.extend(_verdict_lines(document, context))
-    lines.append("report guide: https://glinte.github.io/metapathology/report/")
+    lines.append(f"report guide: {_REPORT_GUIDE_URL}")
     lines.append(_monitoring_line(document))
     if document.deep_diagnostics:
         warning = context.warning("WARNING:")
-        lines.append(f"{warning} opt-in deep diagnostics replace foreign callables and may perturb identity checks")
-        lines.append(f"deep mechanisms enabled: {', '.join(document.deep_diagnostics)}")
+        lines.append(
+            f"{warning} opt-in deep diagnostics are enabled; they wrap import-machinery callables "
+            "and may affect identity checks"
+        )
+        lines.append(f"deep diagnostics enabled: {', '.join(document.deep_diagnostics)}")
     if document.deep_import_outcomes_status != "disabled":
-        lines.append(f"deep import outcome coverage: {_humanize(document.deep_import_outcomes_status)}")
+        lines.append(f"import outcome observation: {_humanize(document.deep_import_outcomes_status)}")
     if document.standard_finder_status != "disabled":
-        lines.append(f"standard finder aggregate coverage: {_humanize(document.standard_finder_status)}")
+        lines.append(f"PathFinder result capture: {_humanize(document.standard_finder_status)}")
     bootstrap = document.early_site_bootstrap
     if bootstrap is not None:
         lines.append(f"early site bootstrap: {context.display_path(bootstrap.path)}")
@@ -643,10 +654,15 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
 
     if document.current_meta_path == document.initial_meta_path:
         lines.append(f"sys.meta_path (unchanged since install): {_names_line(document.initial_meta_path)}")
+        displayed_finders: tuple[str, ...] = document.initial_meta_path
     else:
         current_meta_path = ("<unavailable>",) if document.current_meta_path is None else document.current_meta_path
         lines.append(f"sys.meta_path at install: {_names_line(document.initial_meta_path)}")
         lines.append(f"sys.meta_path now: {_names_line(current_meta_path)}")
+        displayed_finders = document.initial_meta_path + current_meta_path
+    for name, annotation in _KNOWN_SHIM_ANNOTATIONS.items():
+        if name in displayed_finders:
+            lines.append(f"    {name} is {annotation}")
 
     if document.path_hooks_enabled:
         current_hooks = document.current_path_hooks
@@ -661,7 +677,7 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
         initial_count = len(document.initial_importer_cache)
         cache = document.current_importer_cache
         current_count = "<unavailable>" if cache is None else str(len(cache))
-        line = f"sys.path_importer_cache: {initial_count} -> {current_count} string-keyed entries"
+        line = f"sys.path_importer_cache: {initial_count} -> {current_count} entries"
         initial_non_string = document.initial_importer_cache_non_string_keys
         current_non_string = document.current_importer_cache_non_string_keys or 0
         if initial_non_string or current_non_string:
@@ -677,7 +693,6 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
         lines.append(
             "standard CPython finders left unwrapped (expected): "
             + _names_line(tuple(item.finder_type_name for item in standard_skipped))
-            + "; custom claims are compared with an independent standard path probe below"
         )
     if other_skipped:
         lines.append("other finders observed but not instrumented (direct attribution unavailable):")
@@ -742,7 +757,8 @@ def _verdict_lines(document: ReportDocument, context: _RenderContext) -> list[st
         lines.append(f"{context.severity('verdict:', severity)} {breakdown}")
     elif any(_routes_differ(comparison) for comparison in document.route_comparisons):
         lines.append(
-            f"{context.severity('verdict:', 'informational')} no findings; neutral resolution route divergences were recorded"
+            f"{context.severity('verdict:', 'informational')} no problems found; some modules were found by a "
+            "custom finder instead of the standard path search — listed below for review"
         )
     else:
         module_count = 0 if document.modules_since_install is None else len(document.modules_since_install)
@@ -766,13 +782,6 @@ def _monitoring_line(document: ReportDocument) -> str:
             mechanisms.append(name)
         else:
             notes.append(f"{name} off")
-    optional_off: list[str] = []
-    if not document.deep_diagnostics:
-        optional_off.append("deep diagnostics")
-    if document.early_site_bootstrap is None:
-        optional_off.append("early site bootstrap")
-    if optional_off:
-        notes.append(f"opt-in {_join_names(optional_off)} available but not used for this run")
     line = "monitoring: " + ", ".join(mechanisms)
     if notes:
         line += " (" + "; ".join(notes) + ")"
@@ -782,6 +791,76 @@ def _monitoring_line(document: ReportDocument) -> str:
 def _humanize(value: str) -> str:
     """Render one internal snake_case value as plain words."""
     return value.replace("_", " ")
+
+
+# Plain-language descriptions for machine-readable route/finding signals.
+_SIGNAL_DESCRIPTIONS = {
+    "meta_path_short_circuit": ("this finder ran before PathFinder, so the standard path search never saw the module"),
+}
+
+
+def _signal_description(signal: str) -> str:
+    """Explain a known signal in plain words, humanizing unknown values."""
+    return _SIGNAL_DESCRIPTIONS.get(signal, _humanize(signal))
+
+
+# Plain-language descriptions for unresolved-attempt progress states.
+_PROGRESS_DESCRIPTIONS = {
+    "started": "no finder result was recorded",
+    "finder_claimed": "a finder returned a spec but no module appeared",
+    "finder_raised": "a finder raised an exception",
+    "failed": "the import failed",
+}
+
+
+def _progress_description(progress: str) -> str:
+    """Explain how far an unresolved import got, humanizing unknown values."""
+    return _PROGRESS_DESCRIPTIONS.get(progress, _humanize(progress))
+
+
+# Plain-language labels for opt-in deep-diagnostic call sites. These lines
+# only appear when the matching --deep-* mechanism is enabled.
+_BOUNDARY_LABELS = {
+    "path_hook": "path hook called with",
+    "path_entry_finder": "path entry finder asked about",
+    "loader_create_module": "loader create_module() for",
+    "loader_exec_module": "loader exec_module() for",
+}
+
+
+def _boundary_label(boundary: str) -> str:
+    """Name a deep-diagnostic call site in plain words."""
+    return _BOUNDARY_LABELS.get(boundary, _humanize(boundary))
+
+
+_BARE_BOUNDARY_LABELS = {
+    "find_spec": "the finder's find_spec() call",
+    "path_hook": "a path hook call",
+    "path_entry_finder": "a path entry finder call",
+    "loader_create_module": "the loader's create_module() call",
+    "loader_exec_module": "the loader's exec_module() call",
+}
+
+
+def _bare_boundary_label(boundary: str | None) -> str:
+    """Name a deep-diagnostic call site as a noun phrase."""
+    if boundary is None:
+        return "an unrecorded call"
+    return _BARE_BOUNDARY_LABELS.get(boundary, _humanize(boundary))
+
+
+# Plain-language labels for importer-cache observation boundaries.
+_OBSERVATION_LABELS = {
+    "install": "at install",
+    "report": "at report time",
+    "before_path_hooks_mutation": "before a sys.path_hooks change",
+    "after_path_hooks_mutation": "after a sys.path_hooks change",
+}
+
+
+def _observation_label(observation: str) -> str:
+    """Name the boundary where a cache snapshot was taken."""
+    return _OBSERVATION_LABELS.get(observation, _humanize(observation))
 
 
 def _ref_signatures(references: tuple[ImportObjectRef, ...]) -> tuple[tuple[int, str, str | None], ...]:
@@ -847,41 +926,47 @@ def _finder_contract_lines(contracts: tuple[FinderContract, ...], context: _Rend
             lines.append("    compatibility could not be determined without binding a descriptor or dynamic attribute")
     omitted = len(risky) + len(standard) - len(shown)
     if omitted:
-        lines.append(f"... {omitted} more risk/standard entries; details in JSON")
+        lines.append(f"... {omitted} more risk/standard entries; full list in the JSON report")
     return lines
 
 
 def _standard_resolution_lines(resolutions: tuple[StandardResolution, ...], context: _RenderContext) -> list[str]:
     """Render a bounded projection without hiding evidence provenance."""
-    lines = [context.heading(f"-- standard resolution outcomes ({len(resolutions)}) --")]
+    lines = [context.heading(f"-- imports attributed to standard finders ({len(resolutions)}) --")]
+    if any(resolution.evidence_level == "inferred" for resolution in resolutions):
+        lines.append(
+            "Entries marked [inferred] combine import order with module metadata read at report time; "
+            "the find_spec() call itself was not recorded."
+        )
     for resolution in resolutions[:_STANDARD_RESOLUTION_DISPLAY_LIMIT]:
         origin = "None" if resolution.origin is None else context.quoted_path(resolution.origin)
         line = (
-            f"[{_humanize(resolution.evidence_level)} standard resolution] {resolution.fullname!r}: "
+            f"[{_humanize(resolution.evidence_level)}] {resolution.fullname!r}: "
             f"{resolution.finder_type_name} produced {resolution.category} "
             f"(loader {resolution.loader_type_name}, origin {origin})"
         )
         lines.append(line)
         if resolution.later_finders:
-            lines.append(f"    later meta-path entries were unreachable: {_names_line(resolution.later_finders)}")
+            lines.append(f"    later meta path entries were never reached: {_names_line(resolution.later_finders)}")
         if resolution.component_event_seqs:
             references = ", ".join(f"#{seq}" for seq in resolution.component_event_seqs)
-            lines.append(f"    captured path-entry components: {references}")
-        if resolution.evidence_level == "inferred":
-            lines.append("    based on import-time ordering and post-hoc loader inventory; no finder call was captured")
+            lines.append(f"    related path entry finder calls: {references}")
     omitted = len(resolutions) - _STANDARD_RESOLUTION_DISPLAY_LIMIT
     if omitted > 0:
-        lines.append(f"... {omitted} additional standard outcomes; details in JSON")
+        lines.append(f"... {omitted} more; full list in the JSON report")
     return lines
 
 
 def _timeline_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
     """Render the timeline with shared context hoisted into a preamble."""
     events = document.events
-    lines = [context.heading(f"-- chronological evidence timeline ({len(events)}) --")]
-    lines.append("Events appear in capture order; concurrent events have no global wall-clock order.")
+    lines = [context.heading(f"-- event timeline ({len(events)}) --")]
     if context.only_thread is not None:
-        lines.append(f"All events on thread {context.only_thread}.")
+        lines.append(f"Events are numbered in the order they were recorded; all ran on thread {context.only_thread}.")
+    else:
+        lines.append(
+            "Events are numbered in the order they were recorded; concurrent threads have no exact wall-clock order."
+        )
 
     audits = _events_of_type(events, ImportAuditStart)
     meta_path_stable = len({(audit.meta_path_id, audit.meta_path_type_names) for audit in audits}) <= 1
@@ -910,7 +995,10 @@ def _timeline_lines(document: ReportDocument, context: _RenderContext) -> list[s
         return lines
 
     protected = _protected_event_positions(document, events)
-    lines.extend(_collapse_timeline_entries(entries, protected))
+    collapsed = _collapse_timeline_entries(entries, protected)
+    if len(collapsed) < len(entries):
+        lines.append("Runs of routine events are collapsed; the JSON report always lists every event.")
+    lines.extend(collapsed)
     return lines
 
 
@@ -1008,11 +1096,11 @@ def _collapse_summary_line(run: "list[tuple[MonitorEvent, str, list[str], bool]]
     declined = sum(1 for event, *_ in run if isinstance(event, FindSpecCall))
     clauses = []
     if starts:
-        clauses.append(f"{starts} uncached import start{'' if starts == 1 else 's'}")
+        clauses.append(f"{starts} import start{'' if starts == 1 else 's'}")
     if declined:
-        clauses.append(f"{declined} declined probe{'' if declined == 1 else 's'}")
+        clauses.append(f"{declined} finder call{'' if declined == 1 else 's'} returning None")
     detail = " and ".join(clauses)
-    return f"#{first_seq}-#{last_seq}: {detail} collapsed; details in JSON timeline"
+    return f"#{first_seq}-#{last_seq}: {detail} (collapsed)"
 
 
 def _join_names(names: list[str]) -> str:
@@ -1055,25 +1143,28 @@ def _timeline_line(event: MonitorEvent, context: _RenderContext) -> str:
     if isinstance(event, DeepDiagnosticCall):
         subject = event.fullname if event.fullname is not None else event.path
         transition = _module_transition_suffix(event.module_state_before, event.module_state_after)
-        return f"#{event.seq} deep {event.boundary} {subject or '<unknown>'}: {event.outcome}{transition}"
+        return f"#{event.seq} {_boundary_label(event.boundary)} {subject or '<unknown>'}: {event.outcome}{transition}"
     if isinstance(event, DeepImportEvent):
-        return f"#{event.seq} deep import {event.fullname!r}: {event.outcome}{context.thread_suffix(event.thread_name)}"
+        return (
+            f"#{event.seq} import of {event.fullname!r}: {event.outcome} (directly observed)"
+            f"{context.thread_suffix(event.thread_name)}"
+        )
     if isinstance(event, ImportAuditStart):
         # Stable snapshot context lives in the timeline preamble; deviations
         # are appended by _timeline_lines as continuation lines.
-        return f"#{event.seq} uncached import started: {event.fullname!r}{context.thread_suffix(event.thread_name)}"
+        return f"#{event.seq} import started: {event.fullname!r}{context.thread_suffix(event.thread_name)}"
     if isinstance(event, FindSpecCall):
         if event.exception_type_name is not None:
             outcome = f"raised {event.exception_type_name}"
         elif event.found:
             origin = "None" if event.origin is None else context.quoted_path(event.origin)
-            outcome = f"claimed (loader {event.loader_type_name}, origin {origin})"
+            outcome = f"found it (loader {event.loader_type_name}, origin {origin})"
         else:
-            outcome = "declined"
+            outcome = "returned None"
         finder = context.finder_label(event.finder_type_name, event.finder_id)
         transition = _module_transition_suffix(event.module_state_before, event.module_state_after)
         return (
-            f"#{event.seq} {finder} probed {event.fullname!r}: {outcome}{transition}"
+            f"#{event.seq} {finder}.find_spec({event.fullname!r}): {outcome}{transition}"
             f"{context.thread_suffix(event.thread_name)}"
         )
     if isinstance(event, StandardFinderCall):
@@ -1091,9 +1182,9 @@ def _timeline_line(event: MonitorEvent, context: _RenderContext) -> str:
             deltas.append(context.negative(f"-{len(event.removed)}"))
         if event.replaced:
             deltas.append(context.warning(f"~{len(event.replaced)}"))
-        delta = " ".join(deltas) if deltas else "(no string-key changes)"
+        delta = " ".join(deltas) if deltas else "(no changes)"
         return (
-            f"#{event.seq} importer cache diff at {_humanize(event.observation)}: {delta}"
+            f"#{event.seq} sys.path_importer_cache {_observation_label(event.observation)}: {delta}"
             f"{context.thread_suffix(event.thread_name)}"
         )
     if isinstance(event, MetaPathMutation):
@@ -1130,21 +1221,15 @@ def _timeline_delta(added: tuple[str, ...], removed: tuple[str, ...], context: _
     return " ".join(parts) if parts else "(order change)"
 
 
-# Display-only annotations for finder classes that well-known environment
-# tooling installs at startup. They affect text labels only, never severity
-# or finding logic, and match by class name alone.
-_KNOWN_SHIM_ANNOTATIONS = {"_Finder": "virtualenv startup, expected"}
+# Display-only notes for finder classes that well-known environment tooling
+# installs at startup. Rendered once as a header note, never inline in list
+# snapshots, and never used by severity or finding logic.
+_KNOWN_SHIM_ANNOTATIONS = {"_Finder": "installed by virtualenv at startup; its presence is expected"}
 
 
 def _names_line(names: tuple[str, ...]) -> str:
     """Format finder names as a bracketed, comma-separated list."""
-    return "[" + ", ".join(_annotated_name(name) for name in names) + "]"
-
-
-def _annotated_name(name: str) -> str:
-    """Append the known-environment-shim annotation to a displayed finder name."""
-    annotation = _KNOWN_SHIM_ANNOTATIONS.get(name)
-    return name if annotation is None else f"{name} ({annotation})"
+    return "[" + ", ".join(names) + "]"
 
 
 def _loader_inventory_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
@@ -1155,7 +1240,7 @@ def _loader_inventory_lines(document: ReportDocument, context: _RenderContext) -
     """
     inventory = document.loader_inventory
     if not inventory.available:
-        return [context.heading("-- post-hoc loader inventory --"), "(sys.modules snapshot unavailable)"]
+        return [context.heading("-- loaders of imported modules --"), "(sys.modules snapshot unavailable)"]
     groups: dict[str | None, list[ModuleMetadata]] = {}
     for entry in inventory.entries:
         if entry.inspection != "available":
@@ -1182,9 +1267,14 @@ def _loader_inventory_lines(document: ReportDocument, context: _RenderContext) -
     if not custom and not disagreements and not unavailable and not inventory.non_string_keys:
         return []
     lines = [
-        context.heading(f"-- relevant post-hoc loader inventory ({len(inventory.entries)} total entries in JSON) --")
+        context.heading(
+            f"-- loaders of imported modules ({len(inventory.entries)} entries; full list in the JSON report) --"
+        )
     ]
-    lines.append("Text shows claimed custom loaders and metadata problems; attribution remains report-time.")
+    lines.append(
+        "Only custom loaders and metadata problems are shown. This reflects module metadata at report time,"
+        " which may differ from how each module was originally loaded."
+    )
     for label in custom:
         entries = groups[label]
         lines.append(f"{label}: {len(entries)} module(s)")
@@ -1295,7 +1385,7 @@ def _cache_finder_name(finder: ImportObjectRef | None, force_id: bool = False) -
     otherwise read identically.
     """
     if finder is None:
-        return "negative (None)"
+        return "None (no importer for this path)"
     label = _ref_label(finder)
     return f"{label} id 0x{finder.object_id:x}" if force_id else label
 
@@ -1339,7 +1429,7 @@ def _importer_cache_diff_lines(diff: ImporterCacheDiff, context: _RenderContext)
     everything else is summarized as one counted line, keeping JSON
     exhaustive.
     """
-    lines = [f"#{diff.seq} at {_humanize(diff.observation)}{context.thread_suffix(diff.thread_name)}"]
+    lines = [f"#{diff.seq} {_observation_label(diff.observation)}{context.thread_suffix(diff.thread_name)}"]
     entries = _cache_diff_entries(diff, context)
     relevant = context.relevant_cache_paths
     if relevant:
@@ -1349,15 +1439,17 @@ def _importer_cache_diff_lines(diff: ImporterCacheDiff, context: _RenderContext)
         lines.extend(line for _kind, _path, line in shown)
         if len(relevant_entries) > _MAX_CACHE_CHANGES_PER_DIFF:
             omitted = len(relevant_entries) - _MAX_CACHE_CHANGES_PER_DIFF
-            lines.append(f"    ... and {omitted} more changes; details in JSON")
+            lines.append(f"    ... and {omitted} more changes; full list in the JSON report")
         if other_entries:
-            lines.append(f"    other changes: {_cache_change_counts_clause(other_entries)}; details in JSON")
+            lines.append(
+                f"    other changes: {_cache_change_counts_clause(other_entries)}; full list in the JSON report"
+            )
     else:
         shown = entries[:_UNFILTERED_CACHE_CHANGES_SHOWN]
         lines.extend(line for _kind, _path, line in shown)
         if len(entries) > _UNFILTERED_CACHE_CHANGES_SHOWN:
             omitted = len(entries) - _UNFILTERED_CACHE_CHANGES_SHOWN
-            lines.append(f"    ... and {omitted} more changes; details in JSON")
+            lines.append(f"    ... and {omitted} more changes; full list in the JSON report")
     if diff.non_string_keys_before != diff.non_string_keys_after:
         lines.append(f"    non-string keys omitted: {diff.non_string_keys_before} -> {diff.non_string_keys_after}")
     return lines
@@ -1376,7 +1468,8 @@ def _attribution_lines(calls: list[FindSpecCall], context: _RenderContext) -> li
     for (name, finder_id), count in sorted(probes.items()):
         claimed = wins.get((name, finder_id), [])
         lines.append(
-            f"{context.finder_label(name, finder_id)}: {count} probe{'' if count == 1 else 's'}, {len(claimed)} claimed"
+            f"{context.finder_label(name, finder_id)}: called {count} time{'' if count == 1 else 's'}, "
+            f"found {len(claimed)} module{'' if len(claimed) == 1 else 's'}"
         )
         lines.extend(f"    {module}" for module in claimed[:_MAX_LISTED_MODULES])
         if len(claimed) > _MAX_LISTED_MODULES:
@@ -1410,13 +1503,13 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
             finding.module_state_baseline or call.module_state_before, _deep_effective_module_state(call)
         )
         return [
-            f"[module-replacement] '{finding.module}': object identity changed across deep {call.boundary}",
+            f"[module-replacement] '{finding.module}': the module object changed during {_bare_boundary_label(call.boundary)}",
             f"    captured boundary: {transition}; internal steps and temporary objects are unknown",
         ]
     if finding.kind == "no_spec":
         return [
-            f"[no-spec] '{finding.module}' is in sys.modules with no __spec__ and no recorded finder claim "
-            "(manually created or exec_module-style load; invisible to all import hooks)."
+            f"[no-spec] '{finding.module}' is in sys.modules with no __spec__, and no finder call for it was "
+            "recorded (likely created manually or loaded without the normal import machinery)."
         ]
     claim = finding.claim
     if finding.kind == "finder_side_effect" and claim is not None:
@@ -1440,8 +1533,9 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
         else:
             standard_only = ", ".join(context.quoted_path(path) for path in comparison.only_in_right_route)
         return [
-            f"[namespace-truncation] '{finding.module}': descendant failure is correlated with a narrower namespace route from {finder}",
-            f"    locations available only through the standard path probe: {standard_only}",
+            f"[namespace-truncation] '{finding.module}': the namespace returned by {finder} omits locations "
+            "that the standard path search finds, and a submodule import failed",
+            f"    locations found only by the standard path search: {standard_only}",
             f"    {_structural_comparison_line(finding)}",
         ]
     return [f"[{tag}] '{finding.module}': captured evidence from {finder}"]
@@ -1500,25 +1594,16 @@ def _route_comparison_lines(
     if left is None or right is None:
         return [f"{comparison.comparison_id}: referenced route unavailable"]
     lines = [
-        f"'{left.module}': captured claim compared with an independent standard path probe",
-        f"    captured route: {_route_summary(left, context)}",
-        f"    standard path probe: {_route_summary(right, context, same_origin_as=left)}",
+        f"'{left.module}':",
+        f"    during the run: {_route_summary(left, context)}",
+        f"    standard search at report time: {_route_summary(right, context, same_origin_as=left)}",
         f"    {_route_difference_line(comparison)}",
     ]
     installer = _finder_installation_line(left.finder_type_name, mutations or [], context)
     if installer is not None:
         lines.append(f"    {installer}")
-    if left.signals:
-        signals = ", ".join(item.replace("_", " ") for item in left.signals)
-        lines.append(f"    captured route signals: {signals}")
-    lines.extend(
-        (
-            "    interpretation: the probe does not predict which finder would win if the captured finder were absent",
-            "    probe boundary: captured search path; report-time path hooks, importer cache, filesystem, and "
-            "finder state; intervening meta-path finders skipped",
-            f"    {_structural_evidence_line(comparison.structural_comparison)}",
-        )
-    )
+    lines.extend(f"    note: {_signal_description(signal)}" for signal in left.signals)
+    lines.append(f"    {_structural_evidence_line(comparison.structural_comparison)}")
     return lines
 
 
@@ -1576,22 +1661,22 @@ def _route_difference_line(comparison: RouteComparison) -> str:
         differences.append("package/module status")
     if comparison.only_in_left_route:
         count = len(comparison.only_in_left_route)
-        differences.append(f"{count} search location{'' if count == 1 else 's'} only in captured route")
+        differences.append(f"{count} search location{'' if count == 1 else 's'} only in the recorded result")
     if comparison.only_in_right_route:
         count = len(comparison.only_in_right_route)
-        differences.append(f"{count} search location{'' if count == 1 else 's'} only in standard path route")
+        differences.append(f"{count} search location{'' if count == 1 else 's'} only in the standard search")
     if comparison.locations_reordered:
         differences.append("search locations reordered")
-    detail = "; ".join(differences) if differences else "no comparable semantic differences"
-    qualifier = "" if comparison.complete else "partial; "
-    return f"route differences ({qualifier}captured route vs standard path probe): {detail}"
+    detail = "; ".join(differences) if differences else "none"
+    qualifier = "" if comparison.complete else " (partial comparison)"
+    return f"differences{qualifier}: {detail}"
 
 
 def _structural_comparison_line(finding: Finding) -> str:
     """Label identity-only evidence separately from a report-time probe."""
     comparison = finding.structural_comparison
     if comparison is None:
-        return "structural evidence: unavailable"
+        return "since install: comparison unavailable"
     return _structural_evidence_line(comparison)
 
 
@@ -1603,18 +1688,18 @@ def _structural_evidence_line(comparison: StructuralComparison) -> str:
     if path_hooks_changed is None:
         path_hooks = "sys.path_hooks comparison unavailable"
     elif path_hooks_changed:
-        path_hooks = "sys.path_hooks changed since install"
+        path_hooks = "sys.path_hooks changed"
     else:
-        path_hooks = "sys.path_hooks unchanged since install"
+        path_hooks = "sys.path_hooks unchanged"
     if importer_cache_changed is None:
-        importer_cache = "importer cache comparison unavailable"
+        importer_cache = "sys.path_importer_cache comparison unavailable"
     elif importer_cache_changed:
         count = len(importer_cache_changed_paths)
         noun = "path" if count == 1 else "paths"
-        importer_cache = f"importer cache changed for {count} captured search {noun}"
+        importer_cache = f"sys.path_importer_cache changed for {count} searched {noun}"
     else:
-        importer_cache = "importer cache unchanged for the captured search path"
-    return f"structural evidence: {path_hooks}; {importer_cache}"
+        importer_cache = "sys.path_importer_cache unchanged for the searched path"
+    return f"since install: {path_hooks}; {importer_cache}"
 
 
 def _stack_lines(stack: "StackSummary", context: _RenderContext) -> list[str]:

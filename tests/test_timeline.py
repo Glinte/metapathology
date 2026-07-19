@@ -55,11 +55,11 @@ assert start.attempt_id > 0
 assert start.thread_id == claim.thread_id
 
 text = metapathology.render_report()
-timeline = text.split("-- chronological evidence timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
+timeline = text.split("-- event timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
 positions = [timeline.index(f"#{event.seq}") for event in (hook, cache, start, claim)]
 assert positions == sorted(positions), timeline
-assert "uncached import started: 'timeline_target'" in timeline
-assert "Events appear in capture order; concurrent events have no global wall-clock order" in timeline
+assert "import started: 'timeline_target'" in timeline
+assert "Events are numbered in the order they were recorded" in timeline
 
 document = json.loads(metapathology.render_report(format="json"))
 assert document["schema"] == {"major": 1, "minor": 0, "name": "metapathology.report"}
@@ -191,9 +191,9 @@ else:
     raise AssertionError("missing import unexpectedly succeeded")
 os.environ["METAPATHOLOGY_TEXT_TIMELINE"] = "full"
 text = metapathology.render_report()
-timeline = text.split("-- chronological evidence timeline", 1)[1]
+timeline = text.split("-- event timeline", 1)[1]
 line = next(line for line in timeline.splitlines() if "metapathology_missing_timeline_module" in line)
-assert "uncached import started" in line, line
+assert "import started" in line, line
 print("OK")
 """
 
@@ -216,7 +216,7 @@ sys.meta_path = list(sys.meta_path)
 import graphlib
 
 text = metapathology.render_report()
-timeline = text.split("-- chronological evidence timeline", 1)[1].split("-- sys.meta_path reassignments", 1)[0]
+timeline = text.split("-- event timeline", 1)[1].split("-- sys.meta_path reassignments", 1)[0]
 assert "sys.path_hooks and sys.path_importer_cache identities stable across all audited imports" in timeline, timeline
 assert "\n    meta_path 0x" in timeline, timeline
 print("OK")
@@ -328,13 +328,13 @@ events = monitor.events()
 collapsible_lines = []
 for event in events:
     if isinstance(event, ImportAuditStart):
-        collapsible_lines.append(f"#{event.seq} uncached import started")
+        collapsible_lines.append(f"#{event.seq} import started")
     elif isinstance(event, FindSpecCall) and not event.found and event.exception_type_name is None:
         collapsible_lines.append(f"#{event.seq} DecliningFinder probed")
 
 text = metapathology.render_report()
-timeline = text.split("-- chronological evidence timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
-assert "collapsed; details in JSON timeline" in timeline, timeline
+timeline = text.split("-- event timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
+assert "(collapsed)" in timeline, timeline
 for line in collapsible_lines:
     assert line not in timeline, (line, timeline)
 print("OK")
@@ -386,8 +386,8 @@ claim = next(
 )
 
 text = metapathology.render_report()
-timeline = text.split("-- chronological evidence timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
-assert f"#{claim.seq} DecliningFinder probed 'claim_split_target': claimed" in timeline, timeline
+timeline = text.split("-- event timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
+assert f"#{claim.seq} DecliningFinder.find_spec('claim_split_target'): found it" in timeline, timeline
 print("OK")
 """
 
@@ -450,7 +450,7 @@ referenced_seqs = [int(ref.split(":", 1)[1]) for ref in explanation["event_refs"
 assert referenced_seqs, explanation
 
 text = metapathology.render_report()
-timeline = text.split("-- chronological evidence timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
+timeline = text.split("-- event timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
 for seq in referenced_seqs:
     assert f"#{seq} " in timeline, (seq, timeline)
 print("OK")
@@ -495,8 +495,8 @@ for name in ("full_missing_one", "full_missing_two", "full_missing_three"):
 
 events = monitor.events()
 text = metapathology.render_report()
-timeline = text.split("-- chronological evidence timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
-assert "collapsed;" not in timeline, timeline
+timeline = text.split("-- event timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
+assert "(collapsed)" not in timeline, timeline
 for event in events:
     assert f"#{event.seq} " in timeline, (event, timeline)
 print("OK")

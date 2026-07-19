@@ -56,14 +56,13 @@ def test_finder_shadowing_path_hooks_reports_neutral_route_difference(run_python
     proc = run_python(BYPASS, "real_mod", str(module_file))
     assert proc.returncode == 0, proc.stderr
     assert "[loader-displacement]" not in proc.stdout
-    assert "-- resolution route divergences" in proc.stdout
-    assert "captured route signals: meta path short circuit" in proc.stdout
-    assert "intervening meta-path finders skipped" in proc.stdout
+    assert "-- modules found by a custom finder" in proc.stdout
+    assert "note: this finder ran before PathFinder, so the standard path search never saw the module" in proc.stdout
     assert "real_mod" in proc.stdout
     assert "SneakyLoader" in proc.stdout
     assert "SourceFileLoader" in proc.stdout
     # Findings lead the report, and paths under the reported cwd are relativized.
-    assert proc.stdout.index("-- findings") < proc.stdout.index("-- chronological evidence timeline")
+    assert proc.stdout.index("-- findings") < proc.stdout.index("-- event timeline")
     assert "origin 'real_mod.py'" in proc.stdout
     assert f"paths shown relative to: {tmp_path}" in proc.stdout
 
@@ -157,12 +156,10 @@ def test_standard_unwrapped_finders_are_explained(run_python: RunPython) -> None
     assert proc.returncode == 0, proc.stderr
     assert "report guide: https://glinte.github.io/metapathology/report/" in proc.stdout
     assert "standard CPython finders left unwrapped (expected)" in proc.stdout
-    assert "custom claims are compared with an independent standard path probe below" in proc.stdout
     assert "BuiltinImporter: class entry" not in proc.stdout
     assert "FrozenImporter: class entry" not in proc.stdout
     assert "PathFinder: class entry" not in proc.stdout
     assert "monitoring: sys.meta_path, sys.path_hooks, sys.path_importer_cache" in proc.stdout
-    assert "opt-in deep diagnostics and early site bootstrap available but not used for this run" in proc.stdout
     assert "unobservable" not in proc.stdout
     assert "sys.meta_path (unchanged since install):" in proc.stdout
     assert "Nothing was recorded for:" in proc.stdout

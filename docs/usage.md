@@ -35,21 +35,20 @@ metapathology path/to/script.py argument-one
 metapathology -m package.module argument-one
 ```
 
-Prefer `python -m metapathology` when interpreter selection matters. The `-m`
-form guarantees that the monitor is installed in the same interpreter and
-virtual environment as the target, while the shorter command uses whichever
-installation appears first on the shell's command search path.
+Prefer `python -m metapathology` when interpreter selection matters: it
+guarantees the monitor is installed in the same interpreter and virtual
+environment as the target, while the shorter command uses whichever
+installation appears first on `PATH`.
 
-The target's integer `SystemExit` status is preserved. An unhandled exception
-prints its traceback and produces exit status 1. The diagnostic report is
-still written to standard error in both cases. A nonexistent script path is a
-CLI error instead: it exits with status 2 before monitoring starts and does not
-produce a report. Module resolution remains monitored because it exercises the
-import machinery itself.
+Exit behavior: the target's integer `SystemExit` status is preserved, and an
+unhandled exception prints its traceback and exits with status 1; the report
+is written to standard error in both cases. A nonexistent script path is a
+CLI error (exit status 2, no report).
 
-## Write a file report
+## Options and report files
 
-Put metapathology options before the script or `-m` target:
+Put metapathology options before the script or `-m` target; everything after
+the target is passed to the target.
 
 ```console
 python -m metapathology --report diagnostics.json path/to/script.py
@@ -57,92 +56,87 @@ python -m metapathology --report diagnostics.txt --report-format text -m package
 python -m metapathology --color always path/to/script.py
 python -m metapathology --no-path-hook-monitoring path/to/script.py
 python -m metapathology --no-importer-cache-monitoring path/to/script.py
-python -m metapathology --deep-path-hooks --deep-path-entry-finders --deep-loaders path/to/script.py
+python -m metapathology --deep path/to/script.py
 ```
 
-Automatic file destinations are process-safe. `{pid}` is replaced when it is
-present; otherwise the PID is inserted before the final suffix. For example,
-`diagnostics.json` becomes `diagnostics.1234.json`. The parent directory must
-already exist. Each process writes one selected format, without a collector,
-background worker, or retry loop.
+- `--report PATH` writes the report to a file instead of standard error.
+  Files default to JSON; pass `--report-format text` for text. The file is
+  written atomically and the parent directory must exist.
+- Report filenames automatically include the process ID so concurrent
+  workers do not overwrite each other: `diagnostics.json` becomes
+  `diagnostics.1234.json`. Put `{pid}` in the path to control its position.
+- `--color auto` (the default) uses ANSI colors only on a TTY, and never
+  when `NO_COLOR` is set or `TERM=dumb`. `--color always` and
+  `--color never` override. Color never changes report meaning.
+- `--no-path-hook-monitoring` leaves the `sys.path_hooks` list object
+  untouched; `--no-importer-cache-monitoring` skips
+  `sys.path_importer_cache` snapshots. Both are on by default and neither
+  ever replaces the cache dictionary.
 
-Text reports use `--color auto` by default. Auto mode emits ANSI colors only
-for a TTY destination, and disables them when `NO_COLOR` is nonempty or
-`TERM=dumb`; redirected output and report files are therefore plain. Use
-`--color always` to preserve color through a pipe or in a text file, or
-`--color never` to suppress it. Color supplements the existing words and
-markers and does not change report meaning.
+### Environment variables
 
-Path-hook monitoring is enabled by default. The disable option leaves the
-exact `sys.path_hooks` list object untouched; options after the target are
-passed through to the target rather than parsed by metapathology.
-Importer-cache monitoring is also enabled by default. Its disable option
-skips passive cache snapshots and diffs; metapathology never replaces the
-cache dictionary in either mode.
-
-Deep diagnostics are disabled by default. `--deep` enables all four mechanisms;
-the individual `--deep-*` / `--no-deep-*` options override it for path-hook
-calls, path-entry finder decisions, loader lifecycle calls, and exact import
-outcomes. Existing
-`create_module` and `exec_module` methods are observed; absent methods and
-legacy `load_module` are not added or wrapped. This puts metapathology inline
-with foreign import code: path-hook wrappers change callable identity and can
-affect membership checks. Reports display a warning whenever any deep
-mechanism is active. Use this mode only in a diagnostic reproduction after
-passive evidence proves insufficient.
-
-Exact aggregate `PathFinder` attribution is part of the deep import-outcomes
-mechanism. It shares that mechanism's reversible profiler and is available
-only when no profiler was already installed and the running CPython exposes a
-discoverable Python `PathFinder.find_spec` boundary. The report states the
-availability status and falls back to labeled inference when necessary.
-
-Default finder monitoring records constant-size target-module identity before
-and after each delegated `find_spec()` call. This can identify a finder that
-changes `sys.modules` before passing or raising. With `--deep-loaders`, the
-same evidence surrounds mutable loader lifecycle calls and can identify object
-replacement during later manual `exec_module()` calls. These are boundary
-deltas, not nested traces. A non-dictionary `sys.modules` replacement is left
-untouched and produces unavailable identity evidence.
-
-For frozen or embedded bootstrap code, configure the same behavior before
-calling `install()`:
+Every option has an environment variable, for situations where you cannot
+pass CLI flags (frozen apps, the startup bootstrap below). Explicit CLI or
+API values win over the environment; the environment wins over defaults.
 
 ```console
 METAPATHOLOGY_REPORT=diagnostics-{pid}.json
-METAPATHOLOGY_REPORT_FORMAT=json
-METAPATHOLOGY_COLOR=auto
+METAPATHOLOGY_REPORT_FORMAT=json          # or: text
+METAPATHOLOGY_COLOR=auto                  # or: always, never
 METAPATHOLOGY_MONITOR_PATH_HOOKS=true
 METAPATHOLOGY_MONITOR_IMPORTER_CACHE=true
 METAPATHOLOGY_DEEP=false
 ```
 
-Environment variables configure an installed monitor; they do not cause
-metapathology to import or install itself. Explicit API or CLI values take
-precedence. Reports include argv, origins, filesystem paths, and stack
-filenames, so treat them as potentially sensitive diagnostic artifacts.
-Individual deep variables are `METAPATHOLOGY_DEEP_PATH_HOOKS`,
-`METAPATHOLOGY_DEEP_PATH_ENTRY_FINDERS`, `METAPATHOLOGY_DEEP_LOADERS`, and
-`METAPATHOLOGY_DEEP_IMPORT_OUTCOMES`. They override `METAPATHOLOGY_DEEP`.
-Boolean values accept `1/0`, `true/false`, `yes/no`, and `on/off`.
-`METAPATHOLOGY_COLOR` instead accepts `auto`, `always`, or `never`. Explicit
-CLI or `report_color=` values take precedence; explicit `always` also overrides
-`NO_COLOR` and `TERM=dumb`.
+Boolean variables accept `1/0`, `true/false`, `yes/no`, and `on/off`. These
+variables configure a monitor that something installs; they never cause
+metapathology to install itself (except `METAPATHOLOGY_EARLY_BOOTSTRAP`,
+below).
+
+Reports include command lines, filesystem paths, and stack file names —
+treat them as potentially sensitive.
+
+### Deep diagnostics
+
+Deep diagnostics record what the default mode cannot: path hook calls, path
+entry finder calls, loader `create_module`/`exec_module` calls, and exact
+import outcomes. They are off by default because they place monitor code
+inline with foreign imports, and wrapping a path hook changes its callable
+identity. Use them in a controlled reproduction after the default evidence
+proves insufficient; the report warns whenever any are active.
+
+`--deep` enables all four. Individual switches (`--deep-path-hooks`,
+`--deep-path-entry-finders`, `--deep-loaders`, `--deep-import-outcomes`, each
+with a `--no-` form, and matching `METAPATHOLOGY_DEEP_*` variables) override
+it per mechanism.
+
+Notes on individual mechanisms:
+
+- `--deep-loaders` observes existing `create_module` and `exec_module`
+  methods only; it never adds missing methods or wraps legacy
+  `load_module`. It can catch a loader that replaces a module object.
+- `--deep-import-outcomes` records whether each import actually loaded or
+  failed, and captures real `PathFinder` results, on CPython 3.10–3.14. It
+  uses a profiler slot, so it is refused (without breaking anything) when
+  another profiler is already installed. It covers the installing thread and
+  threads created later through `threading`; the report states the achieved
+  coverage.
 
 ## Observe later `.pth` files
 
-The ordinary wrapper begins after Python has processed executable `.pth`
-lines. In a disposable or explicitly selected diagnostic environment, an
-opt-in bootstrap can move monitoring into site initialization on CPython
-3.10--3.14:
+Normal monitoring starts after Python has already processed the `.pth` files
+in site-packages — which is exactly how some import hooks (for example
+scikit-build-core's editable-install finder) are installed. To observe those,
+an optional bootstrap moves monitoring into interpreter startup on CPython
+3.10–3.14:
 
 ```console
 python -m metapathology.site_bootstrap install
 ```
 
-Run that command with the same interpreter/venv as the target. It creates
-`00_metapathology_early.pth` in that interpreter's `purelib` directory. The
-file is inert unless the exact activation value is present:
+Run that with the same interpreter/venv as the target. It creates
+`00_metapathology_early.pth` in that interpreter's site-packages. The file
+does nothing unless the activation variable is set:
 
 ```console
 METAPATHOLOGY_EARLY_BOOTSTRAP=1 \
@@ -150,37 +144,28 @@ METAPATHOLOGY_REPORT=diagnostics.json \
 python path/to/script.py
 ```
 
-PowerShell uses `$env:NAME = "value"` to set the two variables. The normal
-report-format rules still apply, including PID-safe automatic filenames. Both
-variables are inherited by child processes, so a child using the same
-environment activates itself and writes its own report without injection by
-the parent.
+(PowerShell: `$env:METAPATHOLOGY_EARLY_BOOTSTRAP = "1"`.) The usual report
+variables apply, including PID-safe filenames. Both variables are inherited
+by child processes, which activate themselves and write their own reports.
 
-Inspect or remove the generated file with symmetric commands:
+Inspect or remove the file with:
 
 ```console
 python -m metapathology.site_bootstrap status
 python -m metapathology.site_bootstrap remove
 ```
 
-All three commands accept `--site-packages DIR`. Installation and removal are
-idempotent. The generated header carries an ownership token; the manager
-refuses to overwrite or remove a foreign file at the selected path and can
-repair or remove a truncated file that still has a valid ownership header.
-Ordinary package installation never creates the bootstrap.
+All three commands accept `--site-packages DIR` and are idempotent. The
+generated file carries an ownership header, and the manager refuses to touch
+a file it does not own. Installing the metapathology package normally never
+creates this file.
 
-Within one site-packages directory, Python processes `.pth` names in lexical
-order. The bootstrap observes later names in that directory, but not earlier
-names or files in a site directory Python processed first. Reports record the
-selected bootstrap and the lexically earlier `.pth` names in its directory so
-the evidence boundary remains visible. `-S`, disabled site processing, and
-some isolated or embedded configurations skip the bootstrap. The command
-deliberately rejects Python 3.15 and newer because executable `.pth` lines are
-deprecated there; the newer `.start` mechanism runs too late to observe `.pth`
-execution.
-
-[runpy]: https://docs.python.org/3/library/runpy.html
-[main-metadata]: https://docs.python.org/3/reference/import.html#special-considerations-for-main
+What it can and cannot see: Python processes `.pth` files in one directory
+in filename order, so the bootstrap (named `00_...`) observes files sorted
+after it in its own directory — not earlier names, not site directories
+Python processed first, and not startup under `-S`. The report lists the
+`.pth` names that ran before it so the boundary stays visible. Python 3.15
+deprecates executable `.pth` lines, so the command rejects 3.15 and newer.
 
 ## Install from code
 
@@ -192,9 +177,8 @@ import metapathology
 monitor = metapathology.install()
 ```
 
-Installation is idempotent. The [library API reference](api.md) documents the
-complete lifecycle and event types. By default an exit callback writes the
-report to standard error. For explicit control over timing and destination:
+Installation is idempotent. By default an exit callback writes the report to
+standard error. For explicit control over timing and destination:
 
 ```python
 import sys
@@ -209,20 +193,25 @@ finally:
     metapathology.uninstall()
 ```
 
-Uninstallation is also idempotent. It restores plain `sys.meta_path` and
-`sys.path_hooks` lists, removes finder method shadows, and unregisters the exit callback. Recorded events
-remain available from `monitor.events()`.
+`uninstall()` is also idempotent. It restores plain `sys.meta_path` and
+`sys.path_hooks` lists, removes the finder wrappers, and unregisters the exit
+callback. Recorded events remain available from `monitor.events()`.
+
+The [library API reference](api.md) documents the complete lifecycle and
+event types.
 
 ## Integrate with another diagnostic
 
 Use `metapathology.render_report(format="json")` when a harness needs a
 machine-readable report string, or inspect the [structured event
-records](api.md#event-records)
-returned by `monitor.events()`. The returned event list is a snapshot;
-changing it does not alter the monitor.
-`render_report(color=True)` returns ANSI-styled text; its default is plain
-because a returned string has no output destination for auto detection.
+records](api.md#event-records) returned by `monitor.events()` (a snapshot;
+changing it does not alter the monitor). `render_report(color=True)` returns
+ANSI-styled text; the default is plain because a returned string has no
+destination to auto-detect.
 
-Calling `write_report()` or `render_report()` before the first `install()` raises
-`RuntimeError`. See the [Library API](api.md) for the complete public surface
-and [Reading the report](report.md) for interpretation.
+Calling `write_report()` or `render_report()` before the first `install()`
+raises `RuntimeError`. See [Reading the report](report.md) for
+interpretation.
+
+[runpy]: https://docs.python.org/3/library/runpy.html
+[main-metadata]: https://docs.python.org/3/reference/import.html#special-considerations-for-main

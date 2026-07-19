@@ -199,7 +199,7 @@ def test_text_report_describes_negative_and_replaced_cache_entries(run_python: R
         "text = metapathology.render_report()\n"
         "assert '-- sys.path_importer_cache changes' in text, text\n"
         "assert repr(path) in text, text\n"
-        "assert 'Finder' in text and 'negative (None)' in text, text\n"
+        "assert 'Finder' in text and 'None (no importer for this path)' in text, text\n"
         "print('OK')\n"
     )
     assert proc.returncode == 0, proc.stderr

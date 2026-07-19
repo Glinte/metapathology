@@ -168,7 +168,7 @@ assert len(standard_only) == 1
 assert os.path.normcase(os.path.normpath(standard_only[0])) == os.path.normcase(os.path.normpath(second + "/" + name))
 assert not any(item["module"] == name for item in document["findings"])
 text = metapathology.render_report()
-assert "resolution route divergences" in text, text
+assert "modules found by a custom finder" in text, text
 assert "[namespace-truncation]" not in text, text
 print("OK")
 """

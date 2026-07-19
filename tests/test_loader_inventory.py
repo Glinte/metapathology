@@ -115,7 +115,7 @@ assert any(group["loader"] and group["loader"]["type_name"] == "FrozenImporter" 
 assert any(group["loader"] and group["loader"]["type_name"] == "SourceFileLoader" for group in groups)
 assert inventory["non_string_keys_omitted"] == 1
 assert any(item["name"] == "inventory_module_like" for item in inventory["unavailable"])
-assert "post-hoc loader inventory" in text
+assert "loaders of imported modules" in text
 assert "loader metadata disagreement" in text
 assert "InventoryLoader: 5 module(s)" not in text, text
 assert "inventory_shared_a: origin 'inventory_shared_a.py'" not in text, text

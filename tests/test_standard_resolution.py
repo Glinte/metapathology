@@ -62,8 +62,8 @@ def test_default_report_infers_namespace_before_later_finder(run_python: RunPyth
         "and event['fullname'] == 'standard_namespace' "
         "and event['finder_type_name'] == 'LaterFinder' for event in document['timeline'])\n"
         "text = metapathology.render_report()\n"
-        "assert '[inferred standard resolution]' in text\n"
-        "assert 'later meta-path entries were unreachable: [LaterFinder]' in text\n"
+        "assert '[inferred]' in text\n"
+        "assert 'later meta path entries were never reached: [LaterFinder]' in text\n"
         "print('OK')\n"
     )
     assert proc.returncode == 0, proc.stderr
@@ -117,8 +117,8 @@ def test_deep_report_captures_source_resolution(run_python: RunPython, tmp_path:
         "if event['id'] == resolution['component_event_refs'][0])\n"
         f"assert component['path'] == {str(module_dir)!r}\n"
         "text = metapathology.render_report()\n"
-        "assert 'standard finder aggregate coverage: active path finder aggregate' in text\n"
-        "assert '[captured standard resolution]' in text\n"
+        "assert 'PathFinder result capture: active path finder aggregate' in text\n"
+        "assert '[captured]' in text\n"
         "print('OK')\n"
     )
     assert proc.returncode == 0, proc.stderr
@@ -137,7 +137,7 @@ def test_distributed_7782_fixture_explains_unreachable_editable_finder() -> None
     )
     assert proc.returncode == 0, proc.stderr
     assert "editable marker: None" in proc.stdout
-    assert "[inferred standard resolution] 'distributed': PathFinder produced namespace" in proc.stderr
-    assert "later meta-path entries were unreachable: [_EditableFinder]" in proc.stderr
+    assert "[inferred] 'distributed': PathFinder produced namespace" in proc.stderr
+    assert "later meta path entries were never reached: [_EditableFinder]" in proc.stderr
     assert "[inferred] PathFinder likely produced namespace for 'distributed' before later finders" in proc.stderr
-    assert "next observation: enable deep import outcomes to capture the standard winner" in proc.stderr
+    assert "next step: rerun with --deep-import-outcomes to record the actual PathFinder result" in proc.stderr

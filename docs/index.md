@@ -3,13 +3,13 @@
 `metapathology` is a stdlib-only diagnostic tool for
 [CPython's import system][python-imports]. It helps answer three questions:
 
-- Which meta-path finder claimed each imported module?
-- Where did code mutate or replace `sys.meta_path`?
-- Which source modules bypassed the normal `sys.path_hooks` search?
+- Which finder located each imported module?
+- Where did code change `sys.meta_path` or `sys.path_hooks`?
+- Which modules were found without going through the normal `sys.path` search?
 
 It was created to investigate conflicts where one import customization prevents
-another from seeing a module. The monitor observes and delegates: it never
-returns a module spec or loads a module itself.
+another from seeing a module. The monitor only observes: it never returns a
+module spec or loads a module itself.
 
 ## Start here
 

@@ -506,8 +506,8 @@ def test_target_failure_is_correlated_with_unresolved_imports(tmp_path: Path) ->
     assert "the failed module appears under unresolved imports below" in proc.stderr
     assert "most severe is [legacy-finder-contract] 'LazyImporter'" in proc.stderr
     assert "-- imports that started but produced no module" in proc.stderr
-    assert "'missing_lazy_dependency': progress started, began at event #" in proc.stderr
-    assert "(the target's failed module)" in proc.stderr
+    assert "'missing_lazy_dependency': import started at event #" in proc.stderr
+    assert "(the failed module)" in proc.stderr
     assert "LazyImporter was on sys.meta_path but accepts only the legacy find_module protocol" in proc.stderr
 
     destination = tmp_path / "report.json"

@@ -7,7 +7,7 @@ import metapathology
 
 
 def main() -> int:
-    """Run the failing collection and assert the T12 report semantics."""
+    """Run the failing collection and assert the legacy-finder report semantics."""
     metapathology.install(report_at_exit=False)
 
     import pytest
@@ -29,7 +29,7 @@ def main() -> int:
     assert mutation["kind"] == "meta_path_mutation", mutation
     assert mutation["added"] == ["_SixMetaPathImporter"], mutation
     assert any(frame["filename"].replace("\\", "/").endswith("boto/vendored/six.py") for frame in mutation["stack"])
-    sys.stderr.write("T12 evidence verified\n")
+    sys.stderr.write("legacy-finder evidence verified\n")
     sys.stderr.write(metapathology.render_report())
     return int(result)
 

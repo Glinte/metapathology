@@ -1,422 +1,341 @@
 # Reading the report
 
-The report leads with a verdict: the first lines after the title state how
-the monitored target finished (`target outcome:`) and a one-sentence reading
-of the evidence (`verdict:`), naming the most severe finding when one exists.
-The numbered findings narrative follows the header; neutral route
-divergences, unresolved imports, finder attribution, the chronological
-evidence timeline, and the detailed mechanism sections follow for the
-supporting evidence. Detail sections with nothing to show are collapsed into
-one final `Nothing was recorded for:` line. The
-[library API](api.md#event-records) documents the corresponding structured
-event records.
+The report leads with a verdict and puts detail below it. Read top to bottom
+and stop when you have your answer:
 
-Text output favors readability: paths under the reported working directory
-are shown relative to it (the header names the base with
-`paths shown relative to:`), and object ids appear only when two displayed
-objects would otherwise be indistinguishable. JSON always keeps absolute
-paths and full identity metadata.
+1. **Header** — how your program finished, a one-line verdict, and the state
+   of `sys.meta_path` and `sys.path_hooks`.
+2. **Findings** — numbered problems, most severe first, each with its
+   evidence.
+3. **Comparisons and summaries** — modules found by a custom finder, imports
+   that never produced a module, and per-finder call counts.
+4. **Event timeline and detail sections** — everything that was recorded, in
+   order, with stack traces for each change to `sys.meta_path` and
+   `sys.path_hooks`.
+
+Paths under the working directory are shown relative to it (the header names
+the base directory), and object ids like `0x2a30...` appear only when two
+displayed objects would otherwise look identical. The JSON report always
+keeps absolute paths and full identity data; see [JSON report](#json-report).
+
+## Header
+
+The first lines state how your program finished (`target outcome:`) and what
+the evidence says (`verdict:`), naming the most severe finding when there is
+one. After that:
+
+- `monitoring:` lists which mechanisms were active.
+- `sys.meta_path` and `sys.path_hooks` snapshots are shown once when
+  unchanged, or as `at install:` / `now:` pairs when something changed them.
+- `sys.path_importer_cache: 17 -> 34 entries` counts cached path entries at
+  install and at report time.
+- `modules imported since install:` counts new `sys.modules` entries.
+
+`BuiltinImporter`, `FrozenImporter`, and `PathFinder` appear as "standard
+CPython finders left unwrapped (expected)". They handle built-in, frozen, and
+path-based imports respectively. They are classes shared by the interpreter,
+so metapathology deliberately does not modify them; this is normal and not a
+sign of a degraded installation.
+
+A finder installed by well-known environment tooling gets a note under the
+snapshot, such as `_Finder is installed by virtualenv at startup; its
+presence is expected`. The note is display-only and never affects findings.
+
+## Findings
+
+Findings are numbered problems, ordered by severity: `actionable` (evidence
+points at a concrete problem), `warning` (a compatibility or correctness
+risk), or `informational`. Each block names the module and finder involved,
+lists its supporting events, ends with a sentence stating the evidence level
+and its limits, and links to the matching section below. Findings are
+diagnostic leads, not verdicts — the last line of each block tells you how
+much to trust it.
+
+A run with no findings states that in one sentence. Background for all of
+these sections: [How it works](concepts.md) explains finders, module specs,
+and the module cache in a few minutes' reading.
+
+### namespace-truncation
+
+A custom finder answered for a
+[namespace package](https://docs.python.org/3/reference/import.html#namespace-packages)
+but returned fewer search locations than the standard path search finds, and
+an import of one of its submodules failed.
+
+*Background.* A namespace package's contents can be spread over several
+directories; its `__path__` lists all of them. A finder that rebuilds this
+list — editable installs commonly do — can accidentally omit directories,
+and any submodule that only exists in an omitted directory becomes
+unimportable, even though it is right there on disk.
+
+*What to do.* The finding names the omitted location and the finder. Check
+how that finder (usually an editable-install hook from your build backend)
+was configured; reinstalling the affected package, or installing it
+non-editable, typically restores the full namespace. Report the omission to
+the tool that installed the finder.
+
+### no-spec
+
+A module is in `sys.modules` with no
+[`__spec__`](https://docs.python.org/3/reference/import.html#import-related-module-attributes)
+attribute and no recorded finder call.
+
+*Background.* Every module loaded through the normal import machinery gets a
+module spec describing how it was found. A module without one was likely
+created manually (`types.ModuleType(...)` inserted into `sys.modules`) or
+executed directly with loader APIs. Import hooks never saw it, so tools that
+rely on hooks (assertion rewriters, type-checking instrumenters) cannot have
+processed it.
+
+*What to do.* Usually informational — several stdlib modules (for example
+`pyexpat.errors`) are created this way and are harmless. Investigate only if
+the module is one that another import hook was supposed to process; then
+find the code that creates it and load it through
+`importlib.import_module()` instead.
+
+### finder-side-effect
+
+A finder changed the target module's `sys.modules` entry even though it
+returned `None` or raised.
+
+*Background.* `find_spec()` is supposed to answer "can you locate this
+module?" without loading anything. A finder that inserts, removes, or
+replaces `sys.modules` entries while answering changes what every later
+import of that name sees.
+
+*What to do.* The finding shows the before/after state at the finder call.
+Read that finder's `find_spec` implementation; a common cause is importing
+the target (or a sibling) as part of deciding whether to handle it. Report
+it to the finder's maintainer with the event numbers from the report.
+
+### module-replacement
+
+A loader call began and ended with different module objects. Requires
+`--deep-loaders`.
+
+*Background.* Python puts the new module object in `sys.modules` *before*
+executing it, so recursive imports see the same object. A loader (or the
+module's own code) that swaps in a different object afterwards splits
+identity: code holding a reference from before the swap has a different
+object than later imports receive, so attribute patches and state on one are
+invisible on the other.
+
+*What to do.* The finding shows both object identities. If a library does
+this intentionally (lazy-loading proxies do), be careful about holding early
+references to it. If not intentional, the loader named in the finding is the
+place to look.
+
+### legacy-finder-contract
+
+A finder on `sys.meta_path` has a `find_module` method but no `find_spec`.
+
+*Background.* `find_module` is the pre-Python-3.4 finder protocol.
+[CPython 3.12 removed the fallback](https://docs.python.org/3/whatsnew/3.12.html#importlib)
+that called it, so on 3.12+ the import system silently skips this finder —
+whatever it was supposed to provide simply never happens. Third-party code
+that iterates `sys.meta_path` itself may fail with `AttributeError` on any
+version (the trigger for [pytest#12179](https://github.com/pytest-dev/pytest/issues/12179)).
+
+*What to do.* Find what installed the finder (the report links the
+`sys.meta_path` change that added it, with a stack trace) and upgrade it —
+this is typically a very old vendored `six` or similar compatibility shim.
+If it cannot be upgraded, removing it from `sys.meta_path` is usually safe
+on 3.12+ where it is never called anyway.
+
+### path-hook-shadow
+
+Two different [path hooks](https://docs.python.org/3/reference/import.html#path-entry-finders)
+accepted the same path entry. Requires `--deep-path-hooks`.
+
+*Background.* When `PathFinder` meets a new path entry, it tries the
+factories in `sys.path_hooks` in order and caches the first finder that
+accepts. The second hook never handles that path, even though it also
+claimed to understand it — a common way for two instrumentation tools to
+conflict.
+
+*What to do.* As a workaround, check `sys.path_hooks` order in the header
+and decide which behavior you need more: importing the tool that must win
+first (or re-registering its hook at the front), then clearing
+`sys.path_importer_cache`, hands it the contested paths — but the other
+hook's behavior is now the one silently lost.
+
+The real fix is to make the hooks cooperate instead of compete, and that is
+a change inside one of the two tools: the winning hook's path entry finder
+can wrap or subclass the standard
+[`FileFinder`](https://docs.python.org/3/library/importlib.html#importlib.machinery.FileFinder)
+(or delegate to the finder the other hook would have created) so both
+behaviors run for the same path. This is how tools like pytest's assertion
+rewriter compose with the standard machinery. Report the conflict upstream
+to both projects and attach this report; the event numbers show exactly
+which paths were contested and which hook won.
+
+### failed-after-mutation
+
+An import failed after a recorded change to `sys.meta_path`,
+`sys.path_hooks`, or `sys.path_importer_cache`. Requires `--deep-import-outcomes`.
+
+*Background.* Removing or reordering finders and hooks mid-run changes which
+imports can succeed afterwards.
+
+*What to do.* The finding links both the mutation (with its stack trace) and
+the failed import. Order alone does not prove causation — confirm by
+checking whether the removed/moved finder was the one that could have found
+the failed module.
+
+## Modules found by a custom finder
+
+When a finder other than `PathFinder` found a module whose source lives on
+the filesystem, this section compares two results:
+
+- **during the run** — the spec the custom finder actually returned, as
+  recorded when it happened;
+- **standard search at report time** — what
+  [`PathFinder.find_spec()`](https://docs.python.org/3/library/importlib.html#importlib.machinery.PathFinder)
+  finds for the same name and search path, called fresh while the report is
+  being written.
+
+A difference here is evidence, not automatically a problem. Editable
+installs, assertion rewriters, and similar tools legitimately use a different
+loader than the standard search would. The comparison matters when another
+tool needed the standard search to happen — as in
+[beartype#556](https://github.com/beartype/beartype/issues/556), where an
+editable-install finder found the module first and beartype's path hook never
+saw it.
+
+Two caveats, stated once in the section intro:
+
+- The fresh search runs at report time, against current path hooks, cache,
+  and filesystem state — any of which may have changed since the import.
+- It calls `PathFinder` directly, skipping other custom finders, so it does
+  not show which finder would have won had the custom finder been absent.
+
+The `since install:` line notes whether `sys.path_hooks` or the relevant
+`sys.path_importer_cache` entries changed between install and report time —
+useful when deciding whether the fresh search still reflects import-time
+conditions.
+
+## Imports that started but produced no module
+
+Imports that began but left nothing in `sys.modules`. Failed optional
+imports (`pwd` on Windows, `fcntl`, try/except import fallbacks) are normal
+here. An entry matters when your program actually needed the module — when
+the run failed with `ModuleNotFoundError`, the failed module is marked.
+
+## Finder calls
+
+Per-finder totals: how many times each wrapped finder's `find_spec()` was
+called and which modules it found. Standard CPython finders are not wrapped,
+so their calls do not appear here; imports they handled show up in the next
+section instead.
+
+## Imports attributed to standard finders
+
+When no custom finder found a module, the report attributes it to the
+standard finder that evidently handled it. Entries marked `[inferred]`
+combine import order with module metadata read at report time — the actual
+`find_spec()` call was not recorded, so treat them as a reconstruction.
+Entries marked `[captured]` come from `--deep-import-outcomes`, which records
+the real `PathFinder` result.
+
+## Event timeline
+
+Every recorded event in capture order: import starts, finder calls,
+`sys.meta_path` and `sys.path_hooks` changes, importer cache diffs, and
+internal errors, all sharing one `#n` numbering that findings reference.
+
+Long runs of routine events (imports where every finder returned `None`)
+collapse into a single line; any event referenced by a finding stays
+expanded. Set `METAPATHOLOGY_TEXT_TIMELINE=full` to disable collapsing. The
+JSON report always lists every event.
+
+Two things this timeline cannot show:
+
+- An `import started:` line means resolution began; it does not say whether
+  the import succeeded or which finder won. Imports satisfied from
+  `sys.modules` never appear at all.
+- Events are numbered in the order the monitor recorded them. With multiple
+  threads, that order is consistent but not an exact wall-clock order.
+
+## Detail sections
+
+Below the timeline, each mechanism has its own section with full detail:
+
+- **`sys.meta_path` mutations** — every list operation (append, insert,
+  remove, slice assignment, reorder, …) with the resulting list and up to
+  five stack frames showing which code made the change. This is the section
+  to use when asking "who reordered the finders?".
+- **`sys.meta_path` reassignments** — code that replaced the whole list
+  (`sys.meta_path = [...]`). Plain assignment cannot be intercepted, so it
+  is detected on the next import; the stack shown belongs to that import,
+  not to the assignment.
+- **`sys.path_hooks` mutations and reassignments** — the same records for
+  `sys.path_hooks`. Hooks are identified by name; they are never called or
+  wrapped by default monitoring.
+- **`sys.path_importer_cache` changes** — paths added, removed, or switched
+  to a different path entry finder between snapshots (taken at install,
+  around `sys.path_hooks` changes, and at report time). A value of `None`
+  means Python recorded that no importer handles that path. Short-lived
+  changes between snapshots can be missed.
+- **Loaders of imported modules** — modules grouped by the loader recorded
+  in their metadata at report time. Only custom loaders and metadata
+  problems are shown in text; JSON keeps the full inventory. This is
+  report-time state and may differ from how a module was originally loaded.
+- **Internal errors** — failures inside metapathology itself, recorded
+  instead of breaking your program's imports. Exception text may be omitted
+  because formatting a foreign exception during an import can execute
+  arbitrary code.
+
+Sections with nothing to show are collapsed into one final
+`Nothing was recorded for:` line.
+
+## Deep diagnostics in the report
+
+With `--deep` options active, the header carries a warning (deep mode places
+monitor code inline with imports) and the timeline gains lines for path hook
+calls, path entry finder calls, and loader `create_module()` /
+`exec_module()` calls. `--deep-import-outcomes` adds
+`import of 'x': loaded/failed (directly observed)` lines — a definitive
+result, stronger evidence than any inference. The header's
+`import outcome observation:` line states the coverage achieved, or why the
+mechanism was unavailable (for example, another profiler was already
+installed).
 
 ## JSON report
 
-`render_report(format="json")`, `write_report(..., format="json")`, and JSON
-file output all use the same cutoff-based report document as the human
-renderer. The stable schema is identified by:
+`render_report(format="json")`, `write_report(..., format="json")`, and
+`--report file.json` produce a machine-readable document built from the same
+data as the text report, but complete: nothing is collapsed, capped, or
+relativized.
+
+The schema is versioned and stable:
 
 ```json
 {"name": "metapathology.report", "major": 1, "minor": 0}
 ```
 
-Its top-level sections include `tool`, `process`, `capture`, `snapshots`,
-`loader_inventory`, `import_attempts`, `standard_resolutions`,
-`resolution_routes`, `route_comparisons`, `timeline`, `findings`,
-`explanations`, `summary`, `target_outcome`, and `diagnostics`. The
-`summary` object carries severity counts, the unresolved-import count, and
-references to the top finding and explanation — never prose; headline
-sentences exist only in the text rendering. `target_outcome` records the
-target's completion kind, exception type name, the missing module name for
-`ImportError` subclasses, and the exit status; it is `null` unless the CLI
-(or an embedder calling `Monitor.record_target_outcome`) recorded one. Timeline events retain their shared sequence
-number and receive an `event:<seq>` identifier. Findings reference
-document-scoped routes and comparisons rather than duplicating probe evidence
-or requiring consumers to parse human wording.
-
-The bundled `metapathology/report.schema.json` file is the language-neutral
-contract. A major-version change may remove or rename a field, change its
-type or meaning, or remove an enum value. A minor-version change is additive:
-consumers must ignore unknown object fields and tolerate unknown enum values.
-Existing fields and enum meanings do not change within one major version.
-
-Every report has a `report_status`: `complete` means projection completed
-without recorded instrumentation or report-copy errors, `partial` means a
-valid report contains such errors, and `generation_failed` is the canonical
-minimal document produced when ordinary report generation raises. All three
-statuses have the same required top-level sections.
-
-Optional-value conventions are semantic. A field is omitted only when the
-concept does not apply to that record kind. `null` means the concept applies
-but its value is unknown, unavailable, or not captured. An empty array means
-the collection is known to contain no retained entries. IDs and `*_ref` /
-`*_refs` fields are document-scoped; every reference resolves within the same
-document and IDs are unique. Object and finder identity values are meaningful
-only within their originating process and report.
-
-Array ordering is contractual where it carries evidence: `timeline` is in
-increasing capture sequence, import attempts are in start order, snapshots
-retain their documented install/report order, and meta-path/path-hook entries
-retain finder precedence. Findings and explanations are in deterministic
-report priority order. Inventory group and module arrays are sorted by their
-documented safe type/name keys. Arrays described as sets of signals,
-limitations, references, or changed paths are semantically unordered even
-when output happens to be deterministic.
-
-`generated_at` is a second-precision UTC report-capture timestamp, not process
-start time or a per-event clock. JSON intentionally retains absolute paths,
-`argv`, `cwd`, executable paths, module origins, and stack filenames. Review a
-report before sharing it outside its original trust boundary.
-
-Capacity, completeness, overflow, and synchronous shutdown behavior are
-reported per capture mechanism; the
-event producers retain all records and therefore grow with observed import
-activity. Importer-cache snapshot storage is separately bounded at two full
-maps with a replace-latest policy.
-
-## Chronological evidence timeline
-
-The text timeline is a bounded projection of the same event list used by
-JSON. It interleaves uncached import starts, meta-path and path-hook changes,
-importer-cache diffs, finder probes, and internal errors. Long runs of
-routine events — consecutive uncached import starts and declined probes with
-no claims, mutations, or errors — collapse into one line stating the sequence
-range and counts; any event referenced by a finding or explanation always
-renders expanded with one line of context on each side. Set
-`METAPATHOLOGY_TEXT_TIMELINE=full` to restore the exhaustive per-event
-rendering; the JSON `timeline` is always exhaustive. Detailed mechanism
-sections remain below it for stacks and fuller values.
-
-Sequence numbers reflect acquisition of the monitor's shared recording lock.
-They provide deterministic capture order but do not claim a process-wide
-wall-clock order for concurrent threads.
-
-Context shared by every line is hoisted into the timeline preamble instead of
-being repeated per event: a single-threaded capture states
-`All events on thread X.` once and omits per-line `[thread ...]` markers, and
-snapshot identities that stay stable across every audited import are declared
-stable once. When an identity does change, the audit line that observed it
-carries indented continuation lines describing only the changed mechanism.
-Bounded sections point at the exhaustive record with a consistent
-`details in JSON` trailer.
-
-Opt-in deep calls appear as `deep_diagnostic_call` records in JSON and `deep`
-lines in text. Their evidence level is `deep_delegation`. A returned, found,
-not-found, or raised outcome describes the exact wrapped boundary;
-`unobserved_reentrant` explicitly marks a nested call that delegated under the
-guard without reconstructing an exact nested trace.
-Mutable loaders expose separate `loader_create_module` and
-`loader_exec_module` boundaries when those methods already exist. Names come
-from each call's actual spec or module metadata, so one loader shared by
-multiple modules remains distinguishable.
-
-`--deep-import-outcomes` adds paired `deep_import_event` records around
-CPython's `_find_and_load` invocation. A directly observed completion may say
-`loaded` or `failed`; this is stronger than finder or post-hoc module-cache
-evidence. The header and JSON `deep_import_outcomes` mechanism always report
-the runtime coverage or refusal reason. On CPython 3.10--3.14 the observer
-covers the installing thread and future `threading` threads. It cannot cover
-already-running threads or guarantee low-level `_thread` coverage, and normal
-cache hits remain invisible because they bypass `_find_and_load`. If either
-the current-thread or future-thread profiler slot is occupied, activation is
-refused without replacing or chaining that callback.
-
-An `uncached import started:` line proves only that uncached resolution
-started. The record still captures the copied `sys.meta_path` identity and
-finder type names plus constant-size identities/fingerprints for enabled
-auxiliary mechanisms; text shows them only on deviation, as described above.
-The event has no completion signal, does not identify the winning finder,
-and does not fire for `sys.modules` cache hits. JSON exposes these records
-as `import_audit_start` with `evidence: resolution_started`.
-Lower-level importlib entry points may bypass the builtin audit boundary, so a
-finder call can legitimately appear without a preceding audit-start event.
-
-## Header
-
-The header opens with the `target outcome:` and `verdict:` lines described
-above, then one `monitoring:` line naming the enabled mechanisms (disabled
-default mechanisms and unused opt-ins are noted in parentheses).
-Finder classes installed by well-known environment tooling carry a
-display-only annotation, for example `_Finder (virtualenv startup,
-expected)`; the annotation never affects severity or findings. It then shows the `sys.meta_path` and
-`sys.path_hooks` snapshots — collapsed to a single
-`(unchanged since install)` line when the install and report snapshots are
-identical, and split into `at install:` / `now:` lines otherwise — the
-importer-cache entry counts as `initial -> current`, finders that could not
-be wrapped, and the number of modules added to `sys.modules` since
-installation.
-
-When the [early-site bootstrap](usage.md#observe-later-pth-files) activated the
-monitor, the header and JSON `capture.early_site_bootstrap` object identify its
-path, selected site-packages directory, activation variable, and lexically
-earlier `.pth` files in that directory. Those earlier names are explicitly
-outside the event window; other site directories may also have run first.
-
-`BuiltinImporter`, `FrozenImporter`, and `PathFinder` normally appear as
-"standard CPython finders left unwrapped (expected)." They handle built-in,
-frozen, and path-based imports respectively. They are class objects shared by
-the interpreter, so metapathology deliberately does not modify them. This is
-normal and does not indicate degraded installation. The report may later use a
-fresh `PathFinder` call for an independent standard-path probe of a captured
-custom claim.
-
-## Standard resolution outcomes
-
-Default reports may attribute built-in, frozen, source, bytecode, extension,
-zip, and namespace results to the matching standard finder. These records are
-explicitly `inferred`: they combine an import audit start, its meta-path order,
-absence of a contradictory captured custom claim, and post-hoc loader
-metadata. They can explain why a later finder was unreachable, but they are
-not historical `find_spec()` calls.
-
-When deep import outcomes are enabled and CPython exposes a supported Python
-code boundary for `PathFinder.find_spec`, the existing reversible profiler
-captures its aggregate returned spec. Such records are `captured`, use the
-import-time phase, and link to the exact timeline event and import attempt.
-Deep path-entry finder calls are linked as component evidence when available;
-their path remains null when it was not known at instrumentation time.
-
-The header and JSON capture mechanisms report whether aggregate capture is
-active, unsupported on the running CPython, or unavailable because another
-profiler was already installed. In either unavailable case, the report keeps
-the conservative inference rather than replacing or proxying `PathFinder`.
-The independent standard-path probe remains separately labeled report-time
-evidence and never upgrades attribution or predicts an alternative winner.
-
-Any nonstandard entries that could not be wrapped appear separately under
-"other finders observed but not instrumented." Their calls are not directly
-recorded, so attribution may require elimination.
-
-## Post-hoc loader inventory
-
-The loader inventory covers every safely inspectable string-keyed
-`sys.modules` entry. It prefers a non-`None` `module.__spec__.loader`, falls
-back to `module.__loader__`, and keeps modules without either value in a
-separate group. A disagreement between the two loader identities is labeled
-as metadata evidence, not as a package defect.
-
-This is a report-time snapshot, not exact historical attribution: modules may
-have replaced their metadata or disappeared before reporting. The inventory
-includes modules that predate installation, unlike the separate
-`modules_since_install` list. Text output groups modules by loader type name:
-custom loader groups list module names and origins (at most 25 per group),
-while groups whose type name matches a standard CPython loader are summarized
-as counts, always listing their metadata disagreements. Cached paths are
-omitted from text. JSON retains every copied record, grouped by loader type
-and object identity.
-
-Module metadata is read from real module dictionaries through the base
-`ModuleType` implementation. This bypasses module-subclass overrides and does
-not materialize `LazyLoader` modules. Arbitrary module-like values, inaccessible
-module subclasses, malformed metadata, and non-string keys are reported as
-unavailable or omitted without dynamic attribute access.
-
-## `sys.meta_path` mutations
-
-Each record includes:
-
-- the list operation and sequence number;
-- finder types added or removed, or an order-change marker;
-- the resulting list contents;
-- the thread name; and
-- up to five relevant stack frames.
-
-Use the stack to locate code that changed finder precedence. The monitor
-captures more frames than it displays and filters frames from itself and the
-import machinery. Recorded operations include additions, removals, item and
-slice replacement, clearing, in-place addition or repetition, and order
-changes. This section covers the usual way libraries alter `sys.meta_path`.
-
-## `sys.meta_path` reassignments
-
-Less commonly, code replaces the list itself with an assignment such as
-`sys.meta_path = new_list`. Plain attribute assignment cannot be intercepted
-at the moment it happens.
-Reassignment is detected on the next import, so the displayed stack belongs to
-that triggering import, not necessarily to the code that assigned the list.
-The report shows the abandoned and replacement contents and notes that
-instrumentation was reinstalled.
-
-## `sys.path_hooks` mutations
-
-These records parallel meta-path mutations but identify each hook by a
-callable name when it can be read without foreign attribute dispatch, else by
-its safe type name; the object ID is added only when that label is ambiguous. Metapathology never wraps or calls a hook factory. The
-resulting snapshot shows hook precedence after each operation.
-
-## `sys.path_hooks` reassignments
-
-Direct replacement is detected at the next uncached import by the existing
-audit hook. The report therefore shows the triggering import stack rather
-than the unknowable assignment stack. Recovery installs an instrumented copy;
-the list object originally assigned becomes stale.
-
-## `sys.path_importer_cache` changes
-
-Cache diffs show string paths added, removed, or switched to a different
-finder identity. A `None` finder is a negative cache entry. Non-string keys
-are counted but never formatted. The text report lists full entries only for
-paths relevant to a finding or captured route (at most 25 per diff) and
-summarizes the rest as counts; JSON retains every captured change.
-
-Snapshots occur at installation, before and after observed path-hook list
-mutations, and at report time. The audit hook only marks a changed
-identity/length fingerprint dirty, so short-lived or same-size cache changes
-between full observations may be absent. Sequence numbers place retained
-diffs relative to the other event mechanisms.
-
-## Finder attribution
-
-Instrumented finders are grouped by finder type and object identity. The
-section reports how many `find_spec()` probes occurred and which modules each
-finder claimed. A finder claims a module by returning a spec. The report lists
-at most 25 claimed modules per finder and reports the omitted count.
-
-Two objects of the same finder class are separate entries because their object
-identities differ.
-
-## Finder API contracts
-
-The exhaustive JSON `finder_contracts` inventory records each observed
-meta-path object's `find_spec` and `find_module` availability, the raw
-dictionary evidence source, its first observed position, and an insertion
-event reference when available. The bounded text section prioritizes
-legacy-only, protocol-less, and indeterminate custom entries, followed by the
-standard CPython class entries.
-
-These labels are compatibility risks rather than defect verdicts. CPython
-3.10 and 3.11 can fall back to a callable `find_module`, CPython 3.12 and later
-cannot, and third-party code that directly iterates `sys.meta_path` may require
-`find_spec` on every version. An indeterminate result means safe raw inspection
-encountered a descriptor, unusual dictionary, or inspection error; the report
-does not resolve it by executing foreign code.
-
-## Resolution routes
-
-Each captured custom claim produces a `captured_claim` route. Reporting may
-also produce an independent `standard_path_probe` route by calling
-[`PathFinder.find_spec()`][path-finder] with the captured search path and an
-exact live reload target when one remains available.
-
-Route comparisons preserve these symmetric mechanics:
-
-- found, not-found, failed, or target-unavailable status;
-- loader type, origin, cached path, and package/module status;
-- search locations present only in either route; and
-- search-location reordering.
-
-The probe has `evidence_level=live_probe`, `state_phase=report`, and
-`predicts_alternative_winner=false`. It uses report-time path-hook,
-importer-cache, filesystem, and finder state. It also skips intervening custom
-meta-path finders. Text therefore calls it an independent standard path probe,
-never the finder that "would have won."
-
-Structural evidence next to a comparison is identity-only: it says whether
-`sys.path_hooks` or relevant importer-cache entries changed between retained
-snapshots. It does not reconstruct the import-time cache or invoke historical
-foreign objects.
-
-## Findings narrative
-
-Raw status, loader, origin, package, cached-path, and location differences are
-not findings. They remain visible in the resolution-route section. A route
-difference is promoted only when an observed effect corroborates a specific
-mechanism.
-
-The `-- findings --` section renders numbered problem blocks in severity
-order. When a causal explanation links to a finding through its
-`cause_finding_ref`, the explanation headlines the block and the finding
-renders indented beneath it as evidence — one problem, one block. Each block
-ends with a static `why it matters:` consequence line for its kind (when the
-headline does not already state it) and a prose sentence naming the
-severity, evidence level, and limitations. Informational findings compress
-to one line each under an `informational:` subheading. Cross-references use
-the visible block numbers (`see [1]`). A run with no findings states the
-clean result in one sentence.
-
-When the CLI recorded a target failure, imports that started but produced no
-module by report time are listed in a bounded `-- imports that started but
-produced no module --` section; the target's failed module is marked, and a
-conservative note connects legacy-only finders that CPython 3.12+ never
-calls. Failed optional imports also appear there and are normal.
-
-These findings are leads, not verdicts:
-
-- `[namespace-truncation]` — an exact opt-in deep import completion captured a
-  failed descendant after a custom namespace claim, and the standard path
-  route contains a candidate location absent from the captured route. The
-  finding references both routes and their comparison.
-- `[no-spec]` — a new `sys.modules` entry has no
-  [`__spec__`][module-spec] and no recorded finder claim. It was likely
-  created manually or loaded through a route invisible to meta-path finders.
-- `[finder-side-effect]` — a captured finder boundary changed the target's
-  `sys.modules` state before the finder returned `None` or raised. The report
-  does not infer which nested action caused the delta.
-- `[module-replacement]` — an opt-in deep loader boundary began and ended with
-  different non-`None` module object identities. Matching valid specs do not
-  hide this identity change; intermediate objects and internal steps remain
-  unknown.
-- `[legacy-finder-contract]` — safe raw-dictionary inspection captured a
-  callable `find_module` without a callable `find_spec`. Protocols are not
-  invoked, and descriptor-backed availability can remain indeterminate.
-- `[path-hook-shadow]` — distinct opt-in path-hook boundaries accepted the
-  same path across recorded resolution states. This is structural evidence;
-  it does not claim both hooks were reachable in one historical call.
-- `[failed-after-mutation]` — an exact deep import boundary reported `failed`
-  after a retained meta-path, path-hook, or importer-cache mutation. Temporal
-  ordering alone does not prove that the mutation caused the failure.
-
-`loader-reentry` is reserved for nested lifecycle and partially initialized
-identity evidence. The current `unobserved_reentrant` deep marker explicitly
-lacks that evidence and therefore never produces this finding.
-
-[path-finder]: https://docs.python.org/3/library/importlib.html#importlib.machinery.PathFinder
-[module-spec]: https://docs.python.org/3/reference/import.html#import-related-module-attributes
-
-Every JSON finding contains an `evidence` object. Its primary `level` records
-the basis for the promoted effect; `event_refs` links retained supporting
-records and `limitations` contains stable machine-readable caveats. Route and
-comparison objects are document-scoped and referenced by stable IDs rather
-than duplicated inside findings.
-
-Finder-call timeline records include import-time spec summaries. Exact string
-values and exact list/tuple package paths are copied before the spec is returned
-to importlib. Non-string values are represented only by safe type and identity
-metadata. A foreign package-path sequence is marked `deferred` rather than
-iterated in the import hot path. Namespace paths returned by the standard path probe
-are copied during reporting and marked `post_hoc`. Field comparisons expose
-locations present only in the left or right route, plus reordering, without
-presenting probe state as exact historical proof.
-
-Finder and mutable-loader records also expose constant-size target-module
-states: `missing`, explicit `none`, `object` with safe identity/type metadata,
-or `unavailable`. Text timelines omit unchanged pairs but JSON retains them.
-Object identities are process-local evidence and are not stable across runs.
-
-Each route-comparison-backed finding separately includes a `structural evidence:` line.
-This identity-only comparison says whether `sys.path_hooks` changed between
-the install and report snapshots and whether relevant
-`sys.path_importer_cache` entries changed. JSON links the comparison to those
-snapshots and to passive cache-diff events. It does not call removed or
-invalidated historical finder objects, reconstruct exact import-time state, or
-prove that a structural change caused the route difference.
-
-Extension modules, built-ins, synthetic origins, and modules that predate
-installation are not subjected to the source-module bypass check.
-
-## Internal errors
-
-Instrumentation failures are recorded instead of being allowed to break the
-target import. This section identifies the failing monitor code path and the
-exception type. It intentionally may omit exception text because converting a
-foreign exception to text during an import can execute arbitrary code.
-
-For capture boundaries and memory behavior, see
-[Limitations and resource behavior](limitations.md).
+The bundled `metapathology/report.schema.json` file is the contract. Minor
+versions only add fields — consumers must ignore unknown fields and tolerate
+unknown enum values. Field removals or meaning changes require a new major
+version.
+
+Conventions for consumers:
+
+- Top-level sections include `capture`, `snapshots`, `import_attempts`,
+  `resolution_routes`, `route_comparisons`, `timeline`, `findings`,
+  `summary`, `target_outcome`, and `diagnostics`.
+- A field is *omitted* when the concept does not apply, `null` when it
+  applies but was not captured, and an empty array when the collection is
+  known to be empty.
+- `*_ref` fields resolve to IDs within the same document. Object identity
+  values are only meaningful within their originating process.
+- `timeline` is ordered by capture sequence; findings are in report priority
+  order.
+- `report_status` is `complete`, `partial` (valid but some instrumentation
+  or copy errors occurred), or `generation_failed` (a minimal fallback
+  document).
+
+JSON retains absolute paths, `argv`, and stack file names. Review a report
+before sharing it outside its original trust boundary.
+
+For what the monitor cannot observe at all, see
+[Limitations](limitations.md).

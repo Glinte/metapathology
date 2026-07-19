@@ -418,7 +418,7 @@ assert broken["evidence"]["level"] == "structural_inference"
 assert len(broken["evidence"]["event_refs"]) == 3
 mechanism = next(item for item in document["capture"]["mechanisms"] if item["name"] == "deep_import_outcomes")
 assert mechanism["completeness"].endswith("cache_hits_not_observed")
-assert "deep import outcome coverage:" in metapathology.render_report()
+assert "import outcome observation:" in metapathology.render_report()
 assert "[failed-after-mutation] 'deep_outcome_broken'" in metapathology.render_report()
 metapathology.uninstall()
 assert sys.getprofile() is None and threading.getprofile() is None

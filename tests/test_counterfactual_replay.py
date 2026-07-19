@@ -100,10 +100,10 @@ assert captured["signals"] == ["meta_path_short_circuit"]
 assert not any(item["module"] == "counterfactual_target" for item in document["findings"])
 
 text = metapathology.render_report()
-assert "structural evidence: sys.path_hooks changed" in text, text
-assert "standard path probe: PathFinder, loader CurrentLoader" in text, text
+assert "since install: sys.path_hooks changed" in text, text
+assert "standard search at report time: PathFinder, loader CurrentLoader" in text, text
 assert "[loader-displacement]" not in text, text
-assert "does not predict which finder would win" in text, text
+assert "does not show which finder would have won" in text, text
 print("OK")
 """
 

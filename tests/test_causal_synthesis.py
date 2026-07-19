@@ -95,7 +95,7 @@ else:
     assert not any(item["kind"] == "namespace_truncation" for item in document["findings"])
     assert not any(item["kind"] == "namespace_truncation_failure" for item in document["explanations"])
     text = metapathology.render_report()
-    assert "resolution route divergences" in text
+    assert "modules found by a custom finder" in text
     assert "[namespace-truncation]" not in text
 print("OK")
 """
