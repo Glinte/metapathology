@@ -20,6 +20,9 @@ environment installs the current checkout as the `metapathology` command.
 | [pip#11812](https://github.com/pypa/pip/issues/11812) | An inherited editable finder claims a build backend before pip's `backend-path` | `_EditableFinder` claims the wrong backend; neutral resolution route divergence (no findings) |
 | [distributed#7782](https://github.com/dask/distributed/issues/7782) | `PathFinder` finds a cwd namespace package before setuptools' appended editable finder | Initial finder order explains why `_EditableFinder` never receives the import |
 | [meson-python#871](https://github.com/mesonbuild/meson-python/issues/871) | Meson editable meta finder constructs source specs without consulting claw's path hook | `MesonpyMetaFinder` claims the package and submodule after claw installs its path hook |
+| [mosquito-cfd#22](https://github.com/talmolab/mosquito-cfd/issues/22) | Coverage source discovery imports an eager package and then removes newly loaded NumPy extensions from `sys.modules` | Deep events show a successful `ExtensionFileLoader` load followed by a second failed load of the same extension |
+| [rules_python#2009](https://github.com/bazel-contrib/rules_python/issues/2009) | rules_python moves the directly executed coverage package directory to the end of `sys.path`, where `coverage/python.py` still beats the earlier runfiles namespace | Deep path-entry attribution shows `PathFinder` preferring the later regular module over the PEP 420 namespace candidate |
+| [Bifrost#418](https://github.com/gobifrost/bifrost/issues/418) follow-up | `VirtualModuleFinder` is inserted before every standard finder instead of only before `PathFinder` | The indexed virtual module shadows CPython's frozen `__hello__`; the control preserves `FrozenImporter` precedence |
 
 Beartype#599 is another confirmed finder-order bug involving PyInstaller's
 frozen importer. It is not included: the failure exists only inside a frozen

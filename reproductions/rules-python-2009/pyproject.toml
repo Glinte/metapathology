@@ -1,0 +1,10 @@
+[project]
+name = "rules-python-2009-repro"
+version = "0.0.0"
+requires-python = ">=3.10"
+
+[tool.uv.sources]
+metapathology = { path = "../../", editable = true }
+
+[dependency-groups]
+dev = ["metapathology"]
