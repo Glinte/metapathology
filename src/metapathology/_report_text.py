@@ -818,19 +818,54 @@ def _progress_description(progress: str) -> str:
     return _PROGRESS_DESCRIPTIONS.get(progress, _humanize(progress))
 
 
-# Plain-language labels for opt-in deep-diagnostic call sites. These lines
-# only appear when the matching --deep-* mechanism is enabled.
-_BOUNDARY_LABELS = {
-    "path_hook": "path hook called with",
-    "path_entry_finder": "path entry finder asked about",
-    "loader_create_module": "loader create_module() for",
-    "loader_exec_module": "loader exec_module() for",
-}
+# Recorded type names that identify a plain callable rather than a class;
+# showing them would read as noise ("path hook function"), so omit them.
+_GENERIC_CALLABLE_TYPE_NAMES = frozenset({"function", "builtin_function_or_method", "method", "method-wrapper"})
+
+# Rendered for deep calls that ran nested inside another observed call; the
+# timeline preamble explains the phrase once when it appears.
+_NESTED_CALL_OUTCOME = "nested; result not recorded"
 
 
-def _boundary_label(boundary: str) -> str:
-    """Name a deep-diagnostic call site in plain words."""
-    return _BOUNDARY_LABELS.get(boundary, _humanize(boundary))
+def _deep_call_outcome(event: DeepDiagnosticCall) -> str:
+    """Translate a recorded deep-call outcome into plain words."""
+    if event.outcome == "raised":
+        name = event.exception_type_name or "an exception"
+        # Path hooks signal "this path entry is not mine" by raising ImportError.
+        if event.boundary == "path_hook" and (event.exception_type_name or "").endswith("ImportError"):
+            return f"raised {name} (declined the path)"
+        return f"raised {name}"
+    if event.outcome == "found":
+        return "found it"
+    if event.outcome == "not_found":
+        return "found nothing"
+    if event.outcome == "unobserved_reentrant":
+        return _NESTED_CALL_OUTCOME
+    if event.outcome == "returned":
+        return "returned a finder" if event.boundary == "path_hook" else "returned"
+    return _humanize(event.outcome)
+
+
+def _deep_call_line(event: DeepDiagnosticCall, context: _RenderContext) -> str:
+    """Render one deep-diagnostic call naming who was called and about what."""
+    outcome = _deep_call_outcome(event)
+    transition = _module_transition_suffix(event.module_state_before, event.module_state_after)
+    thread = context.thread_suffix(event.thread_name)
+    if event.boundary == "path_hook":
+        hook = "" if event.object_type_name in _GENERIC_CALLABLE_TYPE_NAMES else f"{event.object_type_name} "
+        subject = "<unknown>" if event.path is None else context.quoted_path(event.path)
+        return f"#{event.seq} path hook {hook}called with {subject}: {outcome}{transition}{thread}"
+    if event.boundary == "path_entry_finder":
+        where = "" if event.path is None else f" for {context.quoted_path(event.path)}"
+        return (
+            f"#{event.seq} path entry finder {event.object_type_name}{where} "
+            f"asked about {event.fullname!r}: {outcome}{transition}{thread}"
+        )
+    if event.boundary in ("loader_create_module", "loader_exec_module"):
+        method = "create_module()" if event.boundary == "loader_create_module" else "exec_module()"
+        return f"#{event.seq} loader {event.object_type_name}.{method} for {event.fullname!r}: {outcome}{transition}{thread}"
+    subject = event.fullname if event.fullname is not None else event.path
+    return f"#{event.seq} {_humanize(event.boundary)} {subject or '<unknown>'}: {outcome}{transition}{thread}"
 
 
 _BARE_BOUNDARY_LABELS = {
@@ -984,6 +1019,12 @@ def _timeline_lines(document: ReportDocument, context: _RenderContext) -> list[s
             noun = "identity" if len(stable_names) == 1 else "identities"
             lines.append(f"{_join_names(stable_names)} {noun} stable across all audited imports.")
 
+    if any(isinstance(event, DeepDiagnosticCall) and event.outcome == "unobserved_reentrant" for event in events):
+        lines.append(
+            f"Calls marked '{_NESTED_CALL_OUTCOME}' ran inside another observed call "
+            "(for example during a module's exec_module()); they happened normally but their results were not captured."
+        )
+
     # Read once per render: full disables collapsing and reproduces the
     # exhaustive pre-collapse timeline exactly.
     full = os.environ.get("METAPATHOLOGY_TEXT_TIMELINE") == "full"
@@ -1031,6 +1072,11 @@ def _timeline_entries(
             declined = event.exception_type_name is None and not event.found
             collapsible = (
                 declined and _module_transition_suffix(event.module_state_before, event.module_state_after) == ""
+            )
+        elif isinstance(event, DeepDiagnosticCall):
+            routine = event.outcome in ("not_found", "unobserved_reentrant")
+            collapsible = (
+                routine and _module_transition_suffix(event.module_state_before, event.module_state_after) == ""
             )
         entries.append((event, main_line, continuation, collapsible))
     return entries
@@ -1094,12 +1140,20 @@ def _collapse_summary_line(run: "list[tuple[MonitorEvent, str, list[str], bool]]
     last_seq = run[-1][0].seq
     starts = sum(1 for event, *_ in run if isinstance(event, ImportAuditStart))
     declined = sum(1 for event, *_ in run if isinstance(event, FindSpecCall))
+    deep_misses = sum(1 for event, *_ in run if isinstance(event, DeepDiagnosticCall) and event.outcome == "not_found")
+    nested = sum(
+        1 for event, *_ in run if isinstance(event, DeepDiagnosticCall) and event.outcome == "unobserved_reentrant"
+    )
     clauses = []
     if starts:
         clauses.append(f"{starts} import start{'' if starts == 1 else 's'}")
     if declined:
         clauses.append(f"{declined} finder call{'' if declined == 1 else 's'} returning None")
-    detail = " and ".join(clauses)
+    if deep_misses:
+        clauses.append(f"{deep_misses} path entry finder call{'' if deep_misses == 1 else 's'} finding nothing")
+    if nested:
+        clauses.append(f"{nested} nested call{'' if nested == 1 else 's'}")
+    detail = _join_names(clauses)
     return f"#{first_seq}-#{last_seq}: {detail} (collapsed)"
 
 
@@ -1141,14 +1195,9 @@ def _audit_deviation_lines(
 def _timeline_line(event: MonitorEvent, context: _RenderContext) -> str:
     """Render one compact line using only data captured in the event record."""
     if isinstance(event, DeepDiagnosticCall):
-        subject = event.fullname if event.fullname is not None else event.path
-        transition = _module_transition_suffix(event.module_state_before, event.module_state_after)
-        return f"#{event.seq} {_boundary_label(event.boundary)} {subject or '<unknown>'}: {event.outcome}{transition}"
+        return _deep_call_line(event, context)
     if isinstance(event, DeepImportEvent):
-        return (
-            f"#{event.seq} import of {event.fullname!r}: {event.outcome} (directly observed)"
-            f"{context.thread_suffix(event.thread_name)}"
-        )
+        return f"#{event.seq} import of {event.fullname!r}: {event.outcome}{context.thread_suffix(event.thread_name)}"
     if isinstance(event, ImportAuditStart):
         # Stable snapshot context lives in the timeline preamble; deviations
         # are appended by _timeline_lines as continuation lines.

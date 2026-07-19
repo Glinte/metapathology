@@ -293,8 +293,11 @@ Sections with nothing to show are collapsed into one final
 With `--deep` options active, the header carries a warning (deep mode places
 monitor code inline with imports) and the timeline gains lines for path hook
 calls, path entry finder calls, and loader `create_module()` /
-`exec_module()` calls. `--deep-import-outcomes` adds
-`import of 'x': loaded/failed (directly observed)` lines — a definitive
+`exec_module()` calls. Deep lines that ran nested inside another observed
+call (a common effect of importing during `exec_module()`) record the call
+but not its result; the timeline preamble explains this once when it
+applies. `--deep-import-outcomes` adds `import of 'x': loaded/failed`
+lines recorded at the interpreter's own import boundary — a definitive
 result, stronger evidence than any inference. The header's
 `import outcome observation:` line states the coverage achieved, or why the
 mechanism was unavailable (for example, another profiler was already

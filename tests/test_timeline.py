@@ -348,6 +348,71 @@ def test_run_of_four_or_more_collapsible_events_collapses(run_python: RunPython)
     assert proc.stdout.strip() == "OK"
 
 
+COLLAPSE_DEEP_RUN = r"""
+import importlib.machinery
+import sys
+
+import metapathology
+
+
+class Loader:
+    def __init__(self, fullname):
+        self.fullname = fullname
+
+    def create_module(self, spec):
+        return None
+
+    def exec_module(self, module):
+        if self.fullname == "deep_collapse_outer":
+            for name in ("deep_collapse_m1", "deep_collapse_m2", "deep_collapse_m3", "deep_collapse_m4"):
+                __import__(name)
+
+
+class Finder:
+    def find_spec(self, fullname, target=None):
+        if not fullname.startswith("deep_collapse"):
+            return None
+        return importlib.machinery.ModuleSpec(fullname, Loader(fullname))
+
+
+finder = Finder()
+sentinel = sys.path[0] + "\\deep-collapse-sentinel"
+
+
+def hook(path):
+    if path != sentinel:
+        raise ImportError
+    return finder
+
+
+sys.path_hooks.insert(0, hook)
+sys.path_importer_cache.pop(sentinel, None)
+sys.path.insert(0, sentinel)
+metapathology.install(
+    report_at_exit=False,
+    deep_path_hooks=True,
+    deep_path_entry_finders=True,
+    deep_loaders=True,
+)
+sys.path_importer_cache.pop(sentinel, None)
+__import__("deep_collapse_outer")
+text = metapathology.render_report()
+timeline = text.split("-- event timeline", 1)[1]
+assert "unobserved_reentrant" not in timeline, timeline
+assert "not_found" not in timeline, timeline
+assert "nested; result not recorded" in text, text
+assert "nested calls (collapsed)" in timeline, timeline
+print("OK")
+"""
+
+
+def test_deep_events_render_in_plain_words_and_routine_runs_collapse(run_python: RunPython) -> None:
+    proc = run_python(COLLAPSE_DEEP_RUN)
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
 CLAIM_SPLITS_RUN = r"""
 import sys
 from importlib.machinery import PathFinder
