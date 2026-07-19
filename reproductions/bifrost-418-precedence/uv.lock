@@ -1,0 +1,42 @@
+version = 1
+revision = 3
+requires-python = ">=3.10"
+
+[options]
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer-span = "P7D"
+
+[[package]]
+name = "bifrost-418-precedence-repro"
+version = "0.0.0"
+source = { virtual = "." }
+
+[package.dev-dependencies]
+dev = [
+    { name = "metapathology" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "metapathology", editable = "../../" }]
+
+[[package]]
+name = "metapathology"
+version = "0.4.3"
+source = { editable = "../../" }
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "basedpyright", specifier = ">=1.31.3" },
+    { name = "hypothesis", specifier = ">=6.146" },
+    { name = "prek", specifier = ">=0.2.20" },
+    { name = "pyrefly", specifier = ">=0.44.0" },
+    { name = "pytest", specifier = ">=8.3" },
+    { name = "pytest-cov", specifier = ">=6.3" },
+    { name = "pytest-timeout", specifier = ">=2.4" },
+    { name = "ruff", specifier = ">=0.12.11" },
+]
+docs = [{ name = "zensical", specifier = ">=0.0.47,<0.1" }]

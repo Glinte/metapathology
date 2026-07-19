@@ -1,0 +1,68 @@
+== metapathology report ==
+target outcome: completed (exit status 0)
+verdict: no problems found; some modules were found by a custom finder instead of the standard path search — listed below for review
+report guide: https://glinte.github.io/metapathology/report/
+monitoring: sys.meta_path, sys.path_hooks, sys.path_importer_cache
+sys.meta_path (unchanged since install): [_Finder, BuiltinImporter, FrozenImporter, PathFinder]
+    _Finder is installed by virtualenv at startup; its presence is expected
+sys.path_hooks (unchanged since install): [zipimporter, path_hook_for_FileFinder]
+sys.path_importer_cache: 16 -> 16 entries
+standard CPython finders left unwrapped (expected): [BuiltinImporter, FrozenImporter, PathFinder]
+modules imported since install: 3
+paths shown relative to: D:\Code\metapathology\reproductions\bifrost-418-precedence (that directory itself displays as <project>)
+
+-- findings (0) --
+No problems were found. The comparisons below are informational.
+
+-- modules found by a custom finder (1) --
+For each module, the recorded result is compared with a fresh PathFinder search over the same path, run at report time. The fresh search reflects current state; it does not show which finder would have won during the run.
+'__hello__':
+    during the run: VirtualModuleFinder, loader VirtualLoader, origin 'workspace/__hello__.py'
+    standard search at report time: PathFinder, loader SourceFileLoader, origin 'C:\Users\ACER\AppData\Roaming\uv\python\cpython-3.14.2-windows-x86_64-none\Lib\__hello__.py'
+    differences: loader type; origin; cached path
+    VirtualModuleFinder was added to sys.meta_path at event #5 by reproduce.py:47 in install_at_front
+    note: this finder ran before PathFinder, so the standard path search never saw the module
+    since install: sys.path_hooks unchanged; sys.path_importer_cache unchanged for the searched path
+
+-- finder calls --
+Standard CPython finders are not wrapped, so their calls do not appear here.
+VirtualModuleFinder: called 1 time, found 1 module
+    __hello__
+_Finder: called 2 times, found 0 modules
+
+-- event timeline (8) --
+Events are numbered in the order they were recorded; all ran on thread MainThread.
+sys.path_hooks and sys.path_importer_cache identities stable across all audited imports.
+#1 import started: 'pkgutil'
+    meta_path 0x168db650300: [_Finder, BuiltinImporter, FrozenImporter, PathFinder]
+#2 _Finder.find_spec('pkgutil'): returned None
+#3 import started: 'importlib.abc'
+#4 _Finder.find_spec('importlib.abc'): returned None
+#5 sys.meta_path insert +[VirtualModuleFinder]
+#6 import started: '__hello__'
+    meta_path 0x168db650300: [VirtualModuleFinder, _Finder, BuiltinImporter, FrozenImporter, PathFinder]
+#7 VirtualModuleFinder.find_spec('__hello__'): found it (loader VirtualLoader, origin 'workspace/__hello__.py')
+#8 sys.meta_path remove -[VirtualModuleFinder]
+
+-- sys.meta_path mutations (2) --
+#5 insert +[VirtualModuleFinder]
+    meta_path after: [VirtualModuleFinder, _Finder, BuiltinImporter, FrozenImporter, PathFinder]
+    at reproduce.py:47 in install_at_front
+    at reproduce.py:56 in main
+    at reproduce.py:68 in <module>
+    at <frozen runpy>:88 in _run_code
+    at <frozen runpy>:98 in _run_module_code
+#8 remove -[VirtualModuleFinder]
+    meta_path after: [_Finder, BuiltinImporter, FrozenImporter, PathFinder]
+    at reproduce.py:60 in main
+    at reproduce.py:68 in <module>
+    at <frozen runpy>:88 in _run_code
+    at <frozen runpy>:98 in _run_module_code
+    at <frozen runpy>:287 in run_path
+
+-- loaders of imported modules (136 entries; full list in the JSON report) --
+Only custom loaders and metadata problems are shown. This reflects module metadata at report time, which may differ from how each module was originally loaded.
+VirtualLoader: 1 module(s)
+    __hello__: origin 'workspace/__hello__.py'
+
+Nothing was recorded for: imports attributed to standard finders, sys.meta_path reassignments, sys.path_hooks mutations, sys.path_hooks reassignments, sys.path_importer_cache changes, internal errors.
