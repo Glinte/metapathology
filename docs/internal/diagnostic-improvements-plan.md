@@ -27,7 +27,8 @@ Use captured deep path-entry calls to synthesize a concise explanation when
 an earlier path entry contributes a namespace portion but a later path entry
 provides the regular package or module that wins. The explanation must name
 both paths and the selected origin without implying that namespace portions
-are final claims by themselves.
+are final claims by themselves. When an exact descendant import subsequently
+fails, promote the explanation to an actionable correlated finding.
 
 ## 3. Explain repeated loader execution
 
@@ -37,6 +38,11 @@ Promote two captured `exec_module` calls for the same module name and loader,
 when they execute different module objects, into an explicit repeated-load
 finding. Link both event sequence numbers and distinguish this from an
 ordinary `importlib.reload`, which normally reuses the module object.
+
+Also correlate a captured earlier successful attempt with a later failed
+attempt when PathFinder selected the same loader type and normalized origin.
+This broader `repeated-load-failure` finding covers loader boundaries that
+cannot safely be wrapped, including native extension loaders.
 
 ## 4. Reduce weak temporal warnings
 

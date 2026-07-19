@@ -1056,6 +1056,23 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         )
     finally:
         monitor._end_report_analysis(previously_active)
+    findings = (
+        *findings,
+        *_namespace_displacement_findings(
+            attempts,
+            standard_resolutions,
+            events,
+            len(findings),
+        ),
+    )
+    findings = (
+        *findings,
+        *_repeated_load_failure_findings(
+            attempts,
+            standard_resolutions,
+            len(findings),
+        ),
+    )
     explanations = _causal_explanations(findings, attempts, standard_resolutions, route_comparisons, events)
     outcome_state = monitor.target_outcome
     target_outcome = (
@@ -1514,6 +1531,9 @@ def _causal_explanations(
     explanations: list[CausalExplanation] = []
     events_by_seq = {} if events is None else {event.seq: event for event in events}
     comparisons_by_id = {comparison.comparison_id: comparison for comparison in route_comparisons}
+    displacement_findings = {
+        finding.module: finding for finding in findings if finding.kind == "regular_module_shadows_namespace"
+    }
     for finding in findings:
         comparison = None if finding.route_comparison_id is None else comparisons_by_id.get(finding.route_comparison_id)
         if finding.kind != "namespace_truncation" or comparison is None or finding.claim is None:
@@ -1576,31 +1596,38 @@ def _causal_explanations(
             if selected_index is not None and selected_index > 0:
                 candidate = components[0]
                 selected = components[selected_index]
-                event_seqs = tuple(
-                    dict.fromkeys(
-                        (
-                            *((resolution.event_seq,) if resolution.event_seq is not None else ()),
-                            candidate.seq,
-                            selected.seq,
+                displacement_finding = displacement_findings.get(resolution.fullname)
+                descendants = () if displacement_finding is None else _failed_descendants_after(resolution, attempts)
+                subjects: tuple[ImportAttempt | None, ...] = descendants or (None,)
+                for descendant in subjects:
+                    event_seqs = tuple(
+                        dict.fromkeys(
+                            (
+                                *((resolution.event_seq,) if resolution.event_seq is not None else ()),
+                                candidate.seq,
+                                selected.seq,
+                                *(() if descendant is None else descendant.event_seqs),
+                            )
                         )
                     )
-                )
-                explanations.append(
-                    CausalExplanation(
-                        explanation_id=f"explanation:{len(explanations) + 1}",
-                        kind="namespace_candidate_displaced",
-                        confidence="captured",
-                        subject=resolution.fullname,
-                        effect_status="regular_module_selected",
-                        cause_finding_id=None,
-                        finder_type_name=resolution.finder_type_name,
-                        omitted_location="",
-                        candidate_path=candidate.path or "",
-                        event_seqs=event_seqs,
-                        next_observation=None,
-                        origin=resolution.origin,
+                    explanations.append(
+                        CausalExplanation(
+                            explanation_id=f"explanation:{len(explanations) + 1}",
+                            kind="namespace_candidate_displaced",
+                            confidence="captured" if descendant is None else "correlated",
+                            subject=resolution.fullname if descendant is None else descendant.fullname,
+                            effect_status="regular_module_selected" if descendant is None else "descendant_failed",
+                            cause_finding_id=(
+                                None if displacement_finding is None else displacement_finding.finding_id
+                            ),
+                            finder_type_name=resolution.finder_type_name,
+                            omitted_location="",
+                            candidate_path=candidate.path or "",
+                            event_seqs=event_seqs,
+                            next_observation=None,
+                            origin=resolution.origin,
+                        )
                     )
-                )
         if not resolution.later_finders:
             continue
         event_seqs = (() if resolution.event_seq is None else (resolution.event_seq,)) + resolution.component_event_seqs
@@ -1680,7 +1707,201 @@ def _causal_explanations(
                     state_after=call.target_state if target_diverged else call.module_state_after,
                 )
             )
+        elif finding.kind == "repeated_load_failure":
+            matched = [
+                resolution
+                for resolution in standard_resolutions
+                if resolution.fullname == finding.module
+                and resolution.event_seq is not None
+                and resolution.event_seq in finding.supporting_event_seqs
+            ]
+            if len(matched) < 2:
+                continue
+            later = matched[-1]
+            explanations.append(
+                CausalExplanation(
+                    explanation_id=f"explanation:{len(explanations) + 1}",
+                    kind="repeated_load_failure",
+                    confidence="correlated",
+                    subject=finding.module,
+                    effect_status="later_import_failed",
+                    cause_finding_id=finding.finding_id,
+                    finder_type_name=later.loader_type_name or later.finder_type_name,
+                    omitted_location="",
+                    candidate_path="",
+                    event_seqs=finding.supporting_event_seqs,
+                    next_observation=None,
+                    origin=later.origin,
+                    standard_attempt_id=later.attempt_id,
+                )
+            )
     return _append_ambiguous_explanations(tuple(explanations))
+
+
+def _failed_descendants_after(
+    resolution: StandardResolution,
+    attempts: tuple[ImportAttempt, ...],
+) -> tuple[ImportAttempt, ...]:
+    """Return every exact descendant failure after a parent resolution."""
+    boundary = resolution.event_seq
+    if boundary is None:
+        return ()
+    prefix = resolution.fullname + "."
+    return tuple(
+        attempt
+        for attempt in attempts
+        if attempt.fullname.startswith(prefix)
+        and attempt.progress == "failed"
+        and any(seq > boundary for seq in attempt.event_seqs)
+    )
+
+
+def _namespace_displacement_findings(
+    attempts: tuple[ImportAttempt, ...],
+    standard_resolutions: tuple[StandardResolution, ...],
+    events: list[MonitorEvent],
+    offset: int,
+) -> tuple[Finding, ...]:
+    """Promote a displaced namespace only when a descendant then fails."""
+    events_by_seq = {event.seq: event for event in events}
+    findings: list[Finding] = []
+    for resolution in standard_resolutions:
+        if resolution.category == "namespace" or resolution.origin is None:
+            continue
+        components = [
+            event
+            for seq in resolution.component_event_seqs
+            if isinstance((event := events_by_seq.get(seq)), DeepDiagnosticCall)
+            and event.boundary == "path_entry_finder"
+            and event.outcome == "found"
+            and event.path is not None
+        ]
+        selected_index = next(
+            (
+                index
+                for index in range(len(components) - 1, -1, -1)
+                if _path_contains(components[index].path, resolution.origin)
+            ),
+            None,
+        )
+        descendants = _failed_descendants_after(resolution, attempts)
+        if selected_index is None or selected_index == 0 or not descendants:
+            continue
+        candidate = components[0]
+        selected = components[selected_index]
+        event_seqs = tuple(
+            dict.fromkeys(
+                (
+                    *((resolution.event_seq,) if resolution.event_seq is not None else ()),
+                    candidate.seq,
+                    selected.seq,
+                    *(seq for descendant in descendants for seq in descendant.event_seqs),
+                )
+            )
+        )
+        findings.append(
+            Finding(
+                f"finding:{offset + len(findings) + 1}",
+                "regular_module_shadows_namespace",
+                resolution.fullname,
+                evidence_level="correlated",
+                limitations=("exception_message_not_captured",),
+                supporting_event_seqs=event_seqs,
+                severity="actionable",
+                signals=("namespace_candidate_found", "regular_module_selected", "descendant_failed"),
+            )
+        )
+    return tuple(findings)
+
+
+def _repeated_load_failure_findings(
+    attempts: tuple[ImportAttempt, ...],
+    standard_resolutions: tuple[StandardResolution, ...],
+    offset: int,
+) -> tuple[Finding, ...]:
+    """Correlate a later failure with an earlier load from the same origin."""
+    attempts_by_id = {attempt.attempt_id: attempt for attempt in attempts}
+    groups: dict[tuple[str, str, str], list[tuple[StandardResolution, ImportAttempt]]] = {}
+    findings: list[Finding] = []
+    ordered = sorted(
+        standard_resolutions,
+        key=lambda resolution: -1 if resolution.event_seq is None else resolution.event_seq,
+    )
+    for resolution in ordered:
+        if (
+            resolution.evidence_level != "captured"
+            or resolution.origin is None
+            or resolution.loader_type_name is None
+            or resolution.event_seq is None
+        ):
+            continue
+        attempt = attempts_by_id.get(resolution.attempt_id)
+        if attempt is None:
+            continue
+        if attempt.progress in ("loaded", "failed"):
+            key = (resolution.fullname, resolution.loader_type_name, _path_key(resolution.origin))
+            groups.setdefault(key, []).append((resolution, attempt))
+    candidates: list[
+        tuple[
+            int,
+            StandardResolution,
+            ImportAttempt,
+            list[tuple[StandardResolution, ImportAttempt]],
+        ]
+    ] = []
+    for group in groups.values():
+        earlier_pair = next((pair for pair in group if pair[1].progress == "loaded"), None)
+        if earlier_pair is None:
+            continue
+        earlier, earlier_attempt = earlier_pair
+        earlier_event_seq = earlier.event_seq
+        if earlier_event_seq is None:
+            continue
+        failures = [
+            pair
+            for pair in group
+            if pair[1].progress == "failed" and pair[0].event_seq is not None and pair[0].event_seq > earlier_event_seq
+        ]
+        if not failures:
+            continue
+        first_failure_seq = min(
+            max(attempt.event_seqs, default=resolution.event_seq or 0) for resolution, attempt in failures
+        )
+        candidates.append((first_failure_seq, earlier, earlier_attempt, failures))
+    for _failure_seq, earlier, earlier_attempt, failures in sorted(candidates, key=lambda item: item[0]):
+        earlier_event_seq = earlier.event_seq
+        if earlier_event_seq is None:
+            continue
+        failed_attempts = [
+            attempt
+            for attempt in attempts
+            if attempt.fullname == earlier.fullname
+            and attempt.progress == "failed"
+            and any(seq > earlier_event_seq for seq in attempt.event_seqs)
+        ]
+        event_seqs = tuple(
+            dict.fromkeys(
+                (
+                    earlier_event_seq,
+                    *earlier_attempt.event_seqs,
+                    *(resolution.event_seq for resolution, _attempt in failures if resolution.event_seq is not None),
+                    *(seq for attempt in failed_attempts for seq in attempt.event_seqs),
+                )
+            )
+        )
+        findings.append(
+            Finding(
+                f"finding:{offset + len(findings) + 1}",
+                "repeated_load_failure",
+                earlier.fullname,
+                evidence_level="correlated",
+                limitations=("exception_message_not_captured",),
+                supporting_event_seqs=event_seqs,
+                severity="actionable",
+                signals=("same_loader", "same_origin", "earlier_attempt_loaded", "later_attempt_failed"),
+            )
+        )
+    return tuple(findings)
 
 
 def _path_contains(directory: str | None, path: str) -> bool:

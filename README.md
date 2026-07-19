@@ -101,7 +101,10 @@ ScikitBuildRedirectingFinder: called 365 times, found 1 module
 The report leads with a verdict, then numbered findings when something looks
 wrong, then the supporting evidence: comparisons like the one above, finder
 call counts, an event timeline, and stack traces for every `sys.meta_path`
-and `sys.path_hooks` change. [Reading the report](https://glinte.github.io/metapathology/report/)
+and `sys.path_hooks` change. Deep reports also correlate failed descendant
+imports with a regular module that displaced an earlier namespace candidate,
+and later failures with an earlier successful load from the same loader and
+origin. [Reading the report](https://glinte.github.io/metapathology/report/)
 explains every section and finding category.
 
 ## Overhead

@@ -74,6 +74,24 @@ was configured; reinstalling the affected package, or installing it
 non-editable, typically restores the full namespace. Report the omission to
 the tool that installed the finder.
 
+### regular-module-shadows-namespace
+
+PathFinder found a namespace-package candidate in an earlier `sys.path`
+entry, continued searching, selected a regular module from a later entry,
+and an exact import of that module's descendant then failed.
+
+*Background.* Finding a namespace portion does not end PathFinder's search.
+A later regular package or module wins. That is normal import behavior, but a
+regular module has no package search path, so an import such as
+`python.runfiles` fails when a later `python.py` displaced an earlier
+`python/` namespace directory.
+
+*What to do.* The explanation names the namespace path, selected file, and
+failed descendant. Fix the path ordering, rename the colliding module, or
+make the selected module a package if descendants are intended. The
+selection and failure are captured exactly; their causal connection is
+reported as correlated because exception messages are not retained.
+
 ### no-spec
 
 A module is in `sys.modules` with no
@@ -136,6 +154,26 @@ normally reuses the object already in `sys.modules`.
 the first object from `sys.modules` or manually called `exec_module()` with a
 second object. Re-executing a native extension this way can fail even when
 both resolutions selected the same file.
+
+### repeated-load-failure
+
+An exact import loaded successfully, then a later exact import of the same
+module failed after PathFinder selected the same loader type and normalized
+origin again. Unlike `repeated-loader-execution`, this finding does not
+require `exec_module()` instrumentation and is not limited to native
+extensions.
+
+*Background.* A module normally remains in `sys.modules`, so another import
+does not resolve or execute its file again. If code removes or replaces that
+cache entry, the same source file, zip entry, or native extension may be
+loaded a second time. Source code can fail during its second execution, and
+some native extensions explicitly reject a second load.
+
+*What to do.* Follow the linked attempts to find what made the first module
+unavailable in `sys.modules`. The report proves the earlier success, later
+failure, and repeated loader/origin selection, but deliberately does not
+claim a particular exception because import exception messages are not
+captured.
 
 ### legacy-finder-contract
 

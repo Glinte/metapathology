@@ -584,11 +584,23 @@ def _explanation_lines(
             lines.append("    next step: rerun with --deep-import-outcomes to record the actual PathFinder result")
         return lines
     if explanation.kind == "namespace_candidate_displaced":
-        return [
-            f"[captured] '{explanation.subject}': {explanation.finder_type_name} found a namespace candidate from "
+        lines = [
+            f"[{explanation.confidence}] '{explanation.subject}': "
+            f"{explanation.finder_type_name} found a namespace candidate from "
             f"{context.quoted_path(explanation.candidate_path)}",
             "    it continued searching and selected the regular module at "
             f"{_origin_display(explanation.origin, context)}",
+            "    supporting events: " + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
+        ]
+        if explanation.effect_status == "descendant_failed":
+            lines.insert(2, "    the selected module was not a package, and the descendant import then failed")
+        return lines
+    if explanation.kind == "repeated_load_failure":
+        return [
+            f"[correlated] the same origin was selected again for '{explanation.subject}' by "
+            f"{explanation.finder_type_name}",
+            f"    origin: {_origin_display(explanation.origin, context)}",
+            "    the earlier import loaded, but the later import failed; the exception message was not captured",
             "    supporting events: " + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
         ]
     if explanation.kind == "finder_side_effect":
@@ -1619,6 +1631,16 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
         return [
             f"[failed-after-mutation] '{finding.module}': exact import failure followed a recorded mutation",
             f"    mutation event #{mutation}; import boundary events #{started} -> #{failed}; temporal correlation is not causation",
+        ]
+    if finding.kind == "regular_module_shadows_namespace":
+        return [
+            f"[regular-module-shadows-namespace] '{finding.module}': a regular module displaced an earlier namespace candidate",
+            "    a later descendant import failed because the selected module was not a package",
+        ]
+    if finding.kind == "repeated_load_failure":
+        return [
+            f"[repeated-load-failure] '{finding.module}': the same loader and origin were resolved after an earlier successful load",
+            "    the later exact import failed; the captured sequence correlates the repeated load but does not include its exception message",
         ]
     if finding.kind in ("module_replacement", "repeated_loader_execution") and finding.deep_call is not None:
         call = finding.deep_call
