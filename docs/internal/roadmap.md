@@ -1111,6 +1111,14 @@ timeline but is not required for the bootstrap experiment.
   ordering limits, the Python 3.15 deprecation, and the absence of a future
   `.start` equivalent for observing `.pth` execution.
 
+## Unscheduled candidates
+
+- Observe cache-hit imports by wrapping `builtins.__import__` as an opt-in
+  deep mechanism. Rationale, rejected `sys.modules` alternative, and known
+  boundaries are recorded in
+  [import-callable-wrapper-idea.md](import-callable-wrapper-idea.md). Build
+  only when a real diagnosis needs per-callsite or cache-hit evidence.
+
 ## Explicit non-goals
 
 - Install an ungated or persistent `.pth` bootstrap as part of ordinary package
