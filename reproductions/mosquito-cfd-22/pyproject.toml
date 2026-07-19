@@ -1,0 +1,20 @@
+[project]
+name = "mosquito-cfd-22-repro"
+version = "0.0.0"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "coverage==7.14.1",
+    "numpy==2.4.2",
+    "pandas==3.0.0",
+    "pytest==9.0.2",
+    "pytest-cov==7.1.0",
+]
+
+[tool.uv.sources]
+metapathology = { path = "../../", editable = true }
+
+[dependency-groups]
+dev = ["metapathology"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
