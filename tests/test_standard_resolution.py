@@ -64,6 +64,7 @@ def test_repeated_load_failure_attaches_failed_attempt_without_own_resolution() 
     finding = _repeated_load_failure_findings(attempts, resolutions, 0)[0]
 
     assert {10, 15} <= set(finding.supporting_event_seqs)
+    assert finding.attempt_ids == (1, 2, 3)
 
 
 def test_standard_loader_categories_are_explicit() -> None:
@@ -273,6 +274,7 @@ def test_deep_report_correlates_repeated_failure_at_same_origin(run_python: RunP
         "failed_attempts = [item for item in document['import_attempts'] "
         "if item['fullname'] == 'repeated_source' and item['progress'] == 'failed']\n"
         "assert len(failed_attempts) == 2\n"
+        "assert {item['id'] for item in failed_attempts} < set(finding['attempt_refs'])\n"
         "assert {ref for attempt in failed_attempts for ref in attempt['evidence_event_refs']} "
         "<= set(explanation['event_refs'])\n"
         "text = metapathology.render_report()\n"

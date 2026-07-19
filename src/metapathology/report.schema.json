@@ -820,6 +820,12 @@
     "FindingJSON": {
       "additionalProperties": false,
       "properties": {
+        "attempt_refs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "claim": {
           "$ref": "#/$defs/FindingClaimJSON"
         },
@@ -1791,7 +1797,7 @@
           "const": 1
         },
         "minor": {
-          "const": 0
+          "const": 1
         },
         "name": {
           "const": "metapathology.report"

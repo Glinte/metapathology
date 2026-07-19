@@ -173,7 +173,9 @@ some native extensions explicitly reject a second load.
 unavailable in `sys.modules`. The report proves the earlier success, later
 failure, and repeated loader/origin selection, but deliberately does not
 claim a particular exception because import exception messages are not
-captured.
+captured. JSON findings retain explicit `attempt_refs` for the earlier load
+and every later exact failed attempt, including outer attempts that delegated
+to an inner PathFinder resolution.
 
 ### legacy-finder-contract
 
@@ -372,7 +374,7 @@ relativized.
 The schema is versioned and stable:
 
 ```json
-{"name": "metapathology.report", "major": 1, "minor": 0}
+{"name": "metapathology.report", "major": 1, "minor": 1}
 ```
 
 The bundled `metapathology/report.schema.json` file is the contract. Minor

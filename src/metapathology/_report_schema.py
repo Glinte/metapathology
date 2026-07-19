@@ -364,6 +364,7 @@ class FindingBaseJSON(TypedDict):
 
 
 class FindingJSON(FindingBaseJSON, total=False):
+    attempt_refs: list[str]
     finder_contract_ref: str
     claim: FindingClaimJSON
     deep_call: FindingDeepCallJSON

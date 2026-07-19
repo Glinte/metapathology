@@ -82,7 +82,7 @@ _MODULE_FILE_SUFFIXES = (".py", ".pyc", ".pyd", ".so")
 _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 1
-_SCHEMA_MINOR = 0
+_SCHEMA_MINOR = 1
 
 
 class ReportError(_Record):
@@ -577,6 +577,7 @@ class Finding(_Record):
     """Structured evidence for one human or machine-readable finding."""
 
     __slots__ = (
+        "_attempt_ids",
         "_claim",
         "_deep_call",
         "_evidence_level",
@@ -595,6 +596,7 @@ class Finding(_Record):
         "_supporting_event_seqs",
     )
     _fields = (
+        "attempt_ids",
         "finding_id",
         "kind",
         "module",
@@ -612,6 +614,7 @@ class Finding(_Record):
         "route_comparison_id",
         "structural_comparison",
     )
+    attempt_ids = _ReadOnlyField[tuple[int, ...]]("_attempt_ids")
     finding_id = _ReadOnlyField[str]("_finding_id")
     kind = _ReadOnlyField[str]("_kind")
     module = _ReadOnlyField[str]("_module")
@@ -647,7 +650,9 @@ class Finding(_Record):
         severity: str = "warning",
         signals: tuple[str, ...] = (),
         module_state_baseline: ModuleCacheState | None = None,
+        attempt_ids: tuple[int, ...] = (),
     ) -> None:
+        self._attempt_ids = attempt_ids
         self._finding_id = finding_id
         self._kind = kind
         self._module = module
@@ -1806,6 +1811,7 @@ def _namespace_displacement_findings(
                 resolution.fullname,
                 evidence_level="correlated",
                 limitations=("exception_message_not_captured",),
+                attempt_ids=tuple(descendant.attempt_id for descendant in descendants),
                 supporting_event_seqs=event_seqs,
                 severity="actionable",
                 signals=("namespace_candidate_found", "regular_module_selected", "descendant_failed"),
@@ -1896,6 +1902,10 @@ def _repeated_load_failure_findings(
                 earlier.fullname,
                 evidence_level="correlated",
                 limitations=("exception_message_not_captured",),
+                attempt_ids=(
+                    earlier_attempt.attempt_id,
+                    *(attempt.attempt_id for attempt in failed_attempts),
+                ),
                 supporting_event_seqs=event_seqs,
                 severity="actionable",
                 signals=("same_loader", "same_origin", "earlier_attempt_loaded", "later_attempt_failed"),
@@ -3308,6 +3318,8 @@ def _json_finding(finding: Finding) -> FindingJSON:
         "signals": list(finding.signals),
         "subject": {"kind": finding.subject_kind, "value": finding.module},
     }
+    if finding.attempt_ids:
+        result["attempt_refs"] = [f"attempt:{attempt_id}" for attempt_id in finding.attempt_ids]
     if finding.finder_contract is not None:
         result["finder_contract_ref"] = _finder_contract_id(finding.finder_contract)
     if finding.claim is not None:
