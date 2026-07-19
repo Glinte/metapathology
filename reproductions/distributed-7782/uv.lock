@@ -7,7 +7,7 @@ exclude-newer = "2023-04-26T16:00:00Z"
 
 [[package]]
 name = "metapathology"
-version = "0.3.0"
+version = "0.4.2"
 source = { editable = "../../" }
 
 [package.metadata]
