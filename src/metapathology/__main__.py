@@ -52,7 +52,7 @@ class _Arguments(argparse.Namespace):
         self.deep_loaders: bool | None = None
         self.deep_import_outcomes: bool | None = None
         self.is_module = False
-        self.target = ""
+        self.target: str | None = None
         self.target_args: list[str] = []
 
 
@@ -112,7 +112,13 @@ def _make_parser() -> _ArgumentParser:
         help="capture exact CPython import invocation outcomes",
     )
     parser.add_argument("-m", dest="is_module", action="store_true", help="run TARGET as a module")
-    parser.add_argument("target", metavar="TARGET", help="script path, or module name with -m")
+    parser.add_argument(
+        "target",
+        metavar="TARGET",
+        nargs="?",
+        default=None,
+        help="script path, or module name with -m; omit to start a monitored interactive interpreter",
+    )
     parser.add_argument("target_args", metavar="ARG", nargs=argparse.REMAINDER, help="arguments passed to TARGET")
     return parser
 
@@ -140,6 +146,13 @@ def main(argv: list[str] | None = None) -> int:
         _PARSER.parse_args(sys.argv[1:] if argv is None else argv, namespace=parsed)
     except SystemExit as exc:
         return _exit_code(exc)
+    if parsed.target is None:
+        if parsed.is_module:
+            _PARSER._print_error("-m requires a module name")
+            return 2
+        if parsed.target_args:
+            _PARSER._print_error("arguments require a TARGET")
+            return 2
     if parsed.is_module:
         return _run(
             parsed.target,
@@ -174,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run(
-    target: str,
+    target: str | None,
     target_args: list[str],
     *,
     is_module: bool,
@@ -192,7 +205,8 @@ def _run(
     """Install the monitor, run the target via runpy, and always write the report.
 
     Args:
-        target: Script path, or module name when ``is_module`` is true.
+        target: Script path, or module name when ``is_module`` is true; None
+            starts a monitored interactive interpreter instead.
         target_args: Arguments the target sees as ``sys.argv[1:]``.
         is_module: Select ``python -m``-style execution instead of a script path.
         report_destination: Explicit automatic report path, or None.
@@ -215,15 +229,27 @@ def _run(
     # machinery ran, so a diagnostic report would describe only our bootstrap.
     import os
 
-    if not is_module and not os.path.exists(target):
+    if target is not None and not is_module and not os.path.exists(target):
         _PARSER._print_error(f"script target does not exist: {target!r}")
         return 2
 
     # Keep target-execution dependencies off help and argument-error paths.
     # They still load before install(), never inside a hook or finder wrapper.
+    # The interactive console module also loads here, before install(), so it
+    # does not weaken the observation boundary.
+    import code
     import runpy
     import traceback
     from contextlib import suppress
+
+    if target is None:
+        # Tab completion is quality-of-life only; readline is unavailable on
+        # some platforms (notably Windows before the 3.13 REPL rewrite).
+        with suppress(ImportError, AttributeError):
+            import readline
+            import rlcompleter  # noqa: F401
+
+            readline.parse_and_bind("tab: complete")  # pyrefly: ignore[missing-attribute]
 
     monitor = metapathology.install(
         report_at_exit=False,
@@ -240,6 +266,26 @@ def _run(
     )
     exit_code = 0
     try:
+        if target is None:
+            # Mimic the bare interpreter prompt: sys.argv == [''] and an
+            # interactive namespace with metapathology preloaded for reports.
+            sys.argv = [""]
+            banner = (
+                f"Python {sys.version} on {sys.platform}\n"
+                f"metapathology {metapathology.__version__}: import monitoring is active; "
+                "the report is written when this session ends.\n"
+                "'metapathology' is preloaded — try print(metapathology.render_report()) after an import."
+            )
+            # readfunc=input keeps interact() from re-importing readline
+            # inside the monitored window; our attempt above already ran.
+            code.interact(
+                banner=banner,
+                readfunc=input,
+                local={"__name__": "__console__", "__doc__": None, "metapathology": metapathology},
+                exitmsg="",
+            )
+            monitor.record_target_outcome(exit_code=exit_code)
+            return exit_code
         sys.argv = [target, *target_args]
         if is_module:
             # Mimic `python -m target`: cwd on sys.path; run_module fixes argv[0].

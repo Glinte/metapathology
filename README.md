@@ -49,6 +49,7 @@ environment where other packages fail to import.
 $ pip install metapathology
 $ python -m metapathology myscript.py --my-args
 $ python -m metapathology -m pytest tests/
+$ python -m metapathology                      # monitored interactive interpreter
 ```
 
 Your program runs normally; the report is printed to standard error when it

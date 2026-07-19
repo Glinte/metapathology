@@ -9,13 +9,16 @@ from pathlib import Path
 SUBPROCESS_TIMEOUT = 25
 
 
-def run_cli(*args: str, cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def run_cli(
+    *args: str, cwd: Path, env: dict[str, str] | None = None, input_text: str | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "metapathology", *args],
         capture_output=True,
         text=True,
         cwd=cwd,
         env=env,
+        input=input_text,
         check=False,
         timeout=SUBPROCESS_TIMEOUT,
     )
@@ -67,12 +70,30 @@ def test_target_exception_reports_traceback_and_exits_nonzero(tmp_path: Path) ->
     assert "== metapathology report ==" in proc.stderr
 
 
-def test_no_arguments_prints_usage_and_fails(tmp_path: Path) -> None:
-    proc = run_cli(cwd=tmp_path)
+def test_no_arguments_starts_monitored_interactive_interpreter(tmp_path: Path) -> None:
+    (tmp_path / "repl_probe_module.py").write_text("VALUE = 5\n")
+    proc = run_cli(cwd=tmp_path, input_text="import repl_probe_module\nprint('value:', repl_probe_module.VALUE)\n")
+    assert proc.returncode == 0, proc.stderr
+    # code.interact writes the banner to stderr, like the bare interpreter.
+    assert "import monitoring is active" in proc.stderr
+    assert "value: 5" in proc.stdout
+    assert "== metapathology report ==" in proc.stderr
+    assert "repl_probe_module" in proc.stderr
+
+
+def test_interactive_interpreter_preloads_metapathology_and_survives_exit(tmp_path: Path) -> None:
+    proc = run_cli(cwd=tmp_path, input_text="print('has api:', callable(metapathology.render_report))\nexit()\n")
+    assert proc.returncode == 0, proc.stderr
+    assert "has api: True" in proc.stdout
+    assert "== metapathology report ==" in proc.stderr
+
+
+def test_module_flag_without_target_fails(tmp_path: Path) -> None:
+    proc = run_cli("-m", cwd=tmp_path)
     assert proc.returncode == 2
-    assert proc.stderr.startswith("usage: python -m metapathology")
-    assert "error: the following arguments are required: TARGET" in proc.stderr
+    assert "error: -m requires a module name" in proc.stderr
     assert "Documentation: https://glinte.github.io/metapathology/usage/" in proc.stderr
+    assert "== metapathology report ==" not in proc.stderr
 
 
 def test_help_links_to_usage_documentation(tmp_path: Path) -> None:

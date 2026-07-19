@@ -45,6 +45,30 @@ unhandled exception prints its traceback and exits with status 1; the report
 is written to standard error in both cases. A nonexistent script path is a
 CLI error (exit status 2, no report).
 
+## Start a monitored interactive interpreter
+
+With no target, the CLI installs the monitor and drops into a standard
+interactive interpreter, like `python` itself:
+
+```console
+python -m metapathology
+```
+
+Type imports at the prompt and inspect what happened as you go — the
+`metapathology` module is preloaded, so
+`print(metapathology.render_report())` shows the report mid-session. The
+usual report is also written when the session ends (Ctrl-D, Ctrl-Z, or
+`exit()`). All monitoring options work in this mode:
+
+```console
+python -m metapathology --deep
+python -m metapathology --report session.json
+```
+
+This is a `code.interact()` console, not the full 3.13+ REPL: tab completion
+is available where `readline` exists, but multiline editing and syntax
+highlighting are not.
+
 ## Options and report files
 
 Put metapathology options before the script or `-m` target; everything after
