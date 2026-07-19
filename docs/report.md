@@ -125,6 +125,18 @@ this intentionally (lazy-loading proxies do), be careful about holding early
 references to it. If not intentional, the loader named in the finding is the
 place to look.
 
+### repeated-loader-execution
+
+The same loader executed the same module name again using a different module
+object. Requires `--deep-loaders`. This is more specific than
+`module-replacement` and is not an ordinary `importlib.reload()`, which
+normally reuses the object already in `sys.modules`.
+
+*What to do.* Follow both linked loader events and look for code that removed
+the first object from `sys.modules` or manually called `exec_module()` with a
+second object. Re-executing a native extension this way can fail even when
+both resolutions selected the same file.
+
 ### legacy-finder-contract
 
 A finder on `sys.meta_path` has a `find_module` method but no `find_spec`.
@@ -171,11 +183,12 @@ which paths were contested and which hook won.
 
 ### failed-after-mutation
 
-An import failed after a recorded change to `sys.meta_path`,
-`sys.path_hooks`, or `sys.path_importer_cache`. Requires `--deep-import-outcomes`.
+An import failed after a structural mutation occurred inside that exact import
+attempt. Requires `--deep-import-outcomes`.
 
-*Background.* Removing or reordering finders and hooks mid-run changes which
-imports can succeed afterwards.
+*Background.* Older reports paired every failure with the latest mutation
+anywhere earlier in the process, which was too noisy. The finding now requires
+the mutation event to fall between the attempt's captured start and failure.
 
 *What to do.* The finding links both the mutation (with its stack trace) and
 the failed import. Order alone does not prove causation — confirm by
@@ -237,10 +250,15 @@ combine import order with module metadata read at report time — the actual
 Entries marked `[captured]` come from `--deep-import-outcomes`, which records
 the real `PathFinder` result.
 
+With deep path-entry capture, this section also explains when an earlier path
+entry supplied a namespace candidate but `PathFinder` correctly continued and
+selected a regular package or module from a later entry. Both candidate path
+and selected origin are captured evidence.
+
 ## Event timeline
 
 Every recorded event in capture order: import starts, finder calls,
-`sys.meta_path` and `sys.path_hooks` changes, importer cache diffs, and
+`sys.meta_path`, `sys.path_hooks`, and opt-in `sys.path` changes, importer cache diffs, and
 internal errors, all sharing one `#n` numbering that findings reference.
 
 Long runs of routine events (imports where every finder returned `None`)
@@ -271,6 +289,9 @@ Below the timeline, each mechanism has its own section with full detail:
 - **`sys.path_hooks` mutations and reassignments** — the same records for
   `sys.path_hooks`. Hooks are identified by name; they are never called or
   wrapped by default monitoring.
+- **`sys.path` mutations and reassignments** — shown when
+  `--sys-path-monitoring` or `--deep` is active. String paths are captured
+  exactly; non-string entries are represented only by type name.
 - **`sys.path_importer_cache` changes** — paths added, removed, or switched
   to a different path entry finder between snapshots (taken at install,
   around `sys.path_hooks` changes, and at report time). A value of `None`

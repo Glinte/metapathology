@@ -41,6 +41,8 @@ from metapathology._records import (
     PathHooksReassignment,
     SpecSummary,
     StandardFinderCall,
+    SysPathMutation,
+    SysPathReassignment,
     type_name,
 )
 from metapathology._spec import summarize_spec
@@ -90,6 +92,7 @@ _REPORT_FORMAT_ENV = "METAPATHOLOGY_REPORT_FORMAT"
 _REPORT_COLOR_ENV = "METAPATHOLOGY_COLOR"
 _MONITOR_PATH_HOOKS_ENV = "METAPATHOLOGY_MONITOR_PATH_HOOKS"
 _MONITOR_IMPORTER_CACHE_ENV = "METAPATHOLOGY_MONITOR_IMPORTER_CACHE"
+_MONITOR_SYS_PATH_ENV = "METAPATHOLOGY_MONITOR_SYS_PATH"
 _DEEP_ENV = "METAPATHOLOGY_DEEP"
 _DEEP_PATH_HOOKS_ENV = "METAPATHOLOGY_DEEP_PATH_HOOKS"
 _DEEP_PATH_ENTRY_FINDERS_ENV = "METAPATHOLOGY_DEEP_PATH_ENTRY_FINDERS"
@@ -332,6 +335,11 @@ def _snapshot_importer_cache() -> tuple[
     return entries, non_string_keys, finders, (id(cache), len(cache))
 
 
+def _path_item_name(item: object) -> str:
+    """Reduce a path item without invoking a foreign string conversion."""
+    return item if type(item) is str else f"<{type_name(item)}>"
+
+
 class Monitor:
     """Records import-machinery activity. Use the module-level :func:`install`."""
 
@@ -380,6 +388,10 @@ class Monitor:
         self._instrumented_path_hooks: _InstrumentedPathHooks | None = None
         self._initial_path_hooks: tuple[ImportObjectRef, ...] = ()
         self._observed_path_hooks: dict[int, object] = {}
+        # Opt-in because replacing sys.path has a wider compatibility surface
+        # than observing the import-specific lists enabled by default.
+        self._sys_path_enabled = False
+        self._instrumented_sys_path: _InstrumentedSysPath | None = None
         # T2 retains one install snapshot and one rolling comparison snapshot.
         # Full observations are coalesced when one is already in progress;
         # diff events themselves remain exhaustive and unbounded.
@@ -449,6 +461,11 @@ class Monitor:
     def importer_cache_enabled(self) -> bool:
         """Whether passive ``sys.path_importer_cache`` monitoring is active."""
         return self._enabled and self._importer_cache_enabled
+
+    @property
+    def sys_path_enabled(self) -> bool:
+        """Whether opt-in ``sys.path`` mutation monitoring is active."""
+        return self._enabled and self._sys_path_enabled
 
     @property
     def deep_diagnostics(self) -> tuple[str, ...]:
@@ -608,6 +625,7 @@ class Monitor:
         report_color: "Literal['auto', 'always', 'never'] | None" = None,
         monitor_path_hooks: bool | None = None,
         monitor_importer_cache: bool | None = None,
+        monitor_sys_path: bool | None = None,
         deep: bool | None = None,
         deep_path_hooks: bool | None = None,
         deep_path_entry_finders: bool | None = None,
@@ -636,15 +654,18 @@ class Monitor:
             monitor_importer_cache: Passively observe
                 ``sys.path_importer_cache``. A later true value enables the
                 mechanism; false never disables an already-active mechanism.
+            monitor_sys_path: Instrument and observe ``sys.path``. This is
+                opt-in unless all deep diagnostics are enabled.
             deep: Enable every deep mechanism not explicitly configured.
             deep_path_hooks: Replace path hooks with exact-delegating call wrappers.
             deep_path_entry_finders: Shadow mutable path-entry finder calls.
             deep_loaders: Shadow mutable loader lifecycle methods.
             deep_import_outcomes: Profile CPython's complete import boundary.
         """
+        deep = self._resolve_bool(deep, _DEEP_ENV, False)
         monitor_path_hooks = self._resolve_bool(monitor_path_hooks, _MONITOR_PATH_HOOKS_ENV, True)
         monitor_importer_cache = self._resolve_bool(monitor_importer_cache, _MONITOR_IMPORTER_CACHE_ENV, True)
-        deep = self._resolve_bool(deep, _DEEP_ENV, False)
+        monitor_sys_path = self._resolve_bool(monitor_sys_path, _MONITOR_SYS_PATH_ENV, deep)
         deep_path_hooks = self._resolve_bool(deep_path_hooks, _DEEP_PATH_HOOKS_ENV, deep)
         deep_path_entry_finders = self._resolve_bool(deep_path_entry_finders, _DEEP_PATH_ENTRY_FINDERS_ENV, deep)
         deep_loaders = self._resolve_bool(deep_loaders, _DEEP_LOADERS_ENV, deep)
@@ -688,11 +709,13 @@ class Monitor:
                 self._enable_path_hooks()
             if monitor_importer_cache and not self._importer_cache_enabled:
                 self._enable_importer_cache()
+            if monitor_sys_path and not self._sys_path_enabled:
+                self._enable_sys_path()
             if deep_path_entry_finders:
                 self._deep_path_entry_finders = True
-                for finder in list(sys.path_importer_cache.values()):
+                for path, finder in list(sys.path_importer_cache.items()):
                     if finder is not None:
-                        self._instrument_deep_path_entry_finder(finder)
+                        self._instrument_deep_path_entry_finder(finder, path if type(path) is str else None)
             if deep_loaders:
                 self._deep_loaders = True
             if deep_path_hooks and not self._deep_path_hooks:
@@ -783,6 +806,13 @@ class Monitor:
         self._instrumented_path_hooks = instrumented
         self._path_hooks_enabled = True
         sys.path_hooks = instrumented
+
+    def _enable_sys_path(self) -> None:
+        """Install the opt-in mutation observer around current ``sys.path``."""
+        instrumented = _InstrumentedSysPath(sys.path, self)
+        self._instrumented_sys_path = instrumented
+        self._sys_path_enabled = True
+        sys.path = instrumented
 
     def _enable_deep_import_outcomes(self) -> None:
         """Install a reversible profiler for the captured CPython import boundary."""
@@ -1215,6 +1245,13 @@ class Monitor:
                     self._record_internal_error("uninstall_path_hooks", exc)
                 self._path_hooks_enabled = False
                 self._instrumented_path_hooks = None
+            if self._sys_path_enabled:
+                try:
+                    sys.path = list(sys.path)
+                except Exception as exc:
+                    self._record_internal_error("uninstall_sys_path", exc)
+                self._sys_path_enabled = False
+                self._instrumented_sys_path = None
             for finder, previous in list(self._deep_finder_patches.values()):
                 self._restore_attribute(finder, "find_spec", previous)
             for loader, patches in list(self._deep_loader_patches.values()):
@@ -1301,7 +1338,8 @@ class Monitor:
                 )
             meta_path_current = sys.meta_path is self._instrumented
             path_hooks_current = not self._path_hooks_enabled or sys.path_hooks is self._instrumented_path_hooks
-            if meta_path_current and path_hooks_current:
+            sys_path_current = not self._sys_path_enabled or sys.path is self._instrumented_sys_path
+            if meta_path_current and path_hooks_current and sys_path_current:
                 return
             self._recover_reassignments(args)
         except Exception as exc:
@@ -1433,6 +1471,7 @@ class Monitor:
         """
         meta_data: tuple[tuple[str, ...], tuple[str, ...]] | None = None
         path_hooks_data: tuple[tuple[ImportObjectRef, ...], tuple[ImportObjectRef, ...]] | None = None
+        sys_path_data: tuple[tuple[str, ...], tuple[str, ...]] | None = None
         with self._reinstall_lock:
             if not self._enabled:
                 return
@@ -1466,7 +1505,17 @@ class Monitor:
                 with self._record_lock:
                     self._observed_path_hooks.update((id(hook), hook) for hook in (*old_hooks, *new_hooks))
                 path_hooks_data = (old_hook_contents, new_hook_contents)
-        if meta_data is None and path_hooks_data is None:
+
+            current_sys_path = sys.path
+            expected_sys_path = self._instrumented_sys_path
+            if self._sys_path_enabled and current_sys_path is not expected_sys_path and expected_sys_path is not None:
+                old_paths = tuple(_path_item_name(item) for item in list(expected_sys_path))
+                new_paths = tuple(_path_item_name(item) for item in list(current_sys_path))
+                sys_path_replacement = _InstrumentedSysPath(current_sys_path, self)
+                self._instrumented_sys_path = sys_path_replacement
+                sys.path = sys_path_replacement
+                sys_path_data = (old_paths, new_paths)
+        if meta_data is None and path_hooks_data is None and sys_path_data is None:
             return
         fullname = args[0] if args and isinstance(args[0], str) else "<unknown>"
         stack = _capture_stack(sys._getframe())
@@ -1492,6 +1541,18 @@ class Monitor:
                         during_import=fullname,
                         old_contents=path_hooks_data[0],
                         new_contents=path_hooks_data[1],
+                        thread_name=thread_name,
+                        stack=stack,
+                    )
+                )
+            if sys_path_data is not None:
+                self._seq += 1
+                self._events.append(
+                    SysPathReassignment(
+                        seq=self._seq,
+                        during_import=fullname,
+                        old_contents=sys_path_data[0],
+                        new_contents=sys_path_data[1],
                         thread_name=thread_name,
                         stack=stack,
                     )
@@ -1939,6 +2000,46 @@ class Monitor:
         finally:
             self._local.active = False
 
+    def _on_sys_path_mutation(
+        self,
+        mutated: "_InstrumentedSysPath",
+        op: str,
+        added: tuple[object, ...],
+        removed: tuple[object, ...],
+        frame: "FrameType",
+    ) -> None:
+        """Record one opt-in ``sys.path`` list mutation using plain values."""
+        if self._local.active:
+            return
+        self._local.active = True
+        try:
+            if not self._enabled or not self._sys_path_enabled or mutated is not self._instrumented_sys_path:
+                return
+            added_paths = tuple(_path_item_name(item) for item in added)
+            removed_paths = tuple(_path_item_name(item) for item in removed)
+            contents_after = tuple(_path_item_name(item) for item in list(mutated))
+            thread_name = threading.current_thread().name
+            stack = _capture_stack(frame)
+            with self._record_lock:
+                if not self._enabled or not self._sys_path_enabled:
+                    return
+                self._seq += 1
+                self._events.append(
+                    SysPathMutation(
+                        self._seq,
+                        op,
+                        added_paths,
+                        removed_paths,
+                        contents_after,
+                        thread_name,
+                        stack,
+                    )
+                )
+        except Exception as exc:
+            self._record_internal_error("sys_path_mutation", exc)
+        finally:
+            self._local.active = False
+
     def _record_internal_error(self, where: str, exc: BaseException) -> None:
         """Record an exception raised by our own instrumentation instead of letting it escape.
 
@@ -2227,6 +2328,21 @@ class _InstrumentedPathHooks(_InstrumentedImportList["_PathHook"]):
         self._monitor._on_path_hooks_mutation(self, op, added, removed, frame)
 
 
+class _InstrumentedSysPath(_InstrumentedImportList[str]):
+    """Opt-in drop-in ``sys.path`` replacement with mutation attribution."""
+
+    __slots__ = ()
+
+    def _notify(
+        self,
+        op: str,
+        added: tuple[object, ...],
+        removed: tuple[object, ...],
+        frame: "FrameType",
+    ) -> None:
+        self._monitor._on_sys_path_mutation(self, op, added, removed, frame)
+
+
 # One Monitor per process: the instrumentation targets process-global state
 # (sys.meta_path, the audit hook), so multiple instances would fight each other.
 _monitor_singleton: Monitor | None = None
@@ -2241,6 +2357,7 @@ def install(
     report_color: "Literal['auto', 'always', 'never'] | None" = None,
     monitor_path_hooks: bool | None = None,
     monitor_importer_cache: bool | None = None,
+    monitor_sys_path: bool | None = None,
     deep: bool | None = None,
     deep_path_hooks: bool | None = None,
     deep_path_entry_finders: bool | None = None,
@@ -2265,6 +2382,8 @@ def install(
         monitor_importer_cache: Passively observe
             ``sys.path_importer_cache``. A later true value enables this
             mechanism.
+        monitor_sys_path: Opt in to reversible ``sys.path`` mutation and
+            reassignment observation.
         deep: Enable every deep mechanism not explicitly configured.
         deep_path_hooks: Replace path hooks with call-capturing delegates.
         deep_path_entry_finders: Shadow path-entry finder calls as they appear.
@@ -2283,6 +2402,7 @@ def install(
         report_color=report_color,
         monitor_path_hooks=monitor_path_hooks,
         monitor_importer_cache=monitor_importer_cache,
+        monitor_sys_path=monitor_sys_path,
         deep=deep,
         deep_path_hooks=deep_path_hooks,
         deep_path_entry_finders=deep_path_entry_finders,

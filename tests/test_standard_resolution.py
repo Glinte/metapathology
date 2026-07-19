@@ -125,6 +125,41 @@ def test_deep_report_captures_source_resolution(run_python: RunPython, tmp_path:
     assert proc.stdout.strip() == "OK"
 
 
+def test_deep_report_explains_namespace_candidate_displaced_by_later_regular_module(
+    run_python: RunPython, tmp_path: Path
+) -> None:
+    namespace_root = tmp_path / "namespace"
+    regular_root = tmp_path / "regular"
+    (namespace_root / "candidate_pkg").mkdir(parents=True)
+    regular_root.mkdir()
+    regular_module = regular_root / "candidate_pkg.py"
+    regular_module.write_text("VALUE = 1\n", encoding="utf-8")
+
+    proc = run_python(
+        "import json, sys, metapathology\n"
+        "sys.path[:0] = sys.argv[1:3]\n"
+        "metapathology.install(report_at_exit=False, deep=True)\n"
+        "import candidate_pkg\n"
+        "document = json.loads(metapathology.render_report(format='json'))\n"
+        "explanation = next(item for item in document['explanations'] "
+        "if item['kind'] == 'namespace_candidate_displaced')\n"
+        "assert explanation['subject'] == 'candidate_pkg'\n"
+        "assert explanation['candidate_path'] == sys.argv[1]\n"
+        "assert explanation['origin'] == sys.argv[3]\n"
+        "assert explanation['confidence'] == 'captured'\n"
+        "assert len(explanation['event_refs']) >= 3\n"
+        "text = metapathology.render_report()\n"
+        "assert 'namespace candidate from' in text\n"
+        "assert 'continued searching and selected the regular module' in text\n"
+        "print('OK')\n",
+        str(namespace_root),
+        str(regular_root),
+        str(regular_module),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
 def test_distributed_7782_fixture_explains_unreachable_editable_finder() -> None:
     fixture = Path(__file__).parents[1] / "reproductions" / "distributed-7782"
     proc = subprocess.run(

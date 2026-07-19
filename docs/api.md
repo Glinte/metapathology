@@ -18,7 +18,7 @@ fail-open startup files described in the [frozen application guide](frozen.md)
 over calling this function directly. Direct calls propagate invalid integration
 and installation errors to the application.
 
-### `install(*, report_at_exit=True, report_destination=None, report_format=None, report_color=None, monitor_path_hooks=None, monitor_importer_cache=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None) -> Monitor`
+### `install(*, report_at_exit=True, report_destination=None, report_format=None, report_color=None, monitor_path_hooks=None, monitor_importer_cache=None, monitor_sys_path=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None) -> Monitor`
 
 Installs the process-wide monitor and returns it. Repeated calls return and
 enable the same monitor. Only activity after installation can be observed.
@@ -38,8 +38,13 @@ true value enables it if initially disabled; false does not disable an active
 mechanism. Use `uninstall()` for cleanup.
 `monitor_importer_cache` has the same enable-later semantics and controls
 passive `sys.path_importer_cache` snapshots and diffs.
+`monitor_sys_path` opts into reversible list-mutation attribution and
+import-boundary reassignment detection for `sys.path`; it defaults to false
+unless `deep=True` and can also be set with
+`METAPATHOLOGY_MONITOR_SYS_PATH`.
 
-`deep=True` enables all four deep mechanisms. Each `deep_*` argument can
+`deep=True` enables all four delegated deep mechanisms and `sys.path`
+monitoring. Each `deep_*` argument can
 override the umbrella independently for delegated path hooks, mutable
 path-entry finders, mutable loaders, or exact import outcomes. Path-hook
 wrapping changes callable identity; deep mechanisms put monitor code inline
@@ -63,8 +68,8 @@ not replace the target's exit status.
 
 ### `uninstall() -> None`
 
-Disables monitoring, restores plain `sys.meta_path` and `sys.path_hooks`
-lists, removes shadows from
+Disables monitoring, restores plain `sys.meta_path`, `sys.path_hooks`, and any
+instrumented `sys.path` lists, removes shadows from
 instrumented finders, and unregisters the exit callback. Repeated calls are
 safe. The CPython audit callback cannot be removed and remains as an inactive
 no-op.
@@ -109,6 +114,8 @@ competing monitors is not supported because import state is process-global.
   type/name metadata captured when path-hook monitoring was enabled.
 - `importer_cache_enabled: bool` — whether passive importer-cache observation
   is currently active.
+- `sys_path_enabled: bool` — whether opt-in `sys.path` mutation observation is
+  currently active.
 - `deep_diagnostics: tuple[str, ...]` — explicitly enabled inline delegation
   mechanisms.
 - `standard_finder_status: str` — whether exact `PathFinder` result capture

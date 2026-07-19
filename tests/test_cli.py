@@ -101,6 +101,8 @@ def test_help_links_to_usage_documentation(tmp_path: Path) -> None:
     assert proc.returncode == 0
     assert proc.stdout.startswith("usage: python -m metapathology")
     assert "--color {auto,always,never}" in proc.stdout
+    assert "--sys-path-monitoring" in proc.stdout
+    assert "Child processes: use the environment-gated site_bootstrap" in proc.stdout
     assert "\nDocumentation:\n  https://glinte.github.io/metapathology/usage/\n" in proc.stdout
 
 
@@ -232,7 +234,7 @@ def test_actionable_report_uses_red_compact_markers(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     assert "\x1b[32mtarget outcome:\x1b[0m" in proc.stderr
     assert "\x1b[1;31mverdict:\x1b[0m" in proc.stderr
-    assert "\x1b[1;31m[module-replacement]\x1b[0m" in proc.stderr
+    assert "\x1b[1;31m[repeated-loader-execution]\x1b[0m" in proc.stderr
 
 
 def test_explicit_cli_color_overrides_environment_and_no_color(tmp_path: Path) -> None:
@@ -427,12 +429,16 @@ def test_environment_configures_automatic_report(tmp_path: Path) -> None:
 
 def test_deep_umbrella_enables_every_mechanism(tmp_path: Path) -> None:
     script = tmp_path / "prog.py"
-    script.write_text("import metapathology\nprint(metapathology.get_monitor().deep_diagnostics)\n")
+    script.write_text(
+        "import metapathology\n"
+        "monitor = metapathology.get_monitor()\n"
+        "print(monitor.deep_diagnostics, monitor.sys_path_enabled)\n"
+    )
 
     proc = run_cli("--deep", str(script), cwd=tmp_path)
 
     assert proc.returncode == 0, proc.stderr
-    assert "('path_hooks', 'path_entry_finders', 'loaders', 'import_outcomes')" in proc.stdout
+    assert "('path_hooks', 'path_entry_finders', 'loaders', 'import_outcomes') True" in proc.stdout
 
 
 def test_capture_environment_and_explicit_cli_values_have_consistent_precedence(tmp_path: Path) -> None:

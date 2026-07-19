@@ -36,6 +36,8 @@ if TYPE_CHECKING:
         PathHooksReassignment,
         SpecSummary,
         StandardFinderCall,
+        SysPathMutation,
+        SysPathReassignment,
     )
     from metapathology._report_schema import ReportJSON, ReportStatus
 
@@ -65,6 +67,8 @@ _RECORD_EXPORTS = frozenset(
         "PathHooksReassignment",
         "SpecSummary",
         "StandardFinderCall",
+        "SysPathMutation",
+        "SysPathReassignment",
     )
 )
 _SCHEMA_EXPORTS = frozenset(("ReportJSON", "ReportStatus"))
@@ -90,6 +94,8 @@ __all__ = [
     "ReportStatus",
     "SpecSummary",
     "StandardFinderCall",
+    "SysPathMutation",
+    "SysPathReassignment",
     "__version__",
     "activate_frozen",
     "get_monitor",

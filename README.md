@@ -35,8 +35,8 @@ that clearly exists fails to import.
 did:
 
 - which finder located each imported module;
-- where code changed `sys.meta_path`, `sys.path_hooks`, or
-  `sys.path_importer_cache`, with a stack trace; and
+- where code changed `sys.meta_path`, `sys.path_hooks`,
+  `sys.path_importer_cache`, or `sys.path` (opt-in), with a stack trace; and
 - which modules were found without going through the usual `sys.path` search.
 
 It only observes. It never loads a module, returns a spec, or changes which
@@ -130,6 +130,10 @@ to record whether it found the module, and `sys.path_importer_cache` is
 snapshotted at key points. At report time, modules found by a custom finder
 are compared with a fresh `PathFinder` search to reveal bypasses.
 
+Use `--sys-path-monitoring` when path ordering itself is suspect. It is
+opt-in because replacing the general-purpose `sys.path` list has a wider
+compatibility surface; `--deep` enables it with the other invasive observers.
+
 [How it works](https://glinte.github.io/metapathology/concepts/) walks through
 Python's import machinery and exactly what each mechanism can and cannot see.
 
@@ -142,8 +146,9 @@ Python's import machinery and exactly what each mechanism can and cannot see.
   initial snapshot without a stack trace. An
   [optional bootstrap](https://glinte.github.io/metapathology/usage/#observe-later-pth-files)
   can start monitoring during interpreter startup to catch some of them.
-- This is a debugging tool. It temporarily modifies `sys.meta_path` and
-  `sys.path_hooks`; do not leave it enabled in production.
+- This is a debugging tool. It temporarily modifies `sys.meta_path`,
+  `sys.path_hooks`, and, when requested, `sys.path`; do not leave it enabled
+  in production.
 - Reports contain paths, command lines, and stack file names — review before
   sharing.
 

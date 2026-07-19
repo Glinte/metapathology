@@ -46,6 +46,7 @@ class _Arguments(argparse.Namespace):
         self.report_color: Literal["auto", "always", "never"] | None = None
         self.monitor_path_hooks: bool | None = None
         self.monitor_importer_cache: bool | None = None
+        self.monitor_sys_path: bool | None = None
         self.deep: bool | None = None
         self.deep_path_hooks: bool | None = None
         self.deep_path_entry_finders: bool | None = None
@@ -92,6 +93,12 @@ def _make_parser() -> _ArgumentParser:
         dest="monitor_importer_cache",
         action=argparse.BooleanOptionalAction,
         help="enable or disable sys.path_importer_cache monitoring",
+    )
+    parser.add_argument(
+        "--sys-path-monitoring",
+        dest="monitor_sys_path",
+        action=argparse.BooleanOptionalAction,
+        help="enable opt-in sys.path mutation monitoring",
     )
     deep = parser.add_argument_group("opt-in deep diagnostics (may perturb third-party identity checks)")
     deep.add_argument("--deep", action=argparse.BooleanOptionalAction, help="enable or disable all deep mechanisms")
@@ -163,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
             report_color=parsed.report_color,
             monitor_path_hooks=parsed.monitor_path_hooks,
             monitor_importer_cache=parsed.monitor_importer_cache,
+            monitor_sys_path=parsed.monitor_sys_path,
             deep=parsed.deep,
             deep_path_hooks=parsed.deep_path_hooks,
             deep_path_entry_finders=parsed.deep_path_entry_finders,
@@ -178,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         report_color=parsed.report_color,
         monitor_path_hooks=parsed.monitor_path_hooks,
         monitor_importer_cache=parsed.monitor_importer_cache,
+        monitor_sys_path=parsed.monitor_sys_path,
         deep=parsed.deep,
         deep_path_hooks=parsed.deep_path_hooks,
         deep_path_entry_finders=parsed.deep_path_entry_finders,
@@ -196,6 +205,7 @@ def _run(
     report_color: "Literal['auto', 'always', 'never'] | None",
     monitor_path_hooks: bool | None,
     monitor_importer_cache: bool | None,
+    monitor_sys_path: bool | None,
     deep: bool | None,
     deep_path_hooks: bool | None,
     deep_path_entry_finders: bool | None,
@@ -216,6 +226,7 @@ def _run(
         monitor_path_hooks: Whether to instrument ``sys.path_hooks``.
         monitor_importer_cache: Whether to observe
             ``sys.path_importer_cache``.
+        monitor_sys_path: Whether to instrument ``sys.path``.
         deep: Whether to enable every deep mechanism.
         deep_path_hooks: Capture path-hook calls through replacement delegates.
         deep_path_entry_finders: Capture path-entry finder calls.
@@ -258,6 +269,7 @@ def _run(
         report_color=report_color,
         monitor_path_hooks=monitor_path_hooks,
         monitor_importer_cache=monitor_importer_cache,
+        monitor_sys_path=monitor_sys_path,
         deep=deep,
         deep_path_hooks=deep_path_hooks,
         deep_path_entry_finders=deep_path_entry_finders,
@@ -289,11 +301,13 @@ def _run(
         sys.argv = [target, *target_args]
         if is_module:
             # Mimic `python -m target`: cwd on sys.path; run_module fixes argv[0].
-            sys.path.insert(0, os.getcwd())
+            # Bypass our optional list override: this is launcher setup, not a
+            # target mutation, and should not appear as diagnostic evidence.
+            list.insert(sys.path, 0, os.getcwd())
             runpy.run_module(target, run_name="__main__", alter_sys=True)
         else:
             # Mimic `python target.py`: the script's directory on sys.path.
-            sys.path.insert(0, os.path.dirname(os.path.abspath(target)))
+            list.insert(sys.path, 0, os.path.dirname(os.path.abspath(target)))
             runpy.run_path(target, run_name="__main__")
     except SystemExit as exc:
         exit_code = _exit_code(exc)

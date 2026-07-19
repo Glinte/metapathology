@@ -33,6 +33,8 @@ from metapathology._records import (
     PathHooksReassignment,
     SpecSummary,
     StandardFinderCall,
+    SysPathMutation,
+    SysPathReassignment,
     _ReadOnlyField,
     _Record,
     type_name,
@@ -846,6 +848,7 @@ class ReportDocument(_Record):
         "_standard_finder_status",
         "_standard_resolutions",
         "_summary",
+        "_sys_path_enabled",
         "_target_outcome",
     )
     _fields = (
@@ -883,6 +886,7 @@ class ReportDocument(_Record):
         "finder_contracts",
         "report_errors",
         "summary",
+        "sys_path_enabled",
         "target_outcome",
         "cwd",
         "argv",
@@ -921,6 +925,7 @@ class ReportDocument(_Record):
     finder_contracts = _ReadOnlyField[tuple[FinderContract, ...]]("_finder_contracts")
     report_errors = _ReadOnlyField[tuple[ReportError, ...]]("_report_errors")
     summary = _ReadOnlyField[ReportSummary]("_summary")
+    sys_path_enabled = _ReadOnlyField[bool]("_sys_path_enabled")
     target_outcome = _ReadOnlyField[TargetOutcome | None]("_target_outcome")
     cwd = _ReadOnlyField[str | None]("_cwd")
     argv = _ReadOnlyField[tuple[str, ...]]("_argv")
@@ -962,6 +967,7 @@ class ReportDocument(_Record):
         finder_contracts: tuple[FinderContract, ...],
         report_errors: tuple[ReportError, ...],
         summary: ReportSummary,
+        sys_path_enabled: bool,
         target_outcome: TargetOutcome | None,
         cwd: str | None,
         argv: tuple[str, ...],
@@ -1000,6 +1006,7 @@ class ReportDocument(_Record):
         self._finder_contracts = finder_contracts
         self._report_errors = report_errors
         self._summary = summary
+        self._sys_path_enabled = sys_path_enabled
         self._target_outcome = target_outcome
         self._cwd = cwd
         self._argv = argv
@@ -1049,7 +1056,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         )
     finally:
         monitor._end_report_analysis(previously_active)
-    explanations = _causal_explanations(findings, attempts, standard_resolutions, route_comparisons)
+    explanations = _causal_explanations(findings, attempts, standard_resolutions, route_comparisons, events)
     outcome_state = monitor.target_outcome
     target_outcome = (
         None
@@ -1126,6 +1133,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         finder_contracts=tuple(finder_contracts),
         report_errors=tuple(report_errors),
         summary=summary,
+        sys_path_enabled=monitor.sys_path_enabled,
         target_outcome=target_outcome,
         cwd=cwd,
         argv=tuple(argv),
@@ -1500,9 +1508,11 @@ def _causal_explanations(
     attempts: tuple[ImportAttempt, ...],
     standard_resolutions: tuple[StandardResolution, ...],
     route_comparisons: tuple[RouteComparison, ...],
+    events: list[MonitorEvent] | None = None,
 ) -> tuple[CausalExplanation, ...]:
     """Join namespace loss to descendant attempts and report-time path evidence."""
     explanations: list[CausalExplanation] = []
+    events_by_seq = {} if events is None else {event.seq: event for event in events}
     comparisons_by_id = {comparison.comparison_id: comparison for comparison in route_comparisons}
     for finding in findings:
         comparison = None if finding.route_comparison_id is None else comparisons_by_id.get(finding.route_comparison_id)
@@ -1546,6 +1556,51 @@ def _causal_explanations(
                 )
             )
     for resolution in standard_resolutions:
+        if resolution.category != "namespace" and resolution.origin is not None:
+            components = [
+                event
+                for seq in resolution.component_event_seqs
+                if isinstance((event := events_by_seq.get(seq)), DeepDiagnosticCall)
+                and event.boundary == "path_entry_finder"
+                and event.outcome == "found"
+                and event.path is not None
+            ]
+            selected_index = next(
+                (
+                    index
+                    for index in range(len(components) - 1, -1, -1)
+                    if _path_contains(components[index].path, resolution.origin)
+                ),
+                None,
+            )
+            if selected_index is not None and selected_index > 0:
+                candidate = components[0]
+                selected = components[selected_index]
+                event_seqs = tuple(
+                    dict.fromkeys(
+                        (
+                            *((resolution.event_seq,) if resolution.event_seq is not None else ()),
+                            candidate.seq,
+                            selected.seq,
+                        )
+                    )
+                )
+                explanations.append(
+                    CausalExplanation(
+                        explanation_id=f"explanation:{len(explanations) + 1}",
+                        kind="namespace_candidate_displaced",
+                        confidence="captured",
+                        subject=resolution.fullname,
+                        effect_status="regular_module_selected",
+                        cause_finding_id=None,
+                        finder_type_name=resolution.finder_type_name,
+                        omitted_location="",
+                        candidate_path=candidate.path or "",
+                        event_seqs=event_seqs,
+                        next_observation=None,
+                        origin=resolution.origin,
+                    )
+                )
         if not resolution.later_finders:
             continue
         event_seqs = (() if resolution.event_seq is None else (resolution.event_seq,)) + resolution.component_event_seqs
@@ -1589,7 +1644,7 @@ def _causal_explanations(
                     state_after=claim.module_state_after,
                 )
             )
-        elif finding.kind == "module_replacement" and finding.deep_call is not None:
+        elif finding.kind in ("module_replacement", "repeated_loader_execution") and finding.deep_call is not None:
             call = finding.deep_call
             baseline = finding.module_state_baseline or call.module_state_before
             target_diverged = (
@@ -1610,7 +1665,7 @@ def _causal_explanations(
             explanations.append(
                 CausalExplanation(
                     explanation_id=f"explanation:{len(explanations) + 1}",
-                    kind="module_replacement",
+                    kind=finding.kind,
                     confidence="captured",
                     subject=finding.module,
                     effect_status="separate_module_executed" if target_diverged else "module_identity_replaced",
@@ -1626,6 +1681,16 @@ def _causal_explanations(
                 )
             )
     return _append_ambiguous_explanations(tuple(explanations))
+
+
+def _path_contains(directory: str | None, path: str) -> bool:
+    """Return whether an exact captured path entry contains a selected origin."""
+    if directory is None:
+        return False
+    try:
+        return os.path.commonpath((_path_key(directory), _path_key(path))) == _path_key(directory)
+    except (OSError, ValueError):
+        return False
 
 
 def _append_ambiguous_explanations(
@@ -1741,14 +1806,22 @@ def _path_hook_shadow_findings(events: list[MonitorEvent], offset: int) -> list[
 
 
 def _failed_after_mutation_findings(events: list[MonitorEvent], offset: int) -> list[Finding]:
-    """Pair exact failed completions with the nearest earlier structural mutation."""
+    """Pair failures only with structural mutations captured inside that attempt."""
     mutation_seqs: list[int] = []
     started: dict[int, DeepImportEvent] = {}
     findings: list[Finding] = []
     for event in events:
         if isinstance(
             event,
-            (MetaPathMutation, MetaPathReassignment, PathHooksMutation, PathHooksReassignment, ImporterCacheDiff),
+            (
+                MetaPathMutation,
+                MetaPathReassignment,
+                PathHooksMutation,
+                PathHooksReassignment,
+                SysPathMutation,
+                SysPathReassignment,
+                ImporterCacheDiff,
+            ),
         ):
             mutation_seqs.append(event.seq)
             continue
@@ -1762,7 +1835,7 @@ def _failed_after_mutation_findings(events: list[MonitorEvent], offset: int) -> 
         start = started.get(event.attempt_id)
         if start is None:
             continue
-        mutation_seq = next((seq for seq in reversed(mutation_seqs) if seq < start.seq), None)
+        mutation_seq = next((seq for seq in reversed(mutation_seqs) if start.seq < seq < event.seq), None)
         if mutation_seq is None:
             continue
         findings.append(
@@ -2067,6 +2140,8 @@ def _module_replacement_findings(events: list[MonitorEvent], offset: int) -> lis
         prior_state = None if prior is None else (prior.target_state or prior.module_state_after)
         prior_diverged = (
             prior_state is not None
+            and prior is not None
+            and prior.object_id == event.object_id
             and prior_state.state == "object"
             and target is not None
             and target.state == "object"
@@ -2074,10 +2149,11 @@ def _module_replacement_findings(events: list[MonitorEvent], offset: int) -> lis
         )
         if event.fullname is None or not (cache_replaced or target_diverged or prior_diverged):
             continue
+        kind = "repeated_loader_execution" if prior_diverged else "module_replacement"
         findings.append(
             Finding(
                 f"finding:{offset + len(findings) + 1}",
-                "module_replacement",
+                kind,
                 event.fullname,
                 deep_call=event,
                 module_state_baseline=prior_state if prior_diverged else None,
@@ -2311,6 +2387,8 @@ def json_document(document: ReportDocument) -> ReportJSON:
     reassignments = sum(isinstance(event, MetaPathReassignment) for event in document.events)
     path_hook_mutations = sum(isinstance(event, PathHooksMutation) for event in document.events)
     path_hook_reassignments = sum(isinstance(event, PathHooksReassignment) for event in document.events)
+    sys_path_mutations = sum(isinstance(event, SysPathMutation) for event in document.events)
+    sys_path_reassignments = sum(isinstance(event, SysPathReassignment) for event in document.events)
     importer_cache_diffs = sum(isinstance(event, ImporterCacheDiff) for event in document.events)
     audit_starts = sum(isinstance(event, ImportAuditStart) for event in document.events)
     calls = sum(isinstance(event, FindSpecCall) for event in document.events)
@@ -2353,6 +2431,13 @@ def json_document(document: ReportDocument) -> ReportJSON:
             "path_hooks_reassignments",
             document.path_hooks_enabled,
             path_hook_reassignments,
+            "import_boundaries",
+        ),
+        _mechanism("sys_path_mutations", document.sys_path_enabled, sys_path_mutations, "best_effort"),
+        _mechanism(
+            "sys_path_reassignments",
+            document.sys_path_enabled,
+            sys_path_reassignments,
             "import_boundaries",
         ),
         _cache_snapshot_mechanism(document),
@@ -2725,6 +2810,29 @@ def _json_event(event: MonitorEvent) -> EventJSON:
                 "kind": "path_hooks_reassignment",
                 "new_contents": [_json_import_object(reference) for reference in event.new_contents],
                 "old_contents": [_json_import_object(reference) for reference in event.old_contents],
+                "stack": [_json_frame(frame) for frame in event.stack],
+                "thread_name": event.thread_name,
+            }
+        )
+    elif isinstance(event, SysPathMutation):
+        result.update(
+            {
+                "added": list(event.added),
+                "contents_after": list(event.contents_after),
+                "kind": "sys_path_mutation",
+                "op": event.op,
+                "removed": list(event.removed),
+                "stack": [_json_frame(frame) for frame in event.stack],
+                "thread_name": event.thread_name,
+            }
+        )
+    elif isinstance(event, SysPathReassignment):
+        result.update(
+            {
+                "during_import": event.during_import,
+                "kind": "sys_path_reassignment",
+                "new_contents": list(event.new_contents),
+                "old_contents": list(event.old_contents),
                 "stack": [_json_frame(frame) for frame in event.stack],
                 "thread_name": event.thread_name,
             }

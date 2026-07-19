@@ -79,7 +79,8 @@ than executed.
 ## Runtime changes and cleanup
 
 While monitoring, `sys.meta_path` and (by default) `sys.path_hooks` are
-`list` subclasses, and instance finders have their `find_spec` shadowed. No
+`list` subclasses. Opt-in `sys.path` monitoring does the same to `sys.path`,
+and instance finders have their `find_spec` shadowed. No
 finder is replaced by a proxy, so `isinstance()` and identity checks keep
 working.
 
@@ -102,7 +103,7 @@ event limit and nothing is silently dropped. Approximate costs, measured in
 the [benchmarks](performance.md):
 
 - an import start or finder call retains a fraction of a kilobyte to ~1 KB;
-- a `sys.meta_path` / `sys.path_hooks` change retains ~1.5 KB, because the
+- a `sys.meta_path` / `sys.path_hooks` / monitored `sys.path` change retains ~1.5 KB, because the
   stack trace is stored;
 - deep diagnostics retain ~4 KB per import.
 

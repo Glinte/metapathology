@@ -76,6 +76,13 @@ separate hooks. Keep the three mechanisms independently toggleable.
    Custom claims get a captured resolution-route record and may be compared
    with an independently labeled report-time standard-path probe.
 
+An additional opt-in mechanism instruments `sys.path` with the shared list
+observer. It records ordinary mutations with stacks and detects direct
+reassignment at the next import audit boundary. It is enabled explicitly or
+by `deep=True`, is exhaustive (retention grows with mutation count), reduces
+non-string entries to type names without foreign conversion, and restores a
+plain list on uninstall.
+
 **Resolution-route comparison and bypass detection** (the beartype#556 and
 scikit-build-core#1482 checks): claim records contain conservative, plain spec
 summaries captured before returning to importlib. At report time, custom

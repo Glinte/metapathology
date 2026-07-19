@@ -80,6 +80,7 @@ python -m metapathology --report diagnostics.txt --report-format text -m package
 python -m metapathology --color always path/to/script.py
 python -m metapathology --no-path-hook-monitoring path/to/script.py
 python -m metapathology --no-importer-cache-monitoring path/to/script.py
+python -m metapathology --sys-path-monitoring path/to/script.py
 python -m metapathology --deep path/to/script.py
 ```
 
@@ -96,6 +97,9 @@ python -m metapathology --deep path/to/script.py
   untouched; `--no-importer-cache-monitoring` skips
   `sys.path_importer_cache` snapshots. Both are on by default and neither
   ever replaces the cache dictionary.
+- `--sys-path-monitoring` records every ordinary `sys.path` list mutation
+  with its caller stack and detects direct reassignment at the next import.
+  It is off by default and restores a plain list during cleanup.
 
 ### Environment variables
 
@@ -109,6 +113,7 @@ METAPATHOLOGY_REPORT_FORMAT=json          # or: text
 METAPATHOLOGY_COLOR=auto                  # or: always, never
 METAPATHOLOGY_MONITOR_PATH_HOOKS=true
 METAPATHOLOGY_MONITOR_IMPORTER_CACHE=true
+METAPATHOLOGY_MONITOR_SYS_PATH=false
 METAPATHOLOGY_DEEP=false
 ```
 
@@ -129,7 +134,8 @@ inline with foreign imports, and wrapping a path hook changes its callable
 identity. Use them in a controlled reproduction after the default evidence
 proves insufficient; the report warns whenever any are active.
 
-`--deep` enables all four. Individual switches (`--deep-path-hooks`,
+`--deep` enables all four delegated boundaries plus `sys.path` mutation
+monitoring. Individual switches (`--deep-path-hooks`,
 `--deep-path-entry-finders`, `--deep-loaders`, `--deep-import-outcomes`, each
 with a `--no-` form, and matching `METAPATHOLOGY_DEEP_*` variables) override
 it per mechanism.

@@ -190,7 +190,7 @@ assert events[1].module_state_after.object_id == id(second)
 assert events[1].target_state.object_id == id(second)
 assert first.__spec__.origin == second.__spec__.origin == "shared.ext"
 document = json.loads(metapathology.render_report(format="json"))
-finding = next(item for item in document["findings"] if item["kind"] == "module_replacement")
+finding = next(item for item in document["findings"] if item["kind"] == "repeated_loader_execution")
 assert finding["module"] == "deep_identity_ext"
 assert finding["evidence"]["level"] == "captured"
 assert set(finding["evidence"]["event_refs"]) == {"event:" + str(events[0].seq), "event:" + str(events[1].seq)}
@@ -199,16 +199,16 @@ assert finding["module_state_baseline"]["object_id"] == hex(id(first))
 assert finding["deep_call"]["module_state_before"]["object_id"] == hex(id(second))
 assert finding["deep_call"]["module_state_after"]["object_id"] == hex(id(second))
 assert finding["deep_call"]["target_state"]["object_id"] == hex(id(second))
-explanation = next(item for item in document["explanations"] if item["kind"] == "module_replacement")
+explanation = next(item for item in document["explanations"] if item["kind"] == "repeated_loader_execution")
 assert explanation["confidence"] == "captured"
 assert explanation["cause_finding_ref"] == finding["id"]
 assert explanation["state_before"]["object_id"] == hex(id(first))
 assert explanation["state_after"]["object_id"] == hex(id(second))
 assert explanation["effect_status"] == "separate_module_executed"
 text = metapathology.render_report()
-assert "[module-replacement] 'deep_identity_ext'" in text, text
+assert "[repeated-loader-execution] 'deep_identity_ext'" in text, text
 assert "internal steps and temporary objects are unknown" in text, text
-assert "[captured] ReplacingLoader executed a separate module object for 'deep_identity_ext'" in text, text
+assert "[captured] ReplacingLoader executed 'deep_identity_ext' again with a different module object" in text, text
 metapathology.uninstall()
 print("OK")
 """
@@ -412,14 +412,11 @@ assert by_name["deep_outcome_missing"][0]["progress"] == "failed"
 assert by_name["deep_outcome_broken"][0]["progress"] == "failed"
 assert by_name["deep_outcome_threaded"][0]["progress"] == "loaded"
 assert len(by_name["deep_outcome_cached"]) == 1
-failed = [item for item in document["findings"] if item["kind"] == "failed_after_mutation"]
-broken = next(item for item in failed if item["module"] == "deep_outcome_broken")
-assert broken["evidence"]["level"] == "structural_inference"
-assert len(broken["evidence"]["event_refs"]) == 3
+assert not any(item["kind"] == "failed_after_mutation" for item in document["findings"])
 mechanism = next(item for item in document["capture"]["mechanisms"] if item["name"] == "deep_import_outcomes")
 assert mechanism["completeness"].endswith("cache_hits_not_observed")
 assert "import outcome observation:" in metapathology.render_report()
-assert "[failed-after-mutation] 'deep_outcome_broken'" in metapathology.render_report()
+assert "[failed-after-mutation]" not in metapathology.render_report()
 metapathology.uninstall()
 assert sys.getprofile() is None and threading.getprofile() is None
 print("OK")
@@ -431,6 +428,31 @@ def test_exact_import_outcomes_and_runtime_coverage(run_python: RunPython, tmp_p
         (tmp_path / f"{name}.py").write_text("VALUE = 1\n", encoding="utf-8")
     (tmp_path / "deep_outcome_loaded.py").write_text("import deep_outcome_nested\nVALUE = 1\n", encoding="utf-8")
     proc = run_python(IMPORT_OUTCOMES)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+def test_failed_after_mutation_requires_mutation_inside_failed_attempt(run_python: RunPython, tmp_path: Path) -> None:
+    (tmp_path / "mutated_during_resolution.py").write_text(
+        "import sys\nsys.meta_path.append(object())\nraise RuntimeError('broken')\n",
+        encoding="utf-8",
+    )
+    proc = run_python(
+        "import json, sys, metapathology\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "metapathology.install(report_at_exit=False, deep_import_outcomes=True)\n"
+        "try:\n"
+        "    import mutated_during_resolution\n"
+        "except RuntimeError:\n"
+        "    pass\n"
+        "document = json.loads(metapathology.render_report(format='json'))\n"
+        "finding = next(item for item in document['findings'] "
+        "if item['kind'] == 'failed_after_mutation')\n"
+        "assert finding['module'] == 'mutated_during_resolution'\n"
+        "assert len(finding['evidence']['event_refs']) == 3\n"
+        "print('OK')\n",
+        str(tmp_path),
+    )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "OK"
 

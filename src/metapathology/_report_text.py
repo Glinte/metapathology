@@ -20,6 +20,8 @@ from metapathology._records import (
     PathHooksMutation,
     PathHooksReassignment,
     StandardFinderCall,
+    SysPathMutation,
+    SysPathReassignment,
 )
 from metapathology._report_data import (
     CausalExplanation,
@@ -233,6 +235,8 @@ def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
     reassignments = _events_of_type(document.events, MetaPathReassignment)
     path_hook_mutations = _events_of_type(document.events, PathHooksMutation)
     path_hook_reassignments = _events_of_type(document.events, PathHooksReassignment)
+    sys_path_mutations = _events_of_type(document.events, SysPathMutation)
+    sys_path_reassignments = _events_of_type(document.events, SysPathReassignment)
     importer_cache_diffs = _events_of_type(document.events, ImporterCacheDiff)
     calls = _events_of_type(document.events, FindSpecCall)
     errors = _events_of_type(document.events, InternalError)
@@ -340,6 +344,22 @@ def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
             lines.extend(_path_hooks_reassignment_lines(reassignment, context))
     else:
         empty_sections.append("sys.path_hooks reassignments")
+
+    if sys_path_mutations:
+        lines.append("")
+        lines.append(context.heading(f"-- sys.path mutations ({len(sys_path_mutations)}) --"))
+        for mutation in sys_path_mutations:
+            lines.extend(_sys_path_mutation_lines(mutation, context))
+    elif document.sys_path_enabled:
+        empty_sections.append("sys.path mutations")
+
+    if sys_path_reassignments:
+        lines.append("")
+        lines.append(context.heading(f"-- sys.path reassignments ({len(sys_path_reassignments)}) --"))
+        for reassignment in sys_path_reassignments:
+            lines.extend(_sys_path_reassignment_lines(reassignment, context))
+    elif document.sys_path_enabled:
+        empty_sections.append("sys.path reassignments")
 
     if importer_cache_diffs:
         lines.append("")
@@ -563,6 +583,14 @@ def _explanation_lines(
         if explanation.next_observation == "enable_deep_import_outcomes":
             lines.append("    next step: rerun with --deep-import-outcomes to record the actual PathFinder result")
         return lines
+    if explanation.kind == "namespace_candidate_displaced":
+        return [
+            f"[captured] '{explanation.subject}': {explanation.finder_type_name} found a namespace candidate from "
+            f"{context.quoted_path(explanation.candidate_path)}",
+            "    it continued searching and selected the regular module at "
+            f"{_origin_display(explanation.origin, context)}",
+            "    supporting events: " + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
+        ]
     if explanation.kind == "finder_side_effect":
         outcome = "raised" if explanation.effect_status == "finder_raised" else "returned None"
         return [
@@ -570,7 +598,14 @@ def _explanation_lines(
             f"    during {_bare_boundary_label(explanation.boundary)}: {_module_transition(explanation.state_before, explanation.state_after)}",
             "    nested activity was not observed; the boundary delta does not identify the internal cause",
         ]
-    if explanation.kind == "module_replacement":
+    if explanation.kind in ("module_replacement", "repeated_loader_execution"):
+        if explanation.kind == "repeated_loader_execution":
+            return [
+                f"[captured] {explanation.finder_type_name} executed '{explanation.subject}' again with a different module object",
+                f"    during {_bare_boundary_label(explanation.boundary)}: "
+                f"{_module_transition(explanation.state_before, explanation.state_after)}",
+                "    this is not an ordinary reload, which normally reuses the existing module object",
+            ]
         action = (
             "executed a separate module object for"
             if explanation.effect_status == "separate_module_executed"
@@ -782,6 +817,8 @@ def _monitoring_line(document: ReportDocument) -> str:
             mechanisms.append(name)
         else:
             notes.append(f"{name} off")
+    if document.sys_path_enabled:
+        mechanisms.append("sys.path")
     line = "monitoring: " + ", ".join(mechanisms)
     if notes:
         line += " (" + "; ".join(notes) + ")"
@@ -1257,6 +1294,16 @@ def _timeline_line(event: MonitorEvent, context: _RenderContext) -> str:
             f"#{event.seq} sys.path_hooks reassignment detected during {event.during_import!r}"
             f"{context.thread_suffix(event.thread_name)}"
         )
+    if isinstance(event, SysPathMutation):
+        return (
+            f"#{event.seq} sys.path {event.op} {_timeline_delta(event.added, event.removed, context)}"
+            f"{context.thread_suffix(event.thread_name)}"
+        )
+    if isinstance(event, SysPathReassignment):
+        return (
+            f"#{event.seq} sys.path reassignment detected during {event.during_import!r}"
+            f"{context.thread_suffix(event.thread_name)}"
+        )
     return _internal_error_line(event)
 
 
@@ -1426,6 +1473,33 @@ def _cache_entry_line(entry: ImporterCacheEntry, context: _RenderContext) -> str
     return f"{context.quoted_path(entry.path)} -> {finder}"
 
 
+def _sys_path_mutation_lines(mutation: SysPathMutation, context: _RenderContext) -> list[str]:
+    """Format one opt-in sys.path mutation and its attribution stack."""
+    delta_parts: list[str] = []
+    if mutation.added:
+        delta_parts.append("+" + _names_line(mutation.added))
+    if mutation.removed:
+        delta_parts.append("-" + _names_line(mutation.removed))
+    delta = " ".join(delta_parts) if delta_parts else "(order change)"
+    lines = [f"#{mutation.seq} {mutation.op} {delta}{context.thread_suffix(mutation.thread_name)}"]
+    lines.append(f"    sys.path after: {_names_line(mutation.contents_after)}")
+    lines.extend(_stack_lines(mutation.stack, context))
+    return lines
+
+
+def _sys_path_reassignment_lines(reassignment: SysPathReassignment, context: _RenderContext) -> list[str]:
+    """Format one sys.path reassignment detected at an import boundary."""
+    lines = [
+        f"#{reassignment.seq} sys.path REASSIGNED, detected during import of "
+        f"'{reassignment.during_import}'{context.thread_suffix(reassignment.thread_name)}"
+    ]
+    lines.append(f"    before: {_names_line(reassignment.old_contents)}")
+    lines.append(f"    after:  {_names_line(reassignment.new_contents)}")
+    lines.append("    instrumentation reinstalled; stack shows the triggering import, not the reassignment itself:")
+    lines.extend(_stack_lines(reassignment.stack, context))
+    return lines
+
+
 def _cache_finder_name(finder: ImportObjectRef | None, force_id: bool = False) -> str:
     """Format a captured cache finder or its negative marker.
 
@@ -1546,13 +1620,18 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
             f"[failed-after-mutation] '{finding.module}': exact import failure followed a recorded mutation",
             f"    mutation event #{mutation}; import boundary events #{started} -> #{failed}; temporal correlation is not causation",
         ]
-    if finding.kind == "module_replacement" and finding.deep_call is not None:
+    if finding.kind in ("module_replacement", "repeated_loader_execution") and finding.deep_call is not None:
         call = finding.deep_call
         transition = _module_transition(
             finding.module_state_baseline or call.module_state_before, _deep_effective_module_state(call)
         )
+        headline = (
+            f"[repeated-loader-execution] '{finding.module}': the loader executed a different module object"
+            if finding.kind == "repeated_loader_execution"
+            else f"[module-replacement] '{finding.module}': the module object changed during {_bare_boundary_label(call.boundary)}"
+        )
         return [
-            f"[module-replacement] '{finding.module}': the module object changed during {_bare_boundary_label(call.boundary)}",
+            headline,
             f"    captured boundary: {transition}; internal steps and temporary objects are unknown",
         ]
     if finding.kind == "no_spec":

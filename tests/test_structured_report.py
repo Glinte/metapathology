@@ -265,6 +265,7 @@ def test_report_document_uses_hand_written_slots(run_python: RunPython) -> None:
         "    generated_at='now', cutoff_seq=0, monitor_enabled=False,\n"
         "    baseline_module_count=0, initial_meta_path=(), current_meta_path=(),\n"
         "    path_hooks_enabled=False, initial_path_hooks=(), current_path_hooks=None,\n"
+        "    sys_path_enabled=False,\n"
         "    importer_cache_enabled=False, initial_importer_cache=(),\n"
         "    initial_importer_cache_non_string_keys=0, current_importer_cache=None,\n"
         "    current_importer_cache_non_string_keys=None, importer_cache_observations=0,\n"

@@ -28,6 +28,8 @@ _EXPECTED_PUBLIC_API = frozenset(
         "ReportStatus",
         "SpecSummary",
         "StandardFinderCall",
+        "SysPathMutation",
+        "SysPathReassignment",
         "__version__",
         "activate_frozen",
         "get_monitor",
