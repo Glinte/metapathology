@@ -14,8 +14,13 @@
 
 > [!IMPORTANT]
 > This project is mostly AI generated (for now). I do understand what it does
-> and how it works, but I only skimmed the code. I can attest the explanations
-> in README is accurate though.
+> and how it works, but I only skimmed the code.
+>
+> Slop status:
+> - Code is a bit slop but fine
+> - README is good
+> - the report is genuinely useful
+> - docs: usage, reading the report, limitations are good, others are slop
 
 Some Python packages customize how imports work: pytest rewrites test
 assertions, editable installs redirect imports to your source tree, beartype
