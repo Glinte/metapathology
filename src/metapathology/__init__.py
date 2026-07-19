@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 # Keep this in sync with ``project.version`` in pyproject.toml. The package
 # test enforces that invariant without making every CLI invocation import the
 # comparatively expensive ``importlib.metadata`` module.
-__version__ = "0.4.2"
+__version__ = "0.4.3"
 
 _MONITOR_EXPORTS = frozenset(("Monitor", "get_monitor", "install", "render_report", "uninstall", "write_report"))
 _FROZEN_EXPORTS = frozenset(("activate_frozen",))
