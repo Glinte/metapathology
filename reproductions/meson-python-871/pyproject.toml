@@ -1,0 +1,24 @@
+[build-system]
+build-backend = "mesonpy"
+requires = ["meson-python", "beartype"]
+
+[project]
+name = "meson-python-871-repro"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = ["beartype"]
+
+[tool.meson-python]
+limited-api = false
+
+[tool.uv.sources]
+metapathology = { path = "../../", editable = true }
+
+[dependency-groups]
+dev = [
+    "beartype>=0.22.9",
+    "meson>=1.11.2",
+    "meson-python>=0.20.0",
+    "metapathology",
+    "ninja>=1.13.0",
+]

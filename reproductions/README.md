@@ -19,6 +19,7 @@ environment installs the current checkout as the `metapathology` command.
 | [discord.py#10017](https://github.com/Rapptz/discord.py/issues/10017) | Extension loading executes a second valid-spec module object instead of reusing `sys.modules` | With deep loader diagnostics enabled, `[module-replacement]` 'ext' — an actionable finding for the duplicate `SourceFileLoader` execution |
 | [pip#11812](https://github.com/pypa/pip/issues/11812) | An inherited editable finder claims a build backend before pip's `backend-path` | `_EditableFinder` claims the wrong backend; neutral resolution route divergence (no findings) |
 | [distributed#7782](https://github.com/dask/distributed/issues/7782) | `PathFinder` finds a cwd namespace package before setuptools' appended editable finder | Initial finder order explains why `_EditableFinder` never receives the import |
+| [meson-python#871](https://github.com/mesonbuild/meson-python/issues/871) | Meson editable meta finder constructs source specs without consulting claw's path hook | `MesonpyMetaFinder` claims the package and submodule after claw installs its path hook |
 
 Beartype#599 is another confirmed finder-order bug involving PyInstaller's
 frozen importer. It is not included: the failure exists only inside a frozen

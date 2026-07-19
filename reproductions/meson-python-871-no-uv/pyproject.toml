@@ -1,0 +1,12 @@
+[build-system]
+build-backend = "mesonpy"
+requires = ["meson-python==0.20.0"]
+
+[project]
+name = "meson-python-871-repro"
+version = "0.0.0"
+requires-python = ">=3.10"
+dependencies = ["beartype==0.22.9"]
+
+[tool.meson-python]
+limited-api = false
