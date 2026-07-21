@@ -13,7 +13,7 @@ import threading
 import traceback
 import types
 import warnings
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 
 from metapathology import _report
@@ -58,7 +58,7 @@ from metapathology._spec import summarize_spec
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterator, Sequence
     from importlib.machinery import ModuleSpec
     from os import PathLike
     from types import FrameType, ModuleType
@@ -440,17 +440,18 @@ class Monitor:
             if self._frozen_bootstrap is None:
                 self._frozen_bootstrap = state
 
-    def _begin_report_analysis(self) -> tuple[bool, bool]:
+    @contextmanager
+    def _report_analysis(self) -> "Iterator[None]":
         """Make every monitor producer inert during report-time foreign calls."""
         previously_active = self._local.active
         previously_reporting = self._local.report_analysis
         self._local.active = True
         self._local.report_analysis = True
-        return previously_active, previously_reporting
-
-    def _end_report_analysis(self, previous: tuple[bool, bool]) -> None:
-        """Restore this thread's re-entrancy state after report analysis."""
-        self._local.active, self._local.report_analysis = previous
+        try:
+            yield
+        finally:
+            self._local.active = previously_active
+            self._local.report_analysis = previously_reporting
 
     def install(
         self,
@@ -1371,6 +1372,38 @@ class Monitor:
 # (sys.meta_path, the audit hook), so multiple instances would fight each other.
 _monitor_singleton: Monitor | None = None
 _singleton_lock = threading.Lock()
+# Context-managed regions are independently composable even though they share
+# the process-global monitor. Lifecycle calls remain outside this condition
+# because finder cleanup and instrumentation can execute foreign code.
+_monitoring_region_condition = threading.Condition()
+_monitoring_region_count = 0
+_monitoring_regions_own_installation = False
+_monitoring_region_transition = False
+_PREEXISTING_MONITOR_WARNING = (
+    "monitoring() entered while monitoring was already installed; "
+    "the pre-existing installation will remain active after the region exits"
+)
+
+
+def _release_monitoring_region(monitor: Monitor | None) -> None:
+    """Release one reserved region and clean up its shared installation if last."""
+    global _monitoring_region_count, _monitoring_regions_own_installation, _monitoring_region_transition
+    with _monitoring_region_condition:
+        _monitoring_region_count -= 1
+        should_uninstall = _monitoring_region_count == 0 and _monitoring_regions_own_installation
+        if should_uninstall:
+            _monitoring_region_transition = True
+        elif _monitoring_region_count == 0:
+            _monitoring_regions_own_installation = False
+    if should_uninstall:
+        try:
+            if monitor is not None:
+                monitor.uninstall()
+        finally:
+            with _monitoring_region_condition:
+                _monitoring_regions_own_installation = False
+                _monitoring_region_transition = False
+                _monitoring_region_condition.notify_all()
 
 
 def install(
@@ -1434,6 +1467,98 @@ def install(
         deep_import_outcomes=deep_import_outcomes,
     )
     return monitor
+
+
+@contextmanager
+def monitoring(
+    *,
+    monitor_path_hooks: bool | None = None,
+    monitor_importer_cache: bool | None = None,
+    monitor_sys_path: bool | None = None,
+    deep: bool | None = None,
+    deep_path_hooks: bool | None = None,
+    deep_path_entry_finders: bool | None = None,
+    deep_loaders: bool | None = None,
+    deep_import_outcomes: bool | None = None,
+) -> "Iterator[Monitor]":
+    """Observe imports only while the context-managed region is active.
+
+    Nested and overlapping regions share the process-wide monitor. The last
+    region uninstalls it only when the first region began from an inactive
+    monitor. Entering the outermost region around a manually installed monitor
+    emits a warning and leaves that installation active afterward. Mechanisms
+    enabled by nested regions remain enabled until the shared installation ends.
+
+    Args:
+        monitor_path_hooks: Observe ``sys.path_hooks`` mutations and direct
+            reassignment.
+        monitor_importer_cache: Passively observe
+            ``sys.path_importer_cache``.
+        monitor_sys_path: Opt in to reversible ``sys.path`` observation.
+        deep: Enable every deep mechanism not explicitly configured.
+        deep_path_hooks: Replace path hooks with call-capturing delegates.
+        deep_path_entry_finders: Shadow path-entry finder calls as they appear.
+        deep_loaders: Shadow modern loader lifecycle methods.
+        deep_import_outcomes: Observe exact CPython import invocation outcomes.
+
+    Yields:
+        The process-wide monitor collecting events for the region.
+    """
+    global _monitoring_region_count, _monitoring_regions_own_installation, _monitoring_region_transition
+    began_inactive = False
+    warn_preexisting = False
+    with _monitoring_region_condition:
+        while _monitoring_region_transition:
+            _monitoring_region_condition.wait()
+        first_region = _monitoring_region_count == 0
+        if first_region:
+            _monitoring_region_transition = True
+            current = get_monitor()
+            began_inactive = current is None or not current.enabled
+            warn_preexisting = not began_inactive
+        else:
+            # Reserve this region before applying its options so an earlier
+            # region cannot uninstall the shared monitor underneath install().
+            _monitoring_region_count += 1
+    try:
+        if warn_preexisting:
+            warnings.warn(_PREEXISTING_MONITOR_WARNING, RuntimeWarning, stacklevel=3)
+        monitor = install(
+            report_at_exit=False,
+            monitor_path_hooks=monitor_path_hooks,
+            monitor_importer_cache=monitor_importer_cache,
+            monitor_sys_path=monitor_sys_path,
+            deep=deep,
+            deep_path_hooks=deep_path_hooks,
+            deep_path_entry_finders=deep_path_entry_finders,
+            deep_loaders=deep_loaders,
+            deep_import_outcomes=deep_import_outcomes,
+        )
+    except BaseException:
+        if first_region:
+            if began_inactive:
+                partially_installed = get_monitor()
+                if partially_installed is not None:
+                    with suppress(Exception):
+                        partially_installed.uninstall()
+            with _monitoring_region_condition:
+                _monitoring_region_transition = False
+                _monitoring_region_condition.notify_all()
+        else:
+            # An earlier region may have exited while this reserved slot was
+            # applying its options, making this the final release.
+            _release_monitoring_region(get_monitor())
+        raise
+    if first_region:
+        with _monitoring_region_condition:
+            _monitoring_regions_own_installation = began_inactive
+            _monitoring_region_count = 1
+            _monitoring_region_transition = False
+            _monitoring_region_condition.notify_all()
+    try:
+        yield monitor
+    finally:
+        _release_monitoring_region(monitor)
 
 
 def uninstall() -> None:

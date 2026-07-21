@@ -119,8 +119,8 @@ Rough figures from the [benchmarks](https://glinte.github.io/metapathology/perfo
   ~4 KB each. Use deep mode only in a controlled reproduction.
 
 Every event is kept until the report is written, so memory grows with import
-activity. For a long-running process, install just before the behavior of
-interest and call `write_report()` and `uninstall()` once it is captured.
+activity. For a long-running process, use `metapathology.monitoring()` around
+the behavior of interest, then call `write_report()` once it is captured.
 
 ## How it works
 

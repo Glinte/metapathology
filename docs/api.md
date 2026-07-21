@@ -66,6 +66,27 @@ not replace the target's exit status.
 
 [atexit]: https://docs.python.org/3/library/atexit.html
 
+### `monitoring(*, monitor_path_hooks=None, monitor_importer_cache=None, monitor_sys_path=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None) -> ContextManager[Monitor]`
+
+Defines a bounded monitoring region and yields the process-wide monitor. The
+monitor is installed on entry and, if the region began from an inactive state,
+uninstalled after the last nested or overlapping region exits. Cleanup also
+runs when the block raises. If a monitor was installed explicitly before the
+first region, `monitoring()` emits a `RuntimeWarning` and leaves it active
+afterward; this makes the likely lifecycle mismatch visible without tearing
+down instrumentation the region does not own.
+
+Nested regions share the monitor. A nested region may enable another mechanism,
+but mechanisms are not selectively disabled when that inner region exits; they
+remain enabled until the shared installation ends. This matches the monotonic
+enable-later behavior of `install()`.
+
+The context manager does not register an atexit report because its cleanup
+boundary occurs before process exit. Recorded evidence remains available after
+the block, so call `write_report()` or `render_report()` afterward. Avoid mixing
+manual `uninstall()` calls into active regions because manual lifecycle control
+cannot participate in region ownership.
+
 ### `uninstall() -> None`
 
 Disables monitoring, restores plain `sys.meta_path`, `sys.path_hooks`, and any
@@ -131,8 +152,10 @@ competing monitors is not supported because import state is process-global.
   report](report.md#header) for why they are deliberately left unchanged.
 
 `Monitor.install()` and `Monitor.uninstall()` implement the same idempotent
-lifecycle for the process-wide instance, but the module-level functions are
-the intended entry points.
+lifecycle for the process-wide instance, but the module-level functions and
+`monitoring()` context manager are the intended entry points. `Monitor` itself
+is deliberately not a context manager: after `install()` returns it, the
+instance cannot determine whether a block owns a pre-existing installation.
 
 ## Event records
 

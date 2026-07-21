@@ -57,8 +57,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         )
         for finder, reason in snapshot.skipped_finders
     )
-    previously_active = monitor._begin_report_analysis()
-    try:
+    with monitor._report_analysis():
         findings, resolution_routes, route_comparisons = _suspicious_findings(
             snapshot.baseline_modules,
             events,
@@ -72,8 +71,6 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
             attempts,
             report_errors,
         )
-    finally:
-        monitor._end_report_analysis(previously_active)
     findings = (
         *findings,
         *_namespace_displacement_findings(

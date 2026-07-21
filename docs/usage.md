@@ -208,24 +208,31 @@ monitor = metapathology.install()
 ```
 
 Installation is idempotent. By default an exit callback writes the report to
-standard error. For explicit control over timing and destination:
+standard error. For a bounded capture region with explicit report timing:
 
 ```python
 import sys
 
 import metapathology
 
-monitor = metapathology.install(report_at_exit=False)
-try:
+with metapathology.monitoring() as monitor:
     import package_under_investigation
-finally:
-    metapathology.write_report(sys.stdout, color="auto")
-    metapathology.uninstall()
+
+metapathology.write_report(sys.stdout, color="auto")
 ```
 
-`uninstall()` is also idempotent. It restores plain `sys.meta_path` and
-`sys.path_hooks` lists, removes the finder wrappers, and unregisters the exit
-callback. Recorded events remain available from `monitor.events()`.
+`monitoring()` restores the import machinery even when the block raises and
+keeps recorded events available from `monitor.events()`. Nested and overlapping
+regions share the process-wide monitor; cleanup occurs after the last region
+exits. If monitoring was installed manually before the first region,
+`monitoring()` emits a `RuntimeWarning` and leaves it active afterward.
+Mechanisms enabled by an inner region remain active for the rest of the shared
+installation.
+
+For a lifetime that is not naturally lexical, use `install()` and
+`uninstall()`. `uninstall()` is idempotent. It restores plain `sys.meta_path`
+and `sys.path_hooks` lists, removes finder wrappers, and unregisters the exit
+callback.
 
 The [library API reference](api.md) documents the complete lifecycle and
 event types.

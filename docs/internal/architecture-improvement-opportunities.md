@@ -131,6 +131,26 @@ validation, and destination normalization. `Monitor.install()` applies that
 plain request after resolution; further lifecycle restructuring belongs to
 items 1 and 2 rather than configuration parsing.
 
+## Context-manager boundary review
+
+The public process-global lifecycle benefits from a lexical option, but the
+returned `Monitor` cannot safely implement `__enter__`/`__exit__`: by the time
+`install()` returns it, ownership of a pre-existing or nested installation has
+been lost. The public `monitoring()` factory therefore owns region accounting
+separately. Nested and cross-thread overlapping regions share the singleton;
+only the final region cleans up, and only if the first region began while the
+monitor was inactive. An outermost region emits a `RuntimeWarning` when it
+instead finds a manual installation, making the ambiguous ownership visible.
+
+Internally, report-analysis suppression is genuinely lexical and runs outside
+the import hot path, so it is represented by `Monitor._report_analysis()`.
+The import callback, finder, path-hook, and loader re-entrancy guards remain
+explicit wrappers or `try`/`finally` blocks. Turning those into generator-based
+context managers would allocate and dispatch on every observed import without
+improving lifecycle ownership. Likewise, deep mechanisms and owned global
+values do not get independent context managers: their lifetimes are selected
+incrementally but must be cleaned up together by the process-global monitor.
+
 ## Suggested order
 
 1. Consolidate installation configuration without changing the public API.

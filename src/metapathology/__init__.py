@@ -17,7 +17,7 @@ TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from metapathology._frozen_bootstrap import activate_frozen
-    from metapathology._monitor import Monitor, get_monitor, install, render_report, uninstall, write_report
+    from metapathology._monitor import Monitor, get_monitor, install, monitoring, render_report, uninstall, write_report
     from metapathology._records import (
         DeepDiagnosticCall,
         DeepImportEvent,
@@ -46,7 +46,9 @@ if TYPE_CHECKING:
 # comparatively expensive ``importlib.metadata`` module.
 __version__ = "0.4.4"
 
-_MONITOR_EXPORTS = frozenset(("Monitor", "get_monitor", "install", "render_report", "uninstall", "write_report"))
+_MONITOR_EXPORTS = frozenset(
+    ("Monitor", "get_monitor", "install", "monitoring", "render_report", "uninstall", "write_report")
+)
 _FROZEN_EXPORTS = frozenset(("activate_frozen",))
 _RECORD_EXPORTS = frozenset(
     (
@@ -100,6 +102,7 @@ __all__ = [
     "activate_frozen",
     "get_monitor",
     "install",
+    "monitoring",
     "render_report",
     "uninstall",
     "write_report",
