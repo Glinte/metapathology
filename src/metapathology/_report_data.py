@@ -75,7 +75,13 @@ if TYPE_CHECKING:
     from traceback import FrameSummary
     from typing import Literal
 
-    from metapathology._monitor import Monitor
+    from metapathology._monitor import (
+        DeepImportOutcomesStatus,
+        Monitor,
+        StandardFinderStatus,
+        TargetOutcomeKind,
+    )
+    from metapathology._records import DeepOutcome, SearchPathKind
 
     # Closed vocabularies for report-layer enum fields.
     ExplanationConfidence = Literal["captured", "correlated", "inferred", "unknown"]
@@ -121,6 +127,22 @@ if TYPE_CHECKING:
     RouteStatus = Literal["found", "not_found", "failed", "target_unavailable"]
     SearchPathPhase = Literal["import"]
     LocationsComparisonState = Literal["not_applicable", "captured", "post_hoc", "deferred", "failed", "unavailable"]
+    # Composed from source-of-truth unions rather than re-enumerated.
+    ImportProgress = DeepOutcome | Literal["unknown", "finder_claimed", "finder_raised"]
+    EffectStatus = (
+        ResolutionCategory
+        | Literal[
+            "failed",
+            "regular_module_selected",
+            "descendant_failed",
+            "separate_module_executed",
+            "module_identity_replaced",
+            "later_import_failed",
+            "conflicting_explanations",
+            "finder_raised",
+            "finder_returned_none",
+        ]
+    )
 
 
 _MODULE_FILE_SUFFIXES = (".py", ".pyc", ".pyd", ".so")
@@ -140,7 +162,7 @@ class ReportError(_Record):
 class TargetOutcome(_Record):
     """Plain reduction of how the monitored target finished."""
 
-    kind: str
+    kind: "TargetOutcomeKind"
     exception_type_name: str | None
     missing_module: str | None
     exit_code: int | None
@@ -186,7 +208,7 @@ class ImportAttempt(_Record):
     event_seqs: tuple[int, ...]
     thread_id: int
     thread_name: str
-    progress: str
+    progress: "ImportProgress"
     presence: "ImportPresence"
 
 
@@ -224,7 +246,7 @@ class ResolutionRoute(_Record):
     exception_type_name: str | None
     event_seq: int | None
     search_path: tuple[str, ...]
-    search_path_kind: str
+    search_path_kind: "SearchPathKind"
     search_path_phase: "SearchPathPhase"
     signals: tuple[str, ...] = ()
 
@@ -312,7 +334,7 @@ class CausalExplanation(_Record):
     kind: "ExplanationKind"
     confidence: "ExplanationConfidence"
     subject: str
-    effect_status: str
+    effect_status: "EffectStatus"
     cause_finding_id: str | None
     finder_type_name: str
     omitted_location: str
@@ -372,10 +394,10 @@ class ReportDocument(_Record):
     early_site_bootstrap: EarlySiteBootstrap | None
     frozen_bootstrap: FrozenBootstrap | None
     deep_diagnostics: tuple[str, ...]
-    deep_import_outcomes_status: str
+    deep_import_outcomes_status: "DeepImportOutcomesStatus"
     skipped_finders: tuple[SkippedFinder, ...]
     standard_resolutions: tuple[StandardResolution, ...]
-    standard_finder_status: str
+    standard_finder_status: "StandardFinderStatus"
     findings: tuple[Finding, ...]
     resolution_routes: tuple[ResolutionRoute, ...]
     route_comparisons: tuple[RouteComparison, ...]
@@ -645,16 +667,14 @@ def _import_attempts(
     for attempt_id in order:
         fullname, start_seq, thread_id, thread_name = starts[attempt_id]
         evidence = linked[attempt_id]
-        exact = next(
-            (
-                event.outcome
-                for event in reversed(evidence)
-                if isinstance(event, DeepImportEvent) and event.outcome != "started"
-            ),
-            None,
-        )
+        exact: DeepOutcome | None = None
+        for event in reversed(evidence):
+            if isinstance(event, DeepImportEvent) and event.outcome != "started":
+                exact = event.outcome
+                break
         claimed = any(isinstance(event, FindSpecCall) and event.found for event in evidence)
         raised = any(isinstance(event, FindSpecCall) and event.exception_type_name is not None for event in evidence)
+        progress: ImportProgress
         if exact is not None:
             progress = exact
         elif claimed and raised:
@@ -1911,7 +1931,7 @@ def _probe_standard_path(
     route_id: str,
     name: str,
     search_path: tuple[str, ...],
-    search_path_kind: str,
+    search_path_kind: "SearchPathKind",
     target: types.ModuleType | None,
     target_available: bool,
 ) -> ResolutionRoute:
@@ -1945,7 +1965,7 @@ def _standard_path_route(
     route_id: str,
     name: str,
     search_path: tuple[str, ...],
-    search_path_kind: str,
+    search_path_kind: "SearchPathKind",
     status: "RouteStatus",
     spec_summary: SpecSummary | None = None,
     exception_type_name: str | None = None,

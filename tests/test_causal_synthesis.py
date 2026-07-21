@@ -3,18 +3,19 @@
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from metapathology._report_data import CausalExplanation, _append_ambiguous_explanations
 from metapathology._report_text import _primary_explanations
 
+TYPE_CHECKING = False
+
 if TYPE_CHECKING:
-    from metapathology._report_data import ExplanationKind
+    from metapathology._report_data import EffectStatus, ExplanationKind
 
 RunPython = Callable[..., subprocess.CompletedProcess[str]]
 
 
-def _explanation(explanation_id: str, kind: "ExplanationKind", effect_status: str) -> CausalExplanation:
+def _explanation(explanation_id: str, kind: "ExplanationKind", effect_status: "EffectStatus") -> CausalExplanation:
     return CausalExplanation(
         explanation_id=explanation_id,
         kind=kind,
@@ -33,8 +34,8 @@ def _explanation(explanation_id: str, kind: "ExplanationKind", effect_status: st
 def test_equal_conflicting_explanations_remain_explicit_alternatives() -> None:
     explanations = _append_ambiguous_explanations(
         (
-            _explanation("explanation:1", "finder", "first_effect"),
-            _explanation("explanation:2", "path", "second_effect"),
+            _explanation("explanation:1", "finder", "regular_module_selected"),
+            _explanation("explanation:2", "path", "descendant_failed"),
         )
     )
 

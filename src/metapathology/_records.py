@@ -69,6 +69,7 @@ if TYPE_CHECKING:
         "raised",
         "unobserved_reentrant",
     ]
+    SearchPathKind = Literal["sys_path", "parent_path"]
 else:
 
     def _cast(_type: object, value: object) -> object:
@@ -443,7 +444,7 @@ class FindSpecCall(_Record):
     loader_type_name: str | None
     origin: str | None
     search_path: tuple[str, ...]
-    search_path_kind: str
+    search_path_kind: "SearchPathKind"
     spec_summary: SpecSummary | None
     exception_type_name: str | None
     thread_name: str

@@ -63,7 +63,25 @@ if TYPE_CHECKING:
     from _typeshed import SupportsRichComparison
     from _typeshed.importlib import MetaPathFinderProtocol, PathEntryFinderProtocol
 
-    from metapathology._records import DeepBoundary, DeepOutcome, MutationOp
+    from metapathology._records import DeepBoundary, DeepOutcome, MutationOp, SearchPathKind
+
+    # Closed vocabularies for the status strings this module produces; the
+    # report layer reuses these as the source of truth.
+    TargetOutcomeKind = Literal["completed", "raised"]
+    StandardFinderStatus = Literal[
+        "disabled",
+        "unavailable_existing_profiler",
+        "active_path_finder_aggregate",
+        "unsupported_path_finder_boundary",
+        "inactive_after_uninstall",
+    ]
+    DeepImportOutcomesStatus = Literal[
+        "disabled",
+        "refused_existing_profiler",
+        "unsupported_boundary",
+        "active_current_and_future_threading_threads_cache_hits_not_observed",
+        "inactive_after_uninstall",
+    ]
 
     _FindSpec = Callable[[str, Sequence[str] | None, ModuleType | None], ModuleSpec | None]
     _ImportListItemT = TypeVar("_ImportListItemT")
@@ -201,9 +219,11 @@ class _TargetOutcomeState:
 
     __slots__ = ("exception_type_name", "exit_code", "kind", "missing_module")
 
+    kind: "TargetOutcomeKind"
+
     def __init__(
         self,
-        kind: str,
+        kind: "TargetOutcomeKind",
         exception_type_name: str | None,
         missing_module: str | None,
         exit_code: int | None,
@@ -421,8 +441,8 @@ class Monitor:
         self._deep_path_entry_finders = False
         self._deep_loaders = False
         self._deep_import_outcomes = False
-        self._deep_import_outcomes_status = "disabled"
-        self._standard_finder_status = "disabled"
+        self._deep_import_outcomes_status: DeepImportOutcomesStatus = "disabled"
+        self._standard_finder_status: StandardFinderStatus = "disabled"
         self._deep_import_code: types.CodeType | None = None
         self._path_finder_code: types.CodeType | None = None
         self._deep_hook_wrappers: dict[int, _DeepPathHook] = {}
@@ -478,12 +498,12 @@ class Monitor:
         return tuple(enabled)
 
     @property
-    def deep_import_outcomes_status(self) -> str:
+    def deep_import_outcomes_status(self) -> "DeepImportOutcomesStatus":
         """Activation state and thread scope of exact import outcomes."""
         return self._deep_import_outcomes_status
 
     @property
-    def standard_finder_status(self) -> str:
+    def standard_finder_status(self) -> "StandardFinderStatus":
         """Availability of exact aggregate standard-finder evidence."""
         return self._standard_finder_status
 
@@ -1750,7 +1770,7 @@ class Monitor:
         fullname: str,
         spec: "ModuleSpec | None",
         search_path: tuple[str, ...],
-        search_path_kind: str,
+        search_path_kind: "SearchPathKind",
         exception_type_name: str | None,
         module_state_before: ModuleCacheState,
         module_state_after: ModuleCacheState,
