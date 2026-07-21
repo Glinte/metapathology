@@ -7,7 +7,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from metapathology import ObjectRef
-from metapathology._monitor import _diff_importer_cache
+from metapathology._importer_cache import _diff_importer_cache
 
 RunPython = Callable[..., "subprocess.CompletedProcess[str]"]
 
