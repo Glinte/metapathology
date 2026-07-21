@@ -53,6 +53,7 @@ class _Arguments(argparse.Namespace):
         self.deep_loaders: bool | None = None
         self.deep_import_outcomes: bool | None = None
         self.deep_import_calls: bool | None = None
+        self.speculative_replay: bool | None = None
         self.is_module = False
         self.target: str | None = None
         self.target_args: list[str] = []
@@ -124,6 +125,11 @@ def _make_parser() -> _ArgumentParser:
         action=argparse.BooleanOptionalAction,
         help="capture builtins.__import__ calls, including sys.modules cache hits",
     )
+    deep.add_argument(
+        "--speculative-replay",
+        action=argparse.BooleanOptionalAction,
+        help="at report time, replay a displaced importer-cache finder against a module that later failed on its path",
+    )
     parser.add_argument("-m", dest="is_module", action="store_true", help="run TARGET as a module")
     parser.add_argument(
         "target",
@@ -183,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
             deep_loaders=parsed.deep_loaders,
             deep_import_outcomes=parsed.deep_import_outcomes,
             deep_import_calls=parsed.deep_import_calls,
+            speculative_replay=parsed.speculative_replay,
         )
     return _run(
         parsed.target,
@@ -200,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
         deep_loaders=parsed.deep_loaders,
         deep_import_outcomes=parsed.deep_import_outcomes,
         deep_import_calls=parsed.deep_import_calls,
+        speculative_replay=parsed.speculative_replay,
     )
 
 
@@ -220,6 +228,7 @@ def _run(
     deep_loaders: bool | None,
     deep_import_outcomes: bool | None,
     deep_import_calls: bool | None,
+    speculative_replay: bool | None,
 ) -> int:
     """Install the monitor, run the target via runpy, and always write the report.
 
@@ -242,6 +251,8 @@ def _run(
         deep_loaders: Capture modern loader creation and execution.
         deep_import_outcomes: Capture exact CPython import invocation outcomes.
         deep_import_calls: Capture ``builtins.__import__`` calls, including cache hits.
+        speculative_replay: Replay a displaced importer-cache finder at report
+            time against a module that later failed on its path.
 
     Returns:
         The exit code a direct invocation of the target would produce.
@@ -286,6 +297,7 @@ def _run(
         deep_loaders=deep_loaders,
         deep_import_outcomes=deep_import_outcomes,
         deep_import_calls=deep_import_calls,
+        speculative_replay=speculative_replay,
     )
     exit_code = 0
     try:

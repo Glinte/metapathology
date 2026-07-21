@@ -31,6 +31,7 @@ DEEP_PATH_ENTRY_FINDERS_ENV = "METAPATHOLOGY_DEEP_PATH_ENTRY_FINDERS"
 DEEP_LOADERS_ENV = "METAPATHOLOGY_DEEP_LOADERS"
 DEEP_IMPORT_OUTCOMES_ENV = "METAPATHOLOGY_DEEP_IMPORT_OUTCOMES"
 DEEP_IMPORT_CALLS_ENV = "METAPATHOLOGY_DEEP_IMPORT_CALLS"
+SPECULATIVE_REPLAY_ENV = "METAPATHOLOGY_SPECULATIVE_REPLAY"
 
 _TRUE_ENV_VALUES = frozenset(("1", "true", "yes", "on"))
 _FALSE_ENV_VALUES = frozenset(("0", "false", "no", "off"))
@@ -53,6 +54,7 @@ class InstallRequest(_Record):
     deep_loaders: bool
     deep_import_outcomes: bool
     deep_import_calls: bool
+    speculative_replay: bool
     issues: tuple[str, ...]
 
 
@@ -82,6 +84,7 @@ def resolve_install_request(
     deep_loaders: bool | None,
     deep_import_outcomes: bool | None,
     deep_import_calls: bool | None,
+    speculative_replay: bool | None,
     use_environment: bool,
     configure_report: bool,
     current_report_destination: str | None,
@@ -119,6 +122,14 @@ def resolve_install_request(
         deep_enabled,
         issues,
     )
+    # Independent of --deep: deep capture delegates along paths the target
+    # actually took, while speculative replay invokes a path it did not.
+    resolved_speculative_replay = _resolve_bool(
+        speculative_replay,
+        SPECULATIVE_REPLAY_ENV,
+        False,
+        issues,
+    )
     destination, format, color = _resolve_report_options(
         destination=report_destination,
         destination_explicit=report_destination_explicit,
@@ -144,6 +155,7 @@ def resolve_install_request(
         deep_loaders=resolved_deep_loaders,
         deep_import_outcomes=resolved_deep_import_outcomes,
         deep_import_calls=resolved_deep_import_calls,
+        speculative_replay=resolved_speculative_replay,
         issues=tuple(issues),
     )
 

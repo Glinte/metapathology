@@ -18,7 +18,7 @@ fail-open startup files described in the [frozen application guide](frozen.md)
 over calling this function directly. Direct calls propagate invalid integration
 and installation errors to the application.
 
-### `install(*, report_at_exit=True, report_destination=None, report_format=None, report_color=None, monitor_path_hooks=None, monitor_importer_cache=None, monitor_sys_path=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None, deep_import_calls=None) -> Monitor`
+### `install(*, report_at_exit=True, report_destination=None, report_format=None, report_color=None, monitor_path_hooks=None, monitor_importer_cache=None, monitor_sys_path=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None, deep_import_calls=None, speculative_replay=None) -> Monitor`
 
 Installs the process-wide monitor and returns it. Repeated calls return and
 enable the same monitor. Only activity after installation can be observed.
@@ -54,6 +54,16 @@ mechanism sees; the swap is chain-safe against other tools that also wrap
 wrapping changes callable identity; deep mechanisms put monitor code inline
 with imports and should be reserved for controlled diagnostic runs.
 
+`speculative_replay` is independent of `deep`. When enabled (or via
+`METAPATHOLOGY_SPECULATIVE_REPLAY`), report generation replays a finder that a
+`sys.path_importer_cache` change displaced for a path entry against a module
+that later failed to resolve on that path, reporting whether the retained finder
+returns a spec now. It performs at most one foreign `find_spec()` per selected
+candidate, caps the report at 16 probes, never mutates import state, declines
+reload-target lookups, and never claims the original import would have
+succeeded. Because it recomputes each report, repeated reports repeat those
+foreign calls.
+
 Capture booleans resolve consistently: an explicit API value wins, then its
 `METAPATHOLOGY_*` environment value, then the documented default. Accepted
 environment booleans are `1/0`, `true/false`, `yes/no`, and `on/off`
@@ -70,7 +80,7 @@ not replace the target's exit status.
 
 [atexit]: https://docs.python.org/3/library/atexit.html
 
-### `monitoring(*, monitor_path_hooks=None, monitor_importer_cache=None, monitor_sys_path=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None, deep_import_calls=None) -> ContextManager[Monitor]`
+### `monitoring(*, monitor_path_hooks=None, monitor_importer_cache=None, monitor_sys_path=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None, deep_import_calls=None, speculative_replay=None) -> ContextManager[Monitor]`
 
 Defines a bounded monitoring region and yields the process-wide monitor. The
 monitor is installed on entry and, if the region began from an inactive state,

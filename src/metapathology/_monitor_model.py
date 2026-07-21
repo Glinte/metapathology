@@ -107,4 +107,5 @@ class MonitorSnapshot(_Record):
     deep_import_outcomes_status: "DeepImportOutcomesStatus"
     deep_import_calls_status: "DeepImportCallsStatus"
     standard_finder_status: "StandardFinderStatus"
+    speculative_replay_enabled: bool
     target_outcome: _TargetOutcomeState | None

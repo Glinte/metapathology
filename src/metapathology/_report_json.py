@@ -29,6 +29,7 @@ from metapathology._records import (
     PathHooksMutation,
     PathHooksReassignment,
     SpecSummary,
+    SpeculativeReplay,
     StandardFinderCall,
     SysPathMutation,
     SysPathReassignment,
@@ -72,11 +73,14 @@ from metapathology._report_schema import (
     ResolutionRouteJSON,
     RouteComparisonJSON,
     SpecSummaryJSON,
+    SpeculativeReplayInfoJSON,
+    SpeculativeReplayJSON,
     SpecValueJSON,
     StandardResolutionJSON,
     SummaryInfo,
     TargetOutcomeJSON,
 )
+from metapathology._speculative_replay import MAX_SPECULATIVE_REPLAYS
 
 TYPE_CHECKING = False
 
@@ -104,7 +108,7 @@ if TYPE_CHECKING:
 
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 1
-_SCHEMA_MINOR = 2
+_SCHEMA_MINOR = 3
 
 
 def _json_events(
@@ -305,6 +309,7 @@ def json_document(document: ReportDocument) -> ReportJSON:
         "findings": [_json_finding(finding) for finding in document.findings],
         "explanations": [_json_explanation(explanation) for explanation in document.explanations],
         "summary": _json_summary(document.summary),
+        "speculative_replay": _json_speculative_replay(document),
         "target_outcome": _json_target_outcome(document.target_outcome),
         "diagnostics": {
             "internal_error_refs": internal_error_refs,
@@ -468,6 +473,9 @@ def _json_event(event: MonitorEvent) -> EventJSON:
                 "object_type_name": event.object_type_name,
                 "outcome": event.outcome,
                 "path": event.path,
+                "returned_finder": None
+                if event.returned_finder is None
+                else _json_import_object(event.returned_finder),
                 "target_state": _json_module_state(event.target_state),
                 "thread_name": event.thread_name,
                 "thread_id": event.thread_id,
@@ -735,6 +743,35 @@ def _json_spec_value(value: str | ObjectRef | None) -> SpecValueJSON:
         result: ImportObjectValueJSON = {"kind": "object", **_json_import_object(value)}
         return result
     return value
+
+
+def _json_speculative_replay(document: ReportDocument) -> SpeculativeReplayInfoJSON:
+    """Project the bounded displaced-finder replay results.
+
+    Each entry states the displaced finder's current behavior only; the schema
+    intentionally exposes no field asserting the original import would have
+    succeeded.
+    """
+    return {
+        "enabled": document.speculative_replay_enabled,
+        "omitted": document.speculative_replays_omitted,
+        "probe_cap": MAX_SPECULATIVE_REPLAYS,
+        "replays": [_json_one_speculative_replay(replay) for replay in document.speculative_replays],
+    }
+
+
+def _json_one_speculative_replay(replay: SpeculativeReplay) -> SpeculativeReplayJSON:
+    return {
+        "attempt_event_ref": f"event:{replay.attempt_seq}",
+        "diff_event_ref": f"event:{replay.diff_seq}",
+        "displaced_finder": _json_import_object(replay.displaced_finder),
+        "exception_type_name": replay.exception_type_name,
+        "fullname": replay.fullname,
+        "outcome": replay.outcome,
+        "path": replay.path,
+        "spec": None if replay.spec_summary is None else _json_spec_summary(replay.spec_summary),
+        "state_phase": "report",
+    }
 
 
 def _json_spec_summary(summary: SpecSummary) -> SpecSummaryJSON:
@@ -1010,6 +1047,7 @@ def failed_json_document(error_name: str) -> ReportJSON:
             "top_finding_ref": None,
             "top_explanation_ref": None,
         },
+        "speculative_replay": {"enabled": False, "omitted": 0, "probe_cap": MAX_SPECULATIVE_REPLAYS, "replays": []},
         "target_outcome": None,
         "diagnostics": {
             "internal_error_refs": [],

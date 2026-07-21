@@ -61,7 +61,7 @@ import observed_mod
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 1, "minor": 2, "name": "metapathology.report"}
+assert document["schema"] == {"major": 1, "minor": 3, "name": "metapathology.report"}
 assert document["report_status"] == "complete"
 assert isinstance(document["resolution_routes"], list)
 assert isinstance(document["route_comparisons"], list)

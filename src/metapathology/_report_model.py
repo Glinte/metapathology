@@ -11,6 +11,7 @@ from metapathology._records import (
     MonitorEvent,
     ObjectRef,
     SpecSummary,
+    SpeculativeReplay,
 )
 
 TYPE_CHECKING = False
@@ -315,3 +316,6 @@ class ReportDocument(_Record):
     target_outcome: TargetOutcome | None
     cwd: str | None
     argv: tuple[str, ...]
+    speculative_replay_enabled: bool = False
+    speculative_replays: tuple[SpeculativeReplay, ...] = ()
+    speculative_replays_omitted: int = 0

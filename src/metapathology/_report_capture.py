@@ -5,7 +5,7 @@ import sys
 import time
 
 from metapathology._module_metadata import ModuleMetadata, inspect_module
-from metapathology._records import ObjectRef, type_name
+from metapathology._records import ObjectRef, SpeculativeReplay, type_name
 from metapathology._report_analysis import (
     _causal_explanations,
     _import_attempts,
@@ -24,6 +24,7 @@ from metapathology._report_model import (
     SkippedFinder,
     TargetOutcome,
 )
+from metapathology._speculative_replay import replay_displaced_finders
 
 TYPE_CHECKING = False
 
@@ -89,6 +90,14 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         ),
     )
     explanations = _causal_explanations(findings, attempts, standard_resolutions, route_comparisons, events)
+    speculative_replays: tuple[SpeculativeReplay, ...] = ()
+    speculative_replays_omitted = 0
+    if snapshot.speculative_replay_enabled:
+        # The single foreign find_spec() per candidate runs under the
+        # report-analysis guard so it records no monitor events and cannot
+        # re-enter the tool's own instrumentation.
+        with monitor._report_analysis():
+            speculative_replays, speculative_replays_omitted = replay_displaced_finders(monitor, events)
     outcome_state = snapshot.target_outcome
     target_outcome = (
         None
@@ -170,6 +179,9 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         target_outcome=target_outcome,
         cwd=cwd,
         argv=tuple(argv),
+        speculative_replay_enabled=snapshot.speculative_replay_enabled,
+        speculative_replays=speculative_replays,
+        speculative_replays_omitted=speculative_replays_omitted,
     )
 
 

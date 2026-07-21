@@ -370,6 +370,14 @@ def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
     else:
         empty_sections.append("sys.path_importer_cache changes")
 
+    if document.speculative_replay_enabled:
+        replay_lines = _speculative_replay_lines(document, context)
+        if replay_lines:
+            lines.append("")
+            lines.extend(replay_lines)
+        else:
+            empty_sections.append("speculative replays")
+
     error_count = len(errors) + len(document.report_errors)
     if error_count:
         lines.append("")
@@ -906,7 +914,8 @@ def _deep_call_line(event: DeepDiagnosticCall, context: _RenderContext) -> str:
     if event.boundary == "path_hook":
         hook = "" if event.object_type_name in _GENERIC_CALLABLE_TYPE_NAMES else f"{event.object_type_name} "
         subject = "<unknown>" if event.path is None else context.quoted_path(event.path)
-        return f"#{event.seq} path hook {hook}called with {subject}: {outcome}{transition}{thread}"
+        finder = "" if event.returned_finder is None else f" ({event.returned_finder.type_name})"
+        return f"#{event.seq} path hook {hook}called with {subject}: {outcome}{finder}{transition}{thread}"
     if event.boundary == "path_entry_finder":
         where = "" if event.path is None else f" for {context.quoted_path(event.path)}"
         return (
@@ -1578,6 +1587,53 @@ def _cache_change_counts_clause(entries: "list[tuple[str, str, str]]") -> str:
         counts[kind] += 1
     parts = [f"{sign}{counts[sign]}" for sign in ("+", "-", "~") if counts[sign]]
     return " ".join(parts) + " entries"
+
+
+_SPECULATIVE_REPLAY_OUTCOMES = {
+    "returned_none": "currently returns no spec",
+    "raised": "currently raises",
+    "declined_target_unavailable": "not replayed: original lookup had a reload target",
+    "finder_unavailable": "not replayed: the displaced finder is no longer retained",
+    "unsupported_finder": "not replayed: no callable find_spec",
+}
+
+
+def _speculative_replay_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
+    """Format the bounded displaced-finder replay results.
+
+    Every line states what the displaced finder returns *now*; none claim the
+    original import would have succeeded. A returned spec proves only current
+    finder behavior, not historical resolution or loader success.
+    """
+    replays = document.speculative_replays
+    if not replays and not document.speculative_replays_omitted:
+        return []
+    lines = [context.heading(f"-- speculative replays ({len(replays)}) --")]
+    lines.append(
+        "Each line replays one importer-cache finder that a later cache change displaced, asking whether it"
+        " returns a spec for a module that then failed on the same path. Results reflect current state, not the"
+        " outcome during the run."
+    )
+    for replay in replays:
+        finder = replay.displaced_finder.type_name
+        where = context.quoted_path(replay.path)
+        if replay.outcome == "returned_spec":
+            loader = None if replay.spec_summary is None else replay.spec_summary.loader
+            loader_clause = "" if loader is None else f" (loader {loader.type_name})"
+            outcome = f"currently returns a spec{loader_clause}"
+        elif replay.outcome == "raised":
+            outcome = f"currently raises {replay.exception_type_name or 'an exception'}"
+        else:
+            outcome = _SPECULATIVE_REPLAY_OUTCOMES.get(replay.outcome, _humanize(replay.outcome))
+        lines.append(
+            f"displaced {finder} for {where}, asked about {replay.fullname!r}: {outcome} "
+            f"(cache change #{replay.diff_seq}; failed lookup #{replay.attempt_seq})"
+        )
+    if document.speculative_replays_omitted:
+        lines.append(
+            f"    ... and {document.speculative_replays_omitted} more candidates omitted at the per-report cap"
+        )
+    return lines
 
 
 def _importer_cache_diff_lines(diff: ImporterCacheDiff, context: _RenderContext) -> list[str]:

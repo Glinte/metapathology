@@ -25,6 +25,7 @@ def _resolve(
     deep_loaders: bool | None = None,
     deep_import_outcomes: bool | None = None,
     deep_import_calls: bool | None = None,
+    speculative_replay: bool | None = None,
     use_environment: bool = True,
     configure_report: bool = True,
     current_report_destination: str | None = None,
@@ -46,6 +47,7 @@ def _resolve(
         deep_loaders=deep_loaders,
         deep_import_outcomes=deep_import_outcomes,
         deep_import_calls=deep_import_calls,
+        speculative_replay=speculative_replay,
         use_environment=use_environment,
         configure_report=configure_report,
         current_report_destination=current_report_destination,
@@ -78,6 +80,19 @@ def test_deep_defaults_and_explicit_overrides_are_resolved_together() -> None:
     assert request.deep_loaders is False
     assert request.deep_import_outcomes is True
     assert request.deep_import_calls is True
+    # Speculative replay is deliberately independent of the --deep umbrella: it
+    # invokes a resolution path the target never took.
+    assert request.speculative_replay is False
+
+
+def test_speculative_replay_resolves_from_param_and_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _resolve().speculative_replay is False
+    assert _resolve(speculative_replay=True).speculative_replay is True
+
+    monkeypatch.setenv("METAPATHOLOGY_SPECULATIVE_REPLAY", "on")
+    assert _resolve().speculative_replay is True
+    # An explicit False overrides the environment.
+    assert _resolve(speculative_replay=False).speculative_replay is False
 
 
 def test_environment_precedence_and_invalid_values_are_plain_issues(monkeypatch: pytest.MonkeyPatch) -> None:

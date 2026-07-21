@@ -31,7 +31,7 @@ def build_schema() -> dict[str, object]:
     schema_properties = schema_definition["properties"]
     assert isinstance(schema_properties, dict)
     schema_properties["major"] = {"const": 1}
-    schema_properties["minor"] = {"const": 2}
+    schema_properties["minor"] = {"const": 3}
     schema_properties["name"] = {"const": "metapathology.report"}
     tool_definition = definitions["ToolInfo"]
     assert isinstance(tool_definition, dict)

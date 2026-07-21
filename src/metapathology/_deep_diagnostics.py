@@ -15,6 +15,7 @@ from metapathology._records import (
     DeepImportEvent,
     ImportCall,
     ModuleCacheState,
+    ObjectRef,
     StandardFinderCall,
     type_name,
 )
@@ -619,6 +620,7 @@ class _DeepDiagnostics:
         module_state_before: ModuleCacheState | None = None,
         module_state_after: ModuleCacheState | None = None,
         target_state: ModuleCacheState | None = None,
+        returned_finder: ObjectRef | None = None,
     ) -> None:
         """Append primitive-only deep evidence without holding a lock across delegation."""
         thread_name = threading.current_thread().name
@@ -640,6 +642,7 @@ class _DeepDiagnostics:
                     module_state_before,
                     module_state_after,
                     target_state,
+                    returned_finder,
                 )
             )
 
@@ -735,7 +738,16 @@ class _DeepPathHook:
                     "path_hook", self._hook_id, self._hook_name, None, path, "raised", type(exc).__name__
                 )
                 raise
-            monitor._record_deep_call("path_hook", self._hook_id, self._hook_name, None, path, "returned", None)
+            monitor._record_deep_call(
+                "path_hook",
+                self._hook_id,
+                self._hook_name,
+                None,
+                path,
+                "returned",
+                None,
+                returned_finder=ObjectRef.of(finder),
+            )
             monitor.instrument_path_entry_finder(finder, path)
             return finder
         finally:

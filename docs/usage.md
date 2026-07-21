@@ -162,6 +162,30 @@ Notes on individual mechanisms:
   swap is chain-safe: if another tool already wrapped `__import__`, metapathology
   delegates to it and restores it untouched on uninstall.
 
+## Speculative replay of a displaced cache finder
+
+`--speculative-replay` (env `METAPATHOLOGY_SPECULATIVE_REPLAY`,
+`install(speculative_replay=True)`) targets one specific contention shape: a
+`sys.path_importer_cache` change removed or replaced the finder for a path
+entry, and a later import that traversed that path failed. At report time — and
+only then — the tool asks the *retained* displaced finder whether it returns a
+spec for the failed module now. This is the beartype#599 shape: a source-file
+finder displaces a frozen or archive finder for the same path entry, and the
+frozen module can no longer be found.
+
+It is deliberately **not** part of `--deep`: deep capture delegates along the
+paths the target actually took, while this replays a path the target did not.
+Selection is driven entirely by captured evidence (it needs importer-cache
+monitoring and deep path-entry finder capture), it performs at most one foreign
+`find_spec()` call per selected candidate, and the whole report is capped at 16
+probes. It never touches `sys.path_hooks`, `sys.path_importer_cache`, or
+`sys.modules`; a lookup that carried a reload target is declined rather than
+answered with a different question. The report states only that the displaced
+finder *currently* returns (or does not return) a spec — never that the original
+import would have succeeded, since a returned spec does not prove loader success
+and current state is not historical state. Because it is recomputed each report,
+repeated reports repeat the foreign finder calls.
+
 ## Observe later `.pth` files
 
 Normal monitoring starts after Python has already processed the `.pth` files

@@ -189,6 +189,12 @@ class _ImporterCacheObserver:
             coalesced=self._coalesced,
         )
 
+    def retained_finder(self, finder_id: int) -> object | None:
+        """Return a live finder observed in the cache, for report-time replay."""
+        if not self._enabled:
+            return None
+        return self._observed_finders.get(finder_id)
+
     def uninstall(self) -> None:
         self._observed_finders.clear()
         self._enabled = False

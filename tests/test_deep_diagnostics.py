@@ -89,6 +89,15 @@ assert {event["boundary"] for event in deep} == {
     "path_hook", "path_entry_finder", "loader_create_module", "loader_exec_module"
 }, deep
 assert any(event["outcome"] == "unobserved_reentrant" for event in deep), deep
+# A successful path hook captures the identity of the finder it returned, so the
+# report can link an accepting hook to the finder it installed in the cache.
+assert any(
+    event["boundary"] == "path_hook"
+    and event["outcome"] == "returned"
+    and event["returned_finder"] is not None
+    and event["returned_finder"]["type_name"] == "Finder"
+    for event in deep
+), deep
 assert any(event["fullname"] == "deep_broken" and event["outcome"] == "raised" for event in deep), deep
 assert document["capture"]["mechanisms"][4]["enabled"] is True
 text = metapathology.render_report()

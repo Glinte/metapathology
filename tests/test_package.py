@@ -28,6 +28,7 @@ _EXPECTED_PUBLIC_API = frozenset(
         "ReportJSON",
         "ReportStatus",
         "SpecSummary",
+        "SpeculativeReplay",
         "StandardFinderCall",
         "SysPathMutation",
         "SysPathReassignment",

@@ -246,6 +246,10 @@ class Monitor:
         self._local = _ImportThreadState()
         self._deep = _DeepDiagnostics(self)
         self._importer_cache = _ImporterCacheObserver(self)
+        # Opt-in, independent of --deep: enables report-time replay of displaced
+        # importer-cache finders. Off by default; never invokes foreign code at
+        # capture time.
+        self._speculative_replay = False
         # One counter for all record types, so the report can interleave the
         # different event kinds chronologically.
         self._seq = 0
@@ -423,8 +427,13 @@ class Monitor:
                 deep_import_outcomes_status=self._deep.deep_import_outcomes_status,
                 deep_import_calls_status=self._deep.deep_import_calls_status,
                 standard_finder_status=self._deep.standard_finder_status,
+                speculative_replay_enabled=self._enabled and self._speculative_replay,
                 target_outcome=self._target_outcome,
             )
+
+    def _retained_cache_finder(self, finder_id: int) -> object | None:
+        """Return the live importer-cache finder the observer retained, if any."""
+        return self._importer_cache.retained_finder(finder_id)
 
     def _set_early_site_bootstrap(
         self,
@@ -475,6 +484,7 @@ class Monitor:
         deep_loaders: bool | None = None,
         deep_import_outcomes: bool | None = None,
         deep_import_calls: bool | None = None,
+        speculative_replay: bool | None = None,
     ) -> None:
         """Instrument ``sys.meta_path`` and register the import audit hook (idempotent).
 
@@ -507,6 +517,11 @@ class Monitor:
             deep_import_outcomes: Profile CPython's complete import boundary.
             deep_import_calls: Wrap ``builtins.__import__`` to observe every
                 import statement, including ``sys.modules`` cache hits.
+            speculative_replay: At report time, replay a displaced
+                importer-cache finder against a module that later failed to
+                resolve on its path, to report whether that finder returns a
+                spec now. Independent of ``deep``; consult
+                ``METAPATHOLOGY_SPECULATIVE_REPLAY`` when omitted.
         """
         # os.fspath() may execute foreign code. Reduce it before taking the
         # lifecycle lock; the resolver receives plain values only.
@@ -533,6 +548,7 @@ class Monitor:
                 deep_loaders=deep_loaders,
                 deep_import_outcomes=deep_import_outcomes,
                 deep_import_calls=deep_import_calls,
+                speculative_replay=speculative_replay,
                 use_environment=not was_enabled,
                 configure_report=not was_enabled or report_configuration_explicit,
                 current_report_destination=self._report_destination,
@@ -607,6 +623,8 @@ class Monitor:
             self._deep.enable_import_outcomes()
         if request.deep_import_calls and not self._deep.import_calls_enabled:
             self._deep.enable_import_calls()
+        if request.speculative_replay:
+            self._speculative_replay = True
         if request.report_at_exit and not self._report_at_exit:
             self._report_at_exit = True
             atexit.register(self._atexit_callback)
@@ -1433,6 +1451,7 @@ def install(
     deep_loaders: bool | None = None,
     deep_import_outcomes: bool | None = None,
     deep_import_calls: bool | None = None,
+    speculative_replay: bool | None = None,
 ) -> Monitor:
     """Install the import-machinery monitor (idempotent) and return it.
 
@@ -1461,6 +1480,9 @@ def install(
         deep_import_outcomes: Observe exact CPython import invocation outcomes.
         deep_import_calls: Wrap ``builtins.__import__`` to observe every import
             statement, including ``sys.modules`` cache hits.
+        speculative_replay: At report time, replay a displaced importer-cache
+            finder against a module that later failed on its path. Independent
+            of ``deep``; consults ``METAPATHOLOGY_SPECULATIVE_REPLAY``.
     """
     global _monitor_singleton
     with _singleton_lock:
@@ -1481,6 +1503,7 @@ def install(
         deep_loaders=deep_loaders,
         deep_import_outcomes=deep_import_outcomes,
         deep_import_calls=deep_import_calls,
+        speculative_replay=speculative_replay,
     )
     return monitor
 
@@ -1497,6 +1520,7 @@ def monitoring(
     deep_loaders: bool | None = None,
     deep_import_outcomes: bool | None = None,
     deep_import_calls: bool | None = None,
+    speculative_replay: bool | None = None,
 ) -> "Iterator[Monitor]":
     """Observe imports only while the context-managed region is active.
 
@@ -1519,6 +1543,8 @@ def monitoring(
         deep_import_outcomes: Observe exact CPython import invocation outcomes.
         deep_import_calls: Wrap ``builtins.__import__`` to observe every import
             statement, including ``sys.modules`` cache hits.
+        speculative_replay: At report time, replay a displaced importer-cache
+            finder against a module that later failed on its path.
 
     Yields:
         The process-wide monitor collecting events for the region.
@@ -1553,6 +1579,7 @@ def monitoring(
             deep_loaders=deep_loaders,
             deep_import_outcomes=deep_import_outcomes,
             deep_import_calls=deep_import_calls,
+            speculative_replay=speculative_replay,
         )
     except BaseException:
         if first_region:

@@ -283,6 +283,7 @@ class EventJSON(EventBaseJSON, total=False):
     path_hooks_id: str | None
     removed: list[str] | list[ImportObjectJSON] | list[ImporterCacheEntryJSON]
     replaced: list[ImporterCacheReplacementJSON]
+    returned_finder: ImportObjectJSON | None
     search_path: list[str]
     search_path_kind: str
     spec: SpecSummaryJSON | None
@@ -431,6 +432,25 @@ class DiagnosticsInfo(TypedDict):
     skipped_finders: list[SkippedFinderJSON]
 
 
+class SpeculativeReplayJSON(TypedDict):
+    attempt_event_ref: str
+    diff_event_ref: str
+    displaced_finder: ImportObjectJSON
+    exception_type_name: str | None
+    fullname: str
+    outcome: str
+    path: str
+    spec: SpecSummaryJSON | None
+    state_phase: str
+
+
+class SpeculativeReplayInfoJSON(TypedDict):
+    enabled: bool
+    omitted: int
+    probe_cap: int
+    replays: list[SpeculativeReplayJSON]
+
+
 class ReportJSON(TypedDict):
     """Complete schema 1.0 report document."""
 
@@ -451,6 +471,7 @@ class ReportJSON(TypedDict):
     findings: list[FindingJSON]
     explanations: list[ExplanationJSON]
     summary: SummaryInfo
+    speculative_replay: SpeculativeReplayInfoJSON
     target_outcome: TargetOutcomeJSON | None
     diagnostics: DiagnosticsInfo
 

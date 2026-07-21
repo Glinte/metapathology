@@ -1,8 +1,15 @@
 # Speculative replay investigation
 
-Status: active design decision, 2026-07-17. The resolution-route refactor and
-Phase 0 correctness work are implemented. The speculative mechanisms in
-Phases 2 and 3 are not implemented.
+Status: Phases 0, 1, and 2 implemented (2026-07-22). Phase 3 (synthetic
+`PathFinder` hook exclusion) remains deliberately deferred: it would require a
+version-sensitive partial reimplementation of `importlib`'s path-based finder,
+and its Phase 3 gate below is not met by any pinned fixture. See
+`_speculative_replay.py` (bounded displaced-finder replay), the
+`SpeculativeReplay` record, `DeepDiagnosticCall.returned_finder` (captured
+hook-to-finder provenance), and the `speculative_replay` /
+`METAPATHOLOGY_SPECULATIVE_REPLAY` / `--speculative-replay` switch.
+
+Original status: active design decision, 2026-07-17.
 
 ## Decision
 
@@ -201,7 +208,12 @@ Definition of done:
 - A target-sensitive reload cannot create a comparison against a
   `target=None` replay.
 
-### Phase 1: capture cache-finder provenance
+### Phase 1: capture cache-finder provenance (implemented)
+
+Successful deep `path_hook` records now carry `returned_finder` (safe identity
+and type name of the finder the hook installed), rendered in text and JSON. This
+supplies the `hook H returned finder F for path P` step of the provenance chain
+and gives Phase 2 a defensible candidate.
 
 - Extend successful deep path-hook records with the returned finder's safe
   identity and type/name.
@@ -226,10 +238,21 @@ After Phase 1, run the pinned beartype#599 fixture and assess the report. Stop
 here if the captured provenance already identifies the contention and the
 remedy. Speculation is not valuable merely because it is possible.
 
-### Phase 2: bounded displaced-finder replay
+### Phase 2: bounded displaced-finder replay (implemented)
 
-Implement only if Phase 1 leaves the concrete question "could the displaced
-finder still find this failed module?" unanswered.
+Implemented in `_speculative_replay.py`. Candidate selection is pure: it pairs
+each displaced importer-cache finder (from `ImporterCacheDiff` removals and
+replacements) with a later deep `path_entry_finder` `not_found` call on the same
+path. Each selected candidate triggers at most one foreign
+`prior_finder.find_spec(fullname, None)` at report time under the
+report-analysis guard, capped at 16 probes with an overflow count. Results are a
+report-phase `SpeculativeReplay` model attached to the document (text section
+and JSON `speculative_replay` block), never appended to the monitor event log,
+so repeated reports recompute rather than grow. Reload-target lookups are
+declined; finder `None`, namespace, malformed spec, and ordinary `Exception`
+outcomes are reduced to safe results, while control-flow exceptions outside
+`Exception` (`KeyboardInterrupt`, `SystemExit`) keep propagating rather than
+being swallowed by the probe.
 
 Activation must be independent and explicit, for example
 `--speculative-replay` / `install(speculative_replay=True)`. `--deep` must not
@@ -351,9 +374,9 @@ minimal example for nondeterministic failures.
 
 ## Reassessment rule
 
-Phase 1 is approved design work. Phase 2 is conditional on the pinned
-beartype#599 report demonstrating a remaining diagnostic gap. Phase 3 has no
-current justification and remains deferred.
+Phases 1 and 2 are implemented. Phase 3 has no current justification and
+remains deferred: it requires a versioned partial reproduction of `PathFinder`,
+and no pinned fixture meets its four-part gate above.
 
 This keeps replay proportional to demonstrated value: prefer exact captured
 provenance, then one evidence-selected foreign call, and only then consider a

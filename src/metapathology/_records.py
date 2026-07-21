@@ -56,6 +56,14 @@ if TYPE_CHECKING:
         "unobserved_reentrant",
     ]
     SearchPathKind = Literal["sys_path", "parent_path"]
+    SpeculativeReplayOutcome = Literal[
+        "returned_spec",
+        "returned_none",
+        "raised",
+        "declined_target_unavailable",
+        "finder_unavailable",
+        "unsupported_finder",
+    ]
 else:
 
     def _cast(_type: object, value: object) -> object:
@@ -346,7 +354,16 @@ class FindSpecCall(_Record):
 
 
 class DeepDiagnosticCall(_Record):
-    """One call crossing an explicitly enabled deep-diagnostics boundary."""
+    """One call crossing an explicitly enabled deep-diagnostics boundary.
+
+    Attributes:
+        returned_finder: Safe identity of the path-entry finder a successful
+            ``path_hook`` call returned. Captured so the report can link an
+            accepting hook to the finder it installed in
+            ``sys.path_importer_cache`` — the ``hook H returned finder F for
+            path P`` step of the cache-displacement provenance chain. ``None``
+            for every other boundary and for hooks that raised or declined.
+    """
 
     seq: int
     boundary: "DeepBoundary"
@@ -361,6 +378,7 @@ class DeepDiagnosticCall(_Record):
     module_state_before: ModuleCacheState | None = None
     module_state_after: ModuleCacheState | None = None
     target_state: ModuleCacheState | None = None
+    returned_finder: ObjectRef | None = None
 
 
 class DeepImportEvent(_Record):
@@ -423,6 +441,49 @@ class StandardFinderCall(_Record):
     spec_summary: SpecSummary
     thread_id: int
     thread_name: str
+
+
+class SpeculativeReplay(_Record):
+    """One report-time replay of a displaced importer-cache finder.
+
+    Speculative replay answers a single, evidence-selected question about
+    path-hook/cache contention (the beartype#599 shape): a captured
+    importer-cache change removed or replaced finder ``F`` for path ``P``, a
+    later import of ``M`` traversed ``P`` and failed, so — with the tool's
+    retained reference to ``F`` — does ``F`` still return a spec for ``M`` in
+    the interpreter's *current* state?
+
+    This record therefore describes the current behavior of a retained finder,
+    not history: a returned spec does not prove the original import would have
+    succeeded, and current finder state is not the historical state. It is
+    produced only at report time, under the report-analysis guard, and is never
+    part of the monitor's chronological event log, so repeated reports recompute
+    it rather than growing the log.
+
+    Attributes:
+        fullname: The module name whose failed resolution selected this replay.
+        path: The ``sys.path_importer_cache`` path whose finder was displaced.
+        displaced_finder: Safe identity of the finder ``F`` that the cache
+            change removed or replaced for ``path``.
+        diff_seq: ``seq`` of the :class:`ImporterCacheDiff` that displaced ``F``.
+        attempt_seq: ``seq`` of the deep ``path_entry_finder`` call that failed
+            to find ``fullname`` on ``path`` after the displacement.
+        outcome: What replaying ``F.find_spec(fullname, None)`` did now, or why
+            no call was made.
+        spec_summary: Conservative summary of the returned spec when the
+            outcome is ``"returned_spec"``.
+        exception_type_name: Type name of the exception raised by the replayed
+            ``find_spec``, when the outcome is ``"raised"``.
+    """
+
+    fullname: str
+    path: str
+    displaced_finder: ObjectRef
+    diff_seq: int
+    attempt_seq: int
+    outcome: "SpeculativeReplayOutcome"
+    spec_summary: SpecSummary | None = None
+    exception_type_name: str | None = None
 
 
 class InternalError(_Record):

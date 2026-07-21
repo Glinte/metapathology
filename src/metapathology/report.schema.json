@@ -399,6 +399,16 @@
           },
           "type": "array"
         },
+        "returned_finder": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImportObjectJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "search_path": {
           "items": {
             "type": "string"
@@ -1819,7 +1829,7 @@
           "const": 1
         },
         "minor": {
-          "const": 2
+          "const": 3
         },
         "name": {
           "const": "metapathology.report"
@@ -2013,6 +2023,91 @@
         "spec",
         "submodule_search_locations",
         "unavailable_fields"
+      ],
+      "type": "object"
+    },
+    "SpeculativeReplayInfoJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "omitted": {
+          "type": "integer"
+        },
+        "probe_cap": {
+          "type": "integer"
+        },
+        "replays": {
+          "items": {
+            "$ref": "#/$defs/SpeculativeReplayJSON"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "enabled",
+        "omitted",
+        "probe_cap",
+        "replays"
+      ],
+      "type": "object"
+    },
+    "SpeculativeReplayJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_event_ref": {
+          "type": "string"
+        },
+        "diff_event_ref": {
+          "type": "string"
+        },
+        "displaced_finder": {
+          "$ref": "#/$defs/ImportObjectJSON"
+        },
+        "exception_type_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fullname": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "spec": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpecSummaryJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state_phase": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt_event_ref",
+        "diff_event_ref",
+        "displaced_finder",
+        "exception_type_name",
+        "fullname",
+        "outcome",
+        "path",
+        "spec",
+        "state_phase"
       ],
       "type": "object"
     },
@@ -2295,6 +2390,9 @@
       },
       "type": "array"
     },
+    "speculative_replay": {
+      "$ref": "#/$defs/SpeculativeReplayInfoJSON"
+    },
     "standard_resolutions": {
       "items": {
         "$ref": "#/$defs/StandardResolutionJSON"
@@ -2339,6 +2437,7 @@
     "route_comparisons",
     "schema",
     "snapshots",
+    "speculative_replay",
     "standard_resolutions",
     "summary",
     "target_outcome",
