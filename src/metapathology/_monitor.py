@@ -1473,7 +1473,11 @@ class Monitor:
             current_meta_path = sys.meta_path
             expected_meta_path = self._instrumented
             if current_meta_path is not expected_meta_path and expected_meta_path is not None:
-                old_contents = tuple(type_name(finder) for finder in list(expected_meta_path))
+                # expected_meta_path is our own now-orphaned instrumented list
+                # (a third party replaced sys.meta_path), so it cannot be
+                # mutated concurrently and needs no defensive copy;
+                # current_meta_path is the foreign replacement, snapshot once.
+                old_contents = tuple(type_name(finder) for finder in expected_meta_path)
                 new_contents = tuple(type_name(finder) for finder in list(current_meta_path))
                 replacement = _InstrumentedMetaPath(current_meta_path, self)
                 for position, finder in enumerate(list(replacement)):
@@ -1504,7 +1508,9 @@ class Monitor:
             current_sys_path = sys.path
             expected_sys_path = self._instrumented_sys_path
             if self._sys_path_enabled and current_sys_path is not expected_sys_path and expected_sys_path is not None:
-                old_paths = tuple(_path_item_name(item) for item in list(expected_sys_path))
+                # expected_sys_path is our orphaned instrumented list (no
+                # concurrent mutation); current_sys_path is foreign, snapshot once.
+                old_paths = tuple(_path_item_name(item) for item in expected_sys_path)
                 new_paths = tuple(_path_item_name(item) for item in list(current_sys_path))
                 sys_path_replacement = _InstrumentedSysPath(current_sys_path, self)
                 self._instrumented_sys_path = sys_path_replacement
