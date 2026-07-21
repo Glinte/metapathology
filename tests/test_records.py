@@ -1,5 +1,7 @@
 """Public event-record behavior."""
 
+import types
+
 import pytest
 
 from metapathology import ImportAuditStart, ImporterCacheEntry, ImporterCacheReplacement, InternalError, ObjectRef
@@ -31,6 +33,38 @@ def test_object_reference_is_plain_read_only_identity_data() -> None:
     assert not hasattr(reference, "__dict__")
     with pytest.raises(AttributeError, match="read-only"):
         setattr(reference, "name", "changed")
+
+
+def test_object_ref_of_captures_function_name_but_not_plain_object_name() -> None:
+    def path_hook_for_FileFinder(path: str) -> None: ...
+
+    hook_ref = ObjectRef.of(path_hook_for_FileFinder)
+    assert hook_ref.object_id == id(path_hook_for_FileFinder)
+    assert hook_ref.type_name == "function"
+    assert hook_ref.name == "path_hook_for_FileFinder"
+
+    plain = object()
+    plain_ref = ObjectRef.of(plain)
+    assert plain_ref.object_id == id(plain)
+    assert plain_ref.type_name == "object"
+    assert plain_ref.name is None
+
+
+def test_object_ref_of_does_not_dispatch_to_a_spoofed_class_attribute() -> None:
+    class Hostile:
+        touched = False
+
+        @property
+        def __class__(self) -> type:  # type: ignore[override]
+            Hostile.touched = True
+            return types.FunctionType
+
+    hostile = Hostile()
+    reference = ObjectRef.of(hostile)
+
+    assert Hostile.touched is False
+    assert reference.type_name == "Hostile"
+    assert reference.name is None
 
 
 def test_importer_cache_values_distinguish_negative_entries_and_replacements() -> None:

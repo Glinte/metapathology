@@ -242,20 +242,6 @@ def _capture_stack(frame: "FrameType") -> traceback.StackSummary:
     return traceback.StackSummary.extract(traceback.walk_stack(frame), limit=_STACK_CAPTURE_LIMIT, lookup_lines=False)
 
 
-def _object_ref(obj: object) -> ObjectRef:
-    """Reduce an import object to safe identity metadata without foreign dispatch."""
-    name: str | None = None
-    if isinstance(obj, (types.FunctionType, types.BuiltinFunctionType, types.MethodType)):
-        try:
-            raw_name = object.__getattribute__(obj, "__name__")
-        except (AttributeError, TypeError):
-            pass
-        else:
-            if isinstance(raw_name, str):
-                name = raw_name
-    return ObjectRef(object_id=id(obj), type_name=type_name(obj), name=name)
-
-
 def _cache_values_match(left: ObjectRef | None, right: ObjectRef | None) -> bool:
     """Compare captured cache values without relying on record identity equality."""
     if left is None or right is None:
@@ -329,7 +315,7 @@ def _snapshot_importer_cache() -> tuple[
         if finder is None:
             entries[path] = None
             continue
-        reference = _object_ref(finder)
+        reference = ObjectRef.of(finder)
         entries[path] = reference
         finders[reference.object_id] = finder
     return entries, non_string_keys, finders, (id(cache), len(cache))
@@ -499,7 +485,7 @@ class Monitor:
 
     def _current_path_hook_refs(self) -> tuple[ObjectRef, ...]:
         """Copy current path-hook identities for report capture."""
-        return tuple(_object_ref(self._original_path_hook(hook)) for hook in list(sys.path_hooks))
+        return tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in list(sys.path_hooks))
 
     def _original_path_hook(self, hook: object) -> object:
         """Normalize one deep wrapper to the foreign hook it delegates to."""
@@ -799,7 +785,7 @@ class Monitor:
     def _enable_path_hooks(self) -> None:
         """Install the instrumented list around the current ``sys.path_hooks`` contents."""
         contents = list(sys.path_hooks)
-        initial = tuple(_object_ref(hook) for hook in contents)
+        initial = tuple(ObjectRef.of(hook) for hook in contents)
         instrumented = _InstrumentedPathHooks(contents, self)
         with self._record_lock:
             self._observed_path_hooks.update((reference.object_id, hook) for reference, hook in zip(initial, contents))
@@ -1483,8 +1469,8 @@ class Monitor:
             ):
                 old_hooks = tuple(expected_path_hooks)
                 new_hooks = tuple(current_path_hooks)
-                old_hook_contents = tuple(_object_ref(self._original_path_hook(hook)) for hook in old_hooks)
-                new_hook_contents = tuple(_object_ref(self._original_path_hook(hook)) for hook in new_hooks)
+                old_hook_contents = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in old_hooks)
+                new_hook_contents = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in new_hooks)
                 path_replacement = _InstrumentedPathHooks(new_hooks, self)
                 self._instrumented_path_hooks = path_replacement
                 sys.path_hooks = path_replacement
@@ -1932,8 +1918,8 @@ class Monitor:
         try:
             if not self._enabled or not self._path_hooks_enabled or mutated is not self._instrumented_path_hooks:
                 return
-            added_refs = tuple(_object_ref(self._original_path_hook(hook)) for hook in added)
-            removed_refs = tuple(_object_ref(self._original_path_hook(hook)) for hook in removed)
+            added_refs = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in added)
+            removed_refs = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in removed)
             if self._deep_path_hooks:
                 for added_hook in added:
                     if id(added_hook) in self._deep_hook_wrappers:
@@ -1943,7 +1929,7 @@ class Monitor:
                     for index, current in enumerate(mutated):
                         if current is added_hook:
                             list.__setitem__(mutated, index, wrapper)
-            contents_after = tuple(_object_ref(self._original_path_hook(hook)) for hook in list(mutated))
+            contents_after = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in list(mutated))
             observed_hooks = (*added, *removed, *mutated)
             thread_name = threading.current_thread().name
             stack = _capture_stack(frame)

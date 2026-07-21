@@ -67,11 +67,6 @@ class ModuleMetadata:
         return spec_loader if spec_loader is not None else self.module_loader
 
 
-def object_ref(value: object) -> ObjectRef:
-    """Return import-safe identity metadata for an arbitrary object."""
-    return ObjectRef(id(value), type_name(value))
-
-
 def module_cache_state(cache: object, name: str) -> ModuleCacheState:
     """Read one module-cache identity without foreign mapping dispatch.
 
@@ -149,7 +144,7 @@ def safe_module_name(module: object) -> str | None:
 
 def inspect_module(name: str, module: object) -> ModuleMetadata:
     """Capture loader metadata without ordinary module attribute access."""
-    reference = object_ref(module)
+    reference = ObjectRef.of(module)
     namespace, reason = module_namespace(module)
     if namespace is None:
         return ModuleMetadata(
@@ -180,7 +175,7 @@ def inspect_module(name: str, module: object) -> ModuleMetadata:
 
     module_loader_available = "__loader__" in namespace
     raw_module_loader = namespace.get("__loader__")
-    module_loader = None if raw_module_loader is None else object_ref(raw_module_loader)
+    module_loader = None if raw_module_loader is None else ObjectRef.of(raw_module_loader)
     spec_loader = None if summary is None else summary.loader
     loader_source = "spec" if spec_loader is not None else "module" if module_loader is not None else "none"
     agreement = (raw_spec_loader is raw_module_loader) if spec_loader_available and module_loader_available else None

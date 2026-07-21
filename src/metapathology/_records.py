@@ -5,6 +5,8 @@ extracted at capture time. Foreign objects are never repr()'d while an import
 may be in flight; all formatting happens at report time in ``_report``.
 """
 
+import types
+
 # Static analyzers treat this conventional name as true; runtime record users
 # do not need traceback solely to resolve the StackSummary annotation.
 TYPE_CHECKING = False
@@ -99,6 +101,27 @@ class ObjectRef(_Record):
         self._object_id = object_id
         self._type_name = type_name
         self._name = name
+
+    @classmethod
+    def of(cls, obj: object) -> "ObjectRef":
+        """Reduce an arbitrary object to safe identity metadata without foreign dispatch.
+
+        Captures a function/method's ``__name__`` when available (path hooks are
+        plain functions); other objects carry only their id and type name.
+
+        Uses ``type(obj)`` rather than ``isinstance`` so a hostile object's
+        spoofed ``__class__`` cannot trigger foreign dispatch during inspection.
+        """
+        name: str | None = None
+        if type(obj) in (types.FunctionType, types.BuiltinFunctionType, types.MethodType):
+            try:
+                raw_name = object.__getattribute__(obj, "__name__")
+            except (AttributeError, TypeError):
+                pass
+            else:
+                if isinstance(raw_name, str):
+                    name = raw_name
+        return cls(object_id=id(obj), type_name=type_name(obj), name=name)
 
 
 class FinderProtocol(_Record):

@@ -5,20 +5,16 @@ from importlib.machinery import ModuleSpec
 from metapathology._records import ObjectRef, SpecSummary, type_name
 
 
-def _object_ref(value: object) -> ObjectRef:
-    return ObjectRef(id(value), type_name(value))
-
-
 def _safe_value(value: object) -> str | ObjectRef | None:
     if value is None or type(value) is str:
         return value
-    return _object_ref(value)
+    return ObjectRef.of(value)
 
 
 def _safe_location(value: object) -> str | ObjectRef:
     if type(value) is str:
         return value
-    return _object_ref(value)
+    return ObjectRef.of(value)
 
 
 def summarize_spec(
@@ -94,8 +90,8 @@ def summarize_spec(
     safe_origin = _safe_value(origin)
     is_namespace = is_package and origin is None if is_package is not None else None
     summary = SpecSummary(
-        spec=_object_ref(spec),
-        loader=None if loader is None else _object_ref(loader),
+        spec=ObjectRef.of(spec),
+        loader=None if loader is None else ObjectRef.of(loader),
         origin=safe_origin,
         cached=_safe_value(cached),
         is_package=is_package,
