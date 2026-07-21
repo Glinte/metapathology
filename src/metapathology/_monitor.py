@@ -1243,7 +1243,7 @@ class Monitor:
             self._deep_path_entry_finders = False
             self._deep_loaders = False
             for finder, _original, previous in list(self._patched.values()):
-                self._restore_find_spec(finder, previous)
+                self._restore_attribute(finder, "find_spec", previous)
             with self._record_lock:
                 self._patched.clear()
                 self._skipped.clear()
@@ -1259,7 +1259,20 @@ class Monitor:
 
     @staticmethod
     def _restore_attribute(obj: object, name: str, previous: object) -> None:
-        """Restore an instance-dict shadow without invoking foreign setters."""
+        """Restore an instance-dict shadow without invoking foreign setters.
+
+        Idempotent: ``uninstall()`` and a racing instrumentation attempt may both
+        call this for the same object, in either order, converging on the same
+        end state. Uses raw ``__dict__`` access so cleanup removes the exact
+        shadow even if custom attribute dispatch is hostile or has changed since
+        installation, and tolerates the entry already being gone (or the object
+        having no usable ``__dict__``, as with in-progress claims).
+
+        Args:
+            obj: The shadowed (or claimed) object.
+            name: The instance-dict key to reset.
+            previous: The prior value, or ``_MISSING`` if the key was absent.
+        """
         try:
             instance_dict = object.__getattribute__(obj, "__dict__")
             if type(instance_dict) is not dict:
@@ -1615,7 +1628,7 @@ class Monitor:
             # Lost the race with uninstall(): undo the shadow ourselves, outside
             # _record_lock. Idempotent against uninstall()'s own restore in
             # either order.
-            self._restore_find_spec(finder, previous)
+            self._restore_attribute(finder, "find_spec", previous)
 
     def _skip_finder(self, finder_id: int, finder: object, reason: str) -> None:
         """Mark a finder as uninstrumentable, releasing any claim taken by ``_instrument_finder``.
@@ -1656,31 +1669,6 @@ class Monitor:
         with self._record_lock:
             if self._enabled:
                 self._finder_contracts.setdefault(finder_id, contract)
-
-    @staticmethod
-    def _restore_find_spec(finder: object, previous: object) -> None:
-        """Reset a finder's instance-dict ``find_spec`` to its pre-shadowing value.
-
-        Idempotent: ``uninstall()`` and a racing ``_instrument_finder`` may both
-        call this for the same finder, in either order, converging on the same
-        end state. Tolerates the entry already being gone (or the finder having
-        no ``__dict__`` at all, as with in-progress claims).
-
-        Args:
-            finder: The shadowed (or claimed) finder.
-            previous: The prior instance-dict value, or ``_MISSING`` if absent.
-        """
-        try:
-            # Match installation's raw-dict access: cleanup must remove the
-            # exact shadow even if custom attribute dispatch is hostile or has
-            # changed since installation.
-            instance_dict = object.__getattribute__(finder, "__dict__")
-            if previous is _MISSING:
-                del instance_dict["find_spec"]
-            else:
-                instance_dict["find_spec"] = previous
-        except (AttributeError, KeyError, TypeError):
-            pass
 
     def _make_find_spec_wrapper(self, finder_type_name: str, finder_id: int, original: "_FindSpec") -> "_FindSpec":
         """Build the ``find_spec`` replacement that records each call and delegates to the original.
