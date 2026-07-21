@@ -25,6 +25,25 @@ if TYPE_CHECKING:
     ]
 
 
+_MISSING = object()
+
+
+class _OwnedValue(_Record):
+    """A process-global value replaced by one monitor installation."""
+
+    previous: object
+    installed: object
+
+
+class _OwnedAttribute(_Record):
+    """An instance-dict shadow owned by one monitor installation."""
+
+    target: object
+    name: str
+    previous: object
+    installed: object
+
+
 class _ImporterCacheReportState(_Record):
     """Cache evidence copied with the monitor's report cutoff."""
 
