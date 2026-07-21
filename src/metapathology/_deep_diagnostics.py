@@ -136,12 +136,12 @@ class _DeepDiagnostics:
         self._deep_path_entry_finders = True
         for path, finder in list(sys.path_importer_cache.items()):
             if finder is not None:
-                self._instrument_deep_path_entry_finder(finder, path if type(path) is str else None)
+                self.instrument_path_entry_finder(finder, path if type(path) is str else None)
 
     def enable_loaders(self) -> None:
         self._deep_loaders = True
 
-    def _original_path_hook(self, hook: object) -> object:
+    def original_path_hook(self, hook: object) -> object:
         wrapper = self._deep_hook_wrappers.get(id(hook))
         return hook if wrapper is None else wrapper.hook
 
@@ -153,7 +153,7 @@ class _DeepDiagnostics:
         self._deep_hook_wrappers[id(wrapper)] = wrapper
         return wrapper
 
-    def _enable_deep_import_outcomes(self) -> None:
+    def enable_import_outcomes(self) -> None:
         """Install a reversible profiler for the captured CPython import boundary."""
         if sys.getprofile() is not None or threading.getprofile() is not None:
             self._deep_import_outcomes_status = "refused_existing_profiler"
@@ -267,7 +267,7 @@ class _DeepDiagnostics:
                 )
             )
 
-    def _enable_deep_path_hooks(self) -> None:
+    def enable_path_hooks(self) -> None:
         """Replace current path hooks with wrappers only after explicit opt-in."""
         self._deep_path_hooks = True
         for index, hook in enumerate(list(sys.path_hooks)):
@@ -287,7 +287,7 @@ class _DeepDiagnostics:
         """
         return _DeepPathHook(self, hook)
 
-    def _instrument_deep_path_entry_finder(self, finder: object, path: str | None = None) -> None:
+    def instrument_path_entry_finder(self, finder: object, path: str | None = None) -> None:
         """Shadow one mutable path-entry finder's find_spec when requested."""
         if not self._deep_path_entry_finders or id(finder) in self._deep_finder_patches:
             return
@@ -342,7 +342,7 @@ class _DeepDiagnostics:
                         target_state=target_state,
                     )
                     if spec is not None:
-                        self._instrument_deep_loader(safe_spec_loader(spec))
+                        self.instrument_loader(safe_spec_loader(spec))
                     return spec
                 finally:
                     self._deep_local.active = False
@@ -352,7 +352,7 @@ class _DeepDiagnostics:
         except Exception as exc:
             self._record_internal_error("deep_path_entry_finder", exc)
 
-    def _instrument_deep_loader(self, loader: object) -> None:
+    def instrument_loader(self, loader: object) -> None:
         """Shadow one mutable loader's modern lifecycle methods when requested."""
         if loader is None or not self._deep_loaders or id(loader) in self._deep_loader_patches:
             return
@@ -624,7 +624,7 @@ class _DeepPathHook:
                 )
                 raise
             monitor._record_deep_call("path_hook", self._hook_id, self._hook_name, None, path, "returned", None)
-            monitor._instrument_deep_path_entry_finder(finder, path)
+            monitor.instrument_path_entry_finder(finder, path)
             return finder
         finally:
             monitor._deep_local.active = False

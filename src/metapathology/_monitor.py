@@ -67,6 +67,7 @@ if TYPE_CHECKING:
 
     from _typeshed.importlib import PathEntryFinderProtocol
 
+    from metapathology._config import InstallRequest
     from metapathology._monitor_model import DeepImportOutcomesStatus, StandardFinderStatus
     from metapathology._records import MutationOp, SearchPathKind
 
@@ -352,7 +353,7 @@ class Monitor:
 
     def _original_path_hook(self, hook: object) -> object:
         """Normalize one deep wrapper to the foreign hook it delegates to."""
-        return self._deep._original_path_hook(hook)
+        return self._deep.original_path_hook(hook)
 
     @property
     def target_outcome(self) -> "_TargetOutcomeState | None":
@@ -542,54 +543,60 @@ class Monitor:
             for issue in request.issues:
                 self._record_internal_error(issue, ValueError())
             if activate_monitor:
-                if _IMPLEMENTATION_NAME != "cpython":
-                    warnings.warn(_UNSUPPORTED_IMPLEMENTATION_WARNING, RuntimeWarning, stacklevel=3)
-                self.baseline_modules = frozenset(sys.modules)
-                current = sys.meta_path
-                self.initial_meta_path = tuple(type_name(f) for f in current)
-                instrumented = _InstrumentedMetaPath(current, self)
-                # Finder attribute access is foreign code and can import. This
-                # preparation runs outside the lifecycle lock; the active flag
-                # still suppresses same-thread observation of our own work.
-                self._local.active = True
-                try:
-                    for position, finder in enumerate(list(instrumented)):
-                        self._observe_finder_contract(finder, position, "install", None)
-                        self._instrument_finder(finder)
-                finally:
-                    self._local.active = False
-                if not self._audit_installed:
-                    # Audit hooks are irremovable; _audit goes inert when disabled.
-                    sys.addaudithook(self._audit)
-                    self._audit_installed = True
-                with self._lifecycle_condition:
-                    if self._transition_generation != generation:
-                        raise RuntimeError("install transition superseded before commit")
-                    self._instrumented = instrumented
-                    self._meta_path_lease = _OwnedValue(current, instrumented)
-                    sys.meta_path = instrumented
-            if request.monitor_path_hooks and not self._path_hooks_enabled:
-                self._enable_path_hooks()
-            if request.monitor_importer_cache and not self._importer_cache.enabled:
-                self._importer_cache.enable()
-            if request.monitor_sys_path and not self._sys_path_enabled:
-                self._enable_sys_path()
-            if request.deep_path_entry_finders:
-                self._deep.enable_path_entry_finders()
-            if request.deep_loaders:
-                self._deep.enable_loaders()
-            if request.deep_path_hooks and not self._deep.path_hooks_enabled:
-                self._deep._enable_deep_path_hooks()
-            if request.deep_import_outcomes and not self._deep.import_outcomes_enabled:
-                self._deep._enable_deep_import_outcomes()
-            if request.report_at_exit and not self._report_at_exit:
-                self._report_at_exit = True
-                atexit.register(self._atexit_callback)
+                self._activate_core_monitor(generation)
+            self._activate_requested_mechanisms(request)
         finally:
             with self._lifecycle_condition:
                 if self._transition_generation == generation:
                     self._transition_generation = None
                     self._lifecycle_condition.notify_all()
+
+    def _activate_core_monitor(self, generation: int) -> None:
+        """Prepare foreign finder shadows, then commit the core installation."""
+        if _IMPLEMENTATION_NAME != "cpython":
+            warnings.warn(_UNSUPPORTED_IMPLEMENTATION_WARNING, RuntimeWarning, stacklevel=3)
+        self.baseline_modules = frozenset(sys.modules)
+        current = sys.meta_path
+        self.initial_meta_path = tuple(type_name(finder) for finder in current)
+        instrumented = _InstrumentedMetaPath(current, self)
+        # Finder attribute access is foreign code and can import. Preparation
+        # therefore runs outside the lifecycle lock.
+        self._local.active = True
+        try:
+            for position, finder in enumerate(list(instrumented)):
+                self._observe_finder_contract(finder, position, "install", None)
+                self._instrument_finder(finder)
+        finally:
+            self._local.active = False
+        if not self._audit_installed:
+            sys.addaudithook(self._audit)
+            self._audit_installed = True
+        with self._lifecycle_condition:
+            if self._transition_generation != generation:
+                raise RuntimeError("install transition superseded before commit")
+            self._instrumented = instrumented
+            self._meta_path_lease = _OwnedValue(current, instrumented)
+            sys.meta_path = instrumented
+
+    def _activate_requested_mechanisms(self, request: "InstallRequest") -> None:
+        """Enable requested independent mechanisms without disabling active ones."""
+        if request.monitor_path_hooks and not self._path_hooks_enabled:
+            self._enable_path_hooks()
+        if request.monitor_importer_cache and not self._importer_cache.enabled:
+            self._importer_cache.enable()
+        if request.monitor_sys_path and not self._sys_path_enabled:
+            self._enable_sys_path()
+        if request.deep_path_entry_finders:
+            self._deep.enable_path_entry_finders()
+        if request.deep_loaders:
+            self._deep.enable_loaders()
+        if request.deep_path_hooks and not self._deep.path_hooks_enabled:
+            self._deep.enable_path_hooks()
+        if request.deep_import_outcomes and not self._deep.import_outcomes_enabled:
+            self._deep.enable_import_outcomes()
+        if request.report_at_exit and not self._report_at_exit:
+            self._report_at_exit = True
+            atexit.register(self._atexit_callback)
 
     def _enable_path_hooks(self) -> None:
         """Install the instrumented list around the current ``sys.path_hooks`` contents."""
@@ -1161,7 +1168,7 @@ class Monitor:
                 spec_summary, loader = summarize_spec(spec, iterate_foreign_locations=False)
                 if loader is not None:
                     loader_type_name = type_name(loader)
-                    self._deep._instrument_deep_loader(loader)
+                    self._deep.instrument_loader(loader)
                 if type(spec_summary.origin) is str:
                     origin = spec_summary.origin
             found = spec is not None
