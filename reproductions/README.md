@@ -23,12 +23,11 @@ environment installs the current checkout as the `metapathology` command.
 | [mosquito-cfd#22](https://github.com/talmolab/mosquito-cfd/issues/22) | Coverage source discovery imports an eager package and then removes newly loaded NumPy extensions from `sys.modules` | Deep events show a successful `ExtensionFileLoader` load followed by a second failed load of the same extension |
 | [rules_python#2009](https://github.com/bazel-contrib/rules_python/issues/2009) | rules_python moves the directly executed coverage package directory to the end of `sys.path`, where `coverage/python.py` still beats the earlier runfiles namespace | Deep path-entry attribution shows `PathFinder` preferring the later regular module over the PEP 420 namespace candidate |
 | [Bifrost#418](https://github.com/gobifrost/bifrost/issues/418) follow-up | `VirtualModuleFinder` is inserted before every standard finder instead of only before `PathFinder` | The indexed virtual module shadows CPython's frozen `__hello__`; the control preserves `FrozenImporter` precedence |
+| [beartype#599](https://github.com/beartype/beartype/issues/599) / [PyInstaller#9324](https://github.com/pyinstaller/pyinstaller/issues/9324) | `py-key-value-aio`'s `beartype_this_package()` prepends a source-expecting path hook and clears `sys.path_importer_cache` inside a PyInstaller bundle | Frozen-only `ModuleNotFoundError` cascade; metapathology attributes the `sys.path_hooks` prepend and importer-cache churn to `beartype_this_package()` |
 
-Beartype#599 is another confirmed finder-order bug involving PyInstaller's
-frozen importer. It is not included: the failure exists only inside a frozen
-executable, which cannot be placed under the `metapathology` Python command
-without replacing the import environment responsible for the bug.
-
-PyInstaller#9324 has the same limitation: its failure exists inside a frozen
-executable, so running the target under the metapathology interpreter would
-remove the frozen finder interaction being diagnosed.
+The [beartype-pyinstaller-frozen](beartype-pyinstaller-frozen/) reproduction is
+the exception to the "run the target under the `metapathology` command" pattern:
+the failure exists only inside a frozen executable, so it calls
+`metapathology.install()` from inside a real PyInstaller bundle (the documented
+API entry point for when a CLI wrapper is impossible) and writes its report
+before the process exits.

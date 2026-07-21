@@ -1,0 +1,15 @@
+[project]
+name = "beartype-pyinstaller-frozen-repro"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "py-key-value-aio[disk]==0.3.0",
+    "beartype==0.22.8",
+    "pyinstaller==6.17.0",
+]
+
+[tool.uv.sources]
+metapathology = { path = "../../", editable = true }
+
+[dependency-groups]
+dev = ["metapathology"]

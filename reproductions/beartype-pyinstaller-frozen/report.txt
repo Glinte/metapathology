@@ -1,0 +1,75 @@
+== metapathology report ==
+verdict: no import-hook interference detected across 375 monitored imports
+report guide: https://glinte.github.io/metapathology/report/
+monitoring: sys.meta_path, sys.path_hooks, sys.path_importer_cache
+sys.meta_path (unchanged since install): [BuiltinImporter, FrozenImporter, PathFinder]
+sys.path_hooks at install: [zipimporter, method, path_hook_for_FileFinder id 0x1e1d69485e0]
+sys.path_hooks now: [path_hook_for_FileFinder id 0x1e1d7732f20, zipimporter, method, path_hook_for_FileFinder id 0x1e1d69485e0]
+sys.path_importer_cache: 14 -> 14 entries
+standard CPython finders left unwrapped (expected): [BuiltinImporter, FrozenImporter, PathFinder]
+modules imported since install: 375
+paths shown relative to: D:\Code\metapathology\reproductions\beartype-pyinstaller-frozen (that directory itself displays as <project>)
+
+-- findings (0) --
+No import-hook interference detected across 375 monitored imports.
+
+-- imports that started but produced no module (5) --
+Failed optional imports are normal; an entry matters when your program needed the module.
+'key_value.aio.stores.disk': import started at event #362, no finder result was recorded
+'key_value.aio.stores.disk.multi_store': import started at event #364, no finder result was recorded
+'key_value.aio.stores.base': import started at event #380, no finder result was recorded
+'asyncio.locks': import started at event #381, no finder result was recorded
+'asyncio': import started at event #382, no finder result was recorded
+
+-- imports attributed to standard finders (3) --
+Entries marked [inferred] combine import order with module metadata read at report time; the find_spec() call itself was not recorded.
+[inferred] 'key_value': PathFinder produced namespace (loader NamespaceLoader, origin None)
+[inferred] 'beartype._data.claw': PathFinder produced namespace (loader NamespaceLoader, origin None)
+[inferred] 'key_value.shared.type_checking': PathFinder produced namespace (loader NamespaceLoader, origin None)
+
+-- event timeline (383) --
+Events are numbered in the order they were recorded; all ran on thread MainThread.
+sys.meta_path, sys.path_hooks, and sys.path_importer_cache identities stable across all audited imports.
+Runs of routine events are collapsed; the JSON report always lists every event.
+#1-#359: 359 import starts (collapsed)
+#360 sys.path_importer_cache before a sys.path_hooks change: +87
+#361 sys.path_hooks insert: +1 -0
+#362-#382: 21 import starts (collapsed)
+#383 sys.path_importer_cache at report time: +7 -94 ~7
+
+-- sys.path_hooks mutations (1) --
+#361 insert +[path_hook_for_FileFinder id 0x1e1d7732f20]
+    path_hooks after: [path_hook_for_FileFinder id 0x1e1d7732f20, zipimporter, method, path_hook_for_FileFinder id 0x1e1d69485e0]
+    at beartype\claw\_importlib\clawimpmain.py:84 in add_beartype_pathhook
+    at beartype\claw\_package\clawpkgmain.py:177 in hook_packages
+    at beartype\claw\_clawmain.py:301 in beartype_this_package
+    at key_value\aio\__init__.py:13 in <module>
+    at pyimod02_importers.py:457 in exec_module
+
+-- sys.path_importer_cache changes (2) --
+#360 before a sys.path_hooks change
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\beartype' -> PyiFrozenFinder
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\beartype\_cave' -> PyiFrozenFinder
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\beartype\_check' -> PyiFrozenFinder
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\beartype\_check\code' -> PyiFrozenFinder
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\beartype\_check\code\_pep' -> PyiFrozenFinder
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\beartype\_check\code\_pep\pep484585' -> PyiFrozenFinder
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\beartype\_check\code\snip' -> PyiFrozenFinder
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\beartype\_check\convert' -> PyiFrozenFinder
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\beartype\_check\convert\_reduce' -> PyiFrozenFinder
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\beartype\_check\convert\_reduce\_nonpep' -> PyiFrozenFinder
+    ... and 77 more changes; full list in the JSON report
+#383 at report time
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\key_value\aio' -> PyiFrozenFinder
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\key_value\aio\stores' -> PyiFrozenFinder
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\key_value\aio\stores\disk' -> PyiFrozenFinder
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\key_value\shared' -> PyiFrozenFinder
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\key_value\shared\errors' -> PyiFrozenFinder
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\key_value\shared\type_checking' -> PyiFrozenFinder
+    + 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\key_value\shared\utils' -> PyiFrozenFinder
+    - 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\base_library.zip\collections' -> zipimporter
+    - 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\base_library.zip\encodings' -> zipimporter
+    - 'C:\Users\ACER\AppData\Local\Temp\_MEI284602\base_library.zip\re' -> zipimporter
+    ... and 98 more changes; full list in the JSON report
+
+Nothing was recorded for: finder calls, sys.meta_path mutations, sys.meta_path reassignments, sys.path_hooks reassignments, internal errors.
