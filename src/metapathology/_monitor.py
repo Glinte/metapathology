@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from importlib.machinery import ModuleSpec
     from os import PathLike
     from types import FrameType, ModuleType
-    from typing import Any, Literal, Protocol, SupportsIndex, TextIO, TypeVar, overload
+    from typing import Any, Concatenate, Literal, ParamSpec, Protocol, SupportsIndex, TextIO, TypeVar, overload
     from typing import cast as _cast
 
     from _typeshed import SupportsRichComparison
@@ -86,6 +86,7 @@ if TYPE_CHECKING:
 
     _FindSpec = Callable[[str, Sequence[str] | None, ModuleType | None], ModuleSpec | None]
     _ProfileFunction = Callable[[FrameType, str, object], object]
+    _CallbackP = ParamSpec("_CallbackP")
     _ImportListItemT = TypeVar("_ImportListItemT")
     _MetaPathEntry = MetaPathFinderProtocol
     _PathHook = Callable[[str], PathEntryFinderProtocol]
@@ -402,6 +403,31 @@ def _snapshot_importer_cache() -> tuple[
 def _path_item_name(item: object) -> str:
     """Reduce a path item without invoking a foreign string conversion."""
     return item if type(item) is str else f"<{type_name(item)}>"
+
+
+def _guard_monitor_callback(
+    error_where: str,
+) -> "Callable[[Callable[Concatenate[Monitor, _CallbackP], None]], Callable[Concatenate[Monitor, _CallbackP], None]]":
+    """Guard a monitor callback against re-entry and ordinary failures."""
+
+    def decorate(
+        callback: "Callable[Concatenate[Monitor, _CallbackP], None]",
+    ) -> "Callable[Concatenate[Monitor, _CallbackP], None]":
+        @functools.wraps(callback)
+        def guarded(self: "Monitor", *args: "_CallbackP.args", **kwargs: "_CallbackP.kwargs") -> None:
+            if self._local.active:
+                return
+            self._local.active = True
+            try:
+                callback(self, *args, **kwargs)
+            except Exception as exc:
+                self._record_internal_error(error_where, exc)
+            finally:
+                self._local.active = False
+
+        return guarded
+
+    return decorate
 
 
 class Monitor:
@@ -1374,45 +1400,41 @@ class Monitor:
         """
         if event != "import" or not self._enabled:
             return
-        if self._local.active:
+        self._on_import_audit(args)
+
+    @_guard_monitor_callback("audit_hook")
+    def _on_import_audit(self, args: tuple[object, ...]) -> None:
+        """Record one import boundary and recover replaced import lists."""
+        fullname = _audit_resolution_name(args)
+        if fullname is None:
+            self._check_importer_cache_fingerprint()
+        else:
+            current_meta_path = sys.meta_path
+            meta_path_id = id(current_meta_path)
+            meta_path_type_names = tuple(type_name(finder) for finder in list(current_meta_path))
+            path_hooks_id = id(sys.path_hooks) if self._path_hooks_enabled else None
+            cache_fingerprint: tuple[int, int] | None = None
+            if self._importer_cache_enabled:
+                cache = sys.path_importer_cache
+                cache_fingerprint = (id(cache), len(cache))
+            self._record_import_audit_start(
+                fullname,
+                meta_path_id,
+                meta_path_type_names,
+                path_hooks_id,
+                cache_fingerprint,
+            )
+        meta_path_current = sys.meta_path is self._instrumented
+        path_hooks_current = not self._path_hooks_enabled or sys.path_hooks is self._instrumented_path_hooks
+        sys_path_current = not self._sys_path_enabled or sys.path is self._instrumented_sys_path
+        if meta_path_current and path_hooks_current and sys_path_current:
             return
-        self._local.active = True
-        try:
-            fullname = _audit_resolution_name(args)
-            if fullname is None:
-                self._check_importer_cache_fingerprint()
-            else:
-                current_meta_path = sys.meta_path
-                meta_path_id = id(current_meta_path)
-                meta_path_type_names = tuple(type_name(finder) for finder in list(current_meta_path))
-                path_hooks_id = id(sys.path_hooks) if self._path_hooks_enabled else None
-                cache_fingerprint: tuple[int, int] | None = None
-                if self._importer_cache_enabled:
-                    cache = sys.path_importer_cache
-                    cache_fingerprint = (id(cache), len(cache))
-                self._record_import_audit_start(
-                    fullname,
-                    meta_path_id,
-                    meta_path_type_names,
-                    path_hooks_id,
-                    cache_fingerprint,
-                )
-            meta_path_current = sys.meta_path is self._instrumented
-            path_hooks_current = not self._path_hooks_enabled or sys.path_hooks is self._instrumented_path_hooks
-            sys_path_current = not self._sys_path_enabled or sys.path is self._instrumented_sys_path
-            if meta_path_current and path_hooks_current and sys_path_current:
-                return
-            # Installation publishes several independently toggleable hooks.
-            # Recovery must not wait on or reinterpret that intentional
-            # intermediate state as a third-party reassignment.
-            if self._transition_generation is not None:
-                return
-            self._recover_reassignments(args)
-        except Exception as exc:
-            # An exception escaping an audit hook aborts the user's import.
-            self._record_internal_error("audit_hook", exc)
-        finally:
-            self._local.active = False
+        # Installation publishes several independently toggleable hooks.
+        # Recovery must not wait on or reinterpret that intentional
+        # intermediate state as a third-party reassignment.
+        if self._transition_generation is not None:
+            return
+        self._recover_reassignments(args)
 
     def _record_import_audit_start(
         self,
@@ -1922,6 +1944,7 @@ class Monitor:
         except Exception as exc:
             self._record_internal_error("record_find_spec", exc)
 
+    @_guard_monitor_callback("meta_path_mutation")
     def _on_meta_path_mutation(
         self,
         mutated: "_InstrumentedMetaPath",
@@ -1942,45 +1965,38 @@ class Monitor:
             removed: Finders the mutation removed.
             frame: The mutator's caller, where the stack capture starts.
         """
-        if self._local.active:
+        if not self._enabled:
             return
-        self._local.active = True
-        try:
-            if not self._enabled:
-                return
-            added_names = tuple(type_name(f) for f in added)
-            removed_names = tuple(type_name(f) for f in removed)
-            contents_after = tuple(type_name(f) for f in list(mutated))
-            thread_name = threading.current_thread().name
-            stack = _capture_stack(frame)
-            with self._record_lock:
-                self._seq += 1
-                mutation_seq = self._seq
-                self._events.append(
-                    MetaPathMutation(
-                        seq=self._seq,
-                        op=op,
-                        added=added_names,
-                        removed=removed_names,
-                        contents_after=contents_after,
-                        thread_name=thread_name,
-                        stack=stack,
-                    )
+        added_names = tuple(type_name(f) for f in added)
+        removed_names = tuple(type_name(f) for f in removed)
+        contents_after = tuple(type_name(f) for f in list(mutated))
+        thread_name = threading.current_thread().name
+        stack = _capture_stack(frame)
+        with self._record_lock:
+            self._seq += 1
+            mutation_seq = self._seq
+            self._events.append(
+                MetaPathMutation(
+                    seq=self._seq,
+                    op=op,
+                    added=added_names,
+                    removed=removed_names,
+                    contents_after=contents_after,
+                    thread_name=thread_name,
+                    stack=stack,
                 )
-            positions = {id(finder): position for position, finder in enumerate(list(mutated))}
-            for finder in added:
-                self._observe_finder_contract(
-                    finder,
-                    positions.get(id(finder), -1),
-                    "mutation",
-                    mutation_seq,
-                )
-                self._instrument_finder(finder)
-        except Exception as exc:
-            self._record_internal_error("meta_path_mutation", exc)
-        finally:
-            self._local.active = False
+            )
+        positions = {id(finder): position for position, finder in enumerate(list(mutated))}
+        for finder in added:
+            self._observe_finder_contract(
+                finder,
+                positions.get(id(finder), -1),
+                "mutation",
+                mutation_seq,
+            )
+            self._instrument_finder(finder)
 
+    @_guard_monitor_callback("path_hooks_mutation")
     def _on_path_hooks_mutation(
         self,
         mutated: "_InstrumentedPathHooks",
@@ -1990,66 +2006,51 @@ class Monitor:
         frame: "FrameType",
     ) -> None:
         """Record a ``sys.path_hooks`` mutation without invoking any hook."""
-        if self._local.active:
+        if not self._enabled or not self._path_hooks_enabled or mutated is not self._instrumented_path_hooks:
             return
-        self._local.active = True
-        try:
-            if not self._enabled or not self._path_hooks_enabled or mutated is not self._instrumented_path_hooks:
+        added_refs = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in added)
+        removed_refs = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in removed)
+        if self._deep_path_hooks:
+            for added_hook in added:
+                if id(added_hook) in self._deep_hook_wrappers:
+                    continue
+                wrapper = self._make_deep_path_hook(_cast("_PathHook", added_hook))
+                self._deep_hook_wrappers[id(wrapper)] = wrapper
+                for index, current in enumerate(mutated):
+                    if current is added_hook:
+                        list.__setitem__(mutated, index, wrapper)
+        contents_after = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in list(mutated))
+        observed_hooks = (*added, *removed, *mutated)
+        thread_name = threading.current_thread().name
+        stack = _capture_stack(frame)
+        with self._record_lock:
+            # Uninstall may have completed while this callback was reducing
+            # plain data. Do not retain hooks or append a late record.
+            if not self._enabled or not self._path_hooks_enabled:
                 return
-            added_refs = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in added)
-            removed_refs = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in removed)
-            if self._deep_path_hooks:
-                for added_hook in added:
-                    if id(added_hook) in self._deep_hook_wrappers:
-                        continue
-                    wrapper = self._make_deep_path_hook(_cast("_PathHook", added_hook))
-                    self._deep_hook_wrappers[id(wrapper)] = wrapper
-                    for index, current in enumerate(mutated):
-                        if current is added_hook:
-                            list.__setitem__(mutated, index, wrapper)
-            contents_after = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in list(mutated))
-            observed_hooks = (*added, *removed, *mutated)
-            thread_name = threading.current_thread().name
-            stack = _capture_stack(frame)
-            with self._record_lock:
-                # Uninstall may have completed while this callback was
-                # reducing plain data. Do not retain hooks or append a late
-                # record after cleanup.
-                if not self._enabled or not self._path_hooks_enabled:
-                    return
-                self._observed_path_hooks.update((id(hook), hook) for hook in observed_hooks)
-                self._seq += 1
-                self._events.append(
-                    PathHooksMutation(
-                        seq=self._seq,
-                        op=op,
-                        added=added_refs,
-                        removed=removed_refs,
-                        contents_after=contents_after,
-                        thread_name=thread_name,
-                        stack=stack,
-                    )
+            self._observed_path_hooks.update((id(hook), hook) for hook in observed_hooks)
+            self._seq += 1
+            self._events.append(
+                PathHooksMutation(
+                    seq=self._seq,
+                    op=op,
+                    added=added_refs,
+                    removed=removed_refs,
+                    contents_after=contents_after,
+                    thread_name=thread_name,
+                    stack=stack,
                 )
-            self._observe_importer_cache("after_path_hooks_mutation")
-        except Exception as exc:
-            self._record_internal_error("path_hooks_mutation", exc)
-        finally:
-            self._local.active = False
+            )
+        self._observe_importer_cache("after_path_hooks_mutation")
 
+    @_guard_monitor_callback("importer_cache_before_path_hooks_mutation")
     def _on_path_hooks_before_mutation(self, mutated: "_InstrumentedPathHooks") -> None:
         """Observe the importer cache immediately before a live path-hook list operation."""
-        if self._local.active:
+        if not self._enabled or not self._path_hooks_enabled or mutated is not self._instrumented_path_hooks:
             return
-        self._local.active = True
-        try:
-            if not self._enabled or not self._path_hooks_enabled or mutated is not self._instrumented_path_hooks:
-                return
-            self._observe_importer_cache("before_path_hooks_mutation")
-        except Exception as exc:
-            self._record_internal_error("importer_cache_before_path_hooks_mutation", exc)
-        finally:
-            self._local.active = False
+        self._observe_importer_cache("before_path_hooks_mutation")
 
+    @_guard_monitor_callback("sys_path_mutation")
     def _on_sys_path_mutation(
         self,
         mutated: "_InstrumentedSysPath",
@@ -2059,36 +2060,28 @@ class Monitor:
         frame: "FrameType",
     ) -> None:
         """Record one opt-in ``sys.path`` list mutation using plain values."""
-        if self._local.active:
+        if not self._enabled or not self._sys_path_enabled or mutated is not self._instrumented_sys_path:
             return
-        self._local.active = True
-        try:
-            if not self._enabled or not self._sys_path_enabled or mutated is not self._instrumented_sys_path:
+        added_paths = tuple(_path_item_name(item) for item in added)
+        removed_paths = tuple(_path_item_name(item) for item in removed)
+        contents_after = tuple(_path_item_name(item) for item in list(mutated))
+        thread_name = threading.current_thread().name
+        stack = _capture_stack(frame)
+        with self._record_lock:
+            if not self._enabled or not self._sys_path_enabled:
                 return
-            added_paths = tuple(_path_item_name(item) for item in added)
-            removed_paths = tuple(_path_item_name(item) for item in removed)
-            contents_after = tuple(_path_item_name(item) for item in list(mutated))
-            thread_name = threading.current_thread().name
-            stack = _capture_stack(frame)
-            with self._record_lock:
-                if not self._enabled or not self._sys_path_enabled:
-                    return
-                self._seq += 1
-                self._events.append(
-                    SysPathMutation(
-                        self._seq,
-                        op,
-                        added_paths,
-                        removed_paths,
-                        contents_after,
-                        thread_name,
-                        stack,
-                    )
+            self._seq += 1
+            self._events.append(
+                SysPathMutation(
+                    self._seq,
+                    op,
+                    added_paths,
+                    removed_paths,
+                    contents_after,
+                    thread_name,
+                    stack,
                 )
-        except Exception as exc:
-            self._record_internal_error("sys_path_mutation", exc)
-        finally:
-            self._local.active = False
+            )
 
     def _record_internal_error(self, where: str, exc: BaseException) -> None:
         """Record an exception raised by our own instrumentation instead of letting it escape.
