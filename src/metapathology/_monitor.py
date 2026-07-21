@@ -414,6 +414,9 @@ class Monitor:
         # Serializes install/uninstall/reinstall. Lock order: _reinstall_lock
         # may be held while taking _record_lock, never the other way around.
         self._reinstall_lock = threading.Lock()
+        self._lifecycle_condition = threading.Condition(self._reinstall_lock)
+        self._lifecycle_generation = 0
+        self._transition_generation: int | None = None
         # Per-thread re-entrancy flag around every hook and wrapper. Nested
         # imports still run normally, but our instrumentation delegates without
         # trying to observe itself recursively.
@@ -739,7 +742,9 @@ class Monitor:
         report_configuration_explicit = (
             report_destination is not None or report_format is not None or report_color is not None
         )
-        with self._reinstall_lock:
+        with self._lifecycle_condition:
+            while self._transition_generation is not None:
+                self._lifecycle_condition.wait()
             was_enabled = self._enabled
             request = resolve_install_request(
                 report_at_exit=report_at_exit,
@@ -761,27 +766,30 @@ class Monitor:
                 current_report_format=self._report_format,
                 current_report_color=self._report_color,
             )
+            self._lifecycle_generation += 1
+            generation = self._lifecycle_generation
+            self._transition_generation = generation
+            activate_monitor = not self._enabled
+            if activate_monitor:
+                self._enabled = True
+            self._report_destination = request.report_destination
+            self._report_format = request.report_format
+            self._report_color = request.report_color
+        try:
             # Explicit errors were raised by the resolver before this point.
             # Invalid environment values are retained as plain diagnostics.
             for issue in request.issues:
                 self._record_internal_error(issue, ValueError())
-            self._report_destination = request.report_destination
-            self._report_format = request.report_format
-            self._report_color = request.report_color
-            if not self._enabled:
+            if activate_monitor:
                 if _IMPLEMENTATION_NAME != "cpython":
                     warnings.warn(_UNSUPPORTED_IMPLEMENTATION_WARNING, RuntimeWarning, stacklevel=3)
-                self._enabled = True
                 self._baseline_modules = frozenset(sys.modules)
                 current = sys.meta_path
                 self._initial_meta_path = tuple(type_name(f) for f in current)
                 instrumented = _InstrumentedMetaPath(current, self)
-                # Instrumenting a finder runs foreign code (its find_spec
-                # attribute access can import); on a reinstall the audit hook
-                # is already live and would see a stale self._instrumented and
-                # deadlock re-entering _reinstall_lock. The active flag makes
-                # the hook a no-op on this thread, like every other caller of
-                # _instrument_finder.
+                # Finder attribute access is foreign code and can import. This
+                # preparation runs outside the lifecycle lock; the active flag
+                # still suppresses same-thread observation of our own work.
                 self._local.active = True
                 try:
                     for position, finder in enumerate(list(instrumented)):
@@ -789,13 +797,16 @@ class Monitor:
                         self._instrument_finder(finder)
                 finally:
                     self._local.active = False
-                self._instrumented = instrumented
-                self._meta_path_lease = _OwnedValue(current, instrumented)
-                sys.meta_path = instrumented
                 if not self._audit_installed:
                     # Audit hooks are irremovable; _audit goes inert when disabled.
                     sys.addaudithook(self._audit)
                     self._audit_installed = True
+                with self._lifecycle_condition:
+                    if self._transition_generation != generation:
+                        raise RuntimeError("install transition superseded before commit")
+                    self._instrumented = instrumented
+                    self._meta_path_lease = _OwnedValue(current, instrumented)
+                    sys.meta_path = instrumented
             if request.monitor_path_hooks and not self._path_hooks_enabled:
                 self._enable_path_hooks()
             if request.monitor_importer_cache and not self._importer_cache_enabled:
@@ -813,9 +824,14 @@ class Monitor:
                 self._enable_deep_path_hooks()
             if request.deep_import_outcomes and not self._deep_import_outcomes:
                 self._enable_deep_import_outcomes()
-        if request.report_at_exit and not self._report_at_exit:
-            self._report_at_exit = True
-            atexit.register(self._atexit_callback)
+            if request.report_at_exit and not self._report_at_exit:
+                self._report_at_exit = True
+                atexit.register(self._atexit_callback)
+        finally:
+            with self._lifecycle_condition:
+                if self._transition_generation == generation:
+                    self._transition_generation = None
+                    self._lifecycle_condition.notify_all()
 
     def _enable_path_hooks(self) -> None:
         """Install the instrumented list around the current ``sys.path_hooks`` contents."""
@@ -1241,7 +1257,9 @@ class Monitor:
 
     def uninstall(self) -> None:
         """Restore plain import lists and unshadow all finders (idempotent)."""
-        with self._reinstall_lock:
+        with self._lifecycle_condition:
+            while self._transition_generation is not None:
+                self._lifecycle_condition.wait()
             if not self._enabled:
                 return
             self._observe_importer_cache("uninstall")
@@ -1404,6 +1422,11 @@ class Monitor:
             sys_path_current = not self._sys_path_enabled or sys.path is self._instrumented_sys_path
             if meta_path_current and path_hooks_current and sys_path_current:
                 return
+            # Installation publishes several independently toggleable hooks.
+            # Recovery must not wait on or reinterpret that intentional
+            # intermediate state as a third-party reassignment.
+            if self._transition_generation is not None:
+                return
             self._recover_reassignments(args)
         except Exception as exc:
             # An exception escaping an audit hook aborts the user's import.
@@ -1536,7 +1559,7 @@ class Monitor:
         path_hooks_data: tuple[tuple[ObjectRef, ...], tuple[ObjectRef, ...]] | None = None
         sys_path_data: tuple[tuple[str, ...], tuple[str, ...]] | None = None
         with self._reinstall_lock:
-            if not self._enabled:
+            if not self._enabled or self._transition_generation is not None:
                 return
             current_meta_path = sys.meta_path
             expected_meta_path = self._instrumented

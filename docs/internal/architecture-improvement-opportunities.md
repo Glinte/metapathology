@@ -27,6 +27,13 @@ Add a deterministic subprocess regression that coordinates two threads and a
 CPython module lock. The existing lazy-attribute regression covers same-thread
 re-entry but not the cross-thread lock order.
 
+Status: complete. Install claims a numbered transition under the lifecycle
+condition, performs finder and mechanism activation outside the lifecycle
+lock, and verifies the generation before committing the prepared meta-path
+installation. Audit recovery records the import boundary but does not wait on
+or reinterpret an in-progress transition. A subprocess regression exercises
+the former cross-thread ABBA ordering with a real CPython module lock.
+
 ## 2. Model process-global hooks as owned leases
 
 Every installed global resource should record both the value it replaced and

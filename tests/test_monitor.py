@@ -2,6 +2,7 @@
 
 import subprocess
 from collections.abc import Callable
+from pathlib import Path
 
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
@@ -904,6 +905,72 @@ def test_reinstall_with_lazy_find_spec_attribute_does_not_deadlock(run_python: R
     proc = run_python(LAZY_ATTRIBUTE_REINSTALL)
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout
+
+
+CROSS_THREAD_LIFECYCLE_LOCK_ORDER = """
+import importlib._bootstrap as bootstrap
+import sys
+import threading
+
+import metapathology
+
+sys.path.insert(0, sys.argv[1])
+metapathology.install(report_at_exit=False)
+metapathology.uninstall()
+
+finder_started = threading.Event()
+module_lock_held = threading.Event()
+failures = []
+
+class LazyFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        return None
+
+    def __getattribute__(self, name):
+        if name == "find_spec" and threading.current_thread().name == "installer":
+            finder_started.set()
+            import blocked_dependency
+        return object.__getattribute__(self, name)
+
+sys.meta_path.insert(0, LazyFinder())
+
+def import_while_holding_module_lock():
+    lock = bootstrap._get_module_lock("blocked_dependency")
+    lock.acquire()
+    module_lock_held.set()
+    try:
+        assert finder_started.wait(5)
+        import audit_probe
+    except BaseException as exc:
+        failures.append(exc)
+    finally:
+        lock.release()
+
+holder = threading.Thread(target=import_while_holding_module_lock, name="module-lock-holder", daemon=True)
+holder.start()
+assert module_lock_held.wait(5)
+installer = threading.Thread(
+    target=metapathology.install,
+    kwargs={"report_at_exit": False},
+    name="installer",
+    daemon=True,
+)
+installer.start()
+installer.join(5)
+holder.join(5)
+assert not installer.is_alive(), "installer waited for a module lock while holding the lifecycle lock"
+assert not holder.is_alive(), "audit recovery waited for the lifecycle lock while holding a module lock"
+assert not failures, failures
+print("OK")
+"""
+
+
+def test_install_does_not_hold_lifecycle_lock_across_finder_access(run_python: RunPython, tmp_path: Path) -> None:
+    (tmp_path / "blocked_dependency.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "audit_probe.py").write_text("VALUE = 1\n", encoding="utf-8")
+    proc = run_python(CROSS_THREAD_LIFECYCLE_LOCK_ORDER, str(tmp_path))
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
 
 
 # install() shadows find_spec with setattr(), which lands in the slot, but
