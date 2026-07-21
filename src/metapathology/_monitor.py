@@ -20,6 +20,7 @@ from contextlib import suppress
 from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 
 from metapathology import _report
+from metapathology._config import normalize_report_destination, resolve_install_request
 from metapathology._module_metadata import module_cache_state, safe_module_name, safe_spec_loader, safe_spec_name
 from metapathology._records import (
     DeepDiagnosticCall,
@@ -87,19 +88,6 @@ _SEARCH_PATH_CACHE_SIZE = 8
 _MISSING = object()
 _STANDARD_CLASS_FINDERS = (BuiltinImporter, FrozenImporter, PathFinder)
 _STANDARD_CLASS_FINDER_REASON = "standard CPython class finder; expected and deliberately left unchanged"
-_REPORT_DESTINATION_ENV = "METAPATHOLOGY_REPORT"
-_REPORT_FORMAT_ENV = "METAPATHOLOGY_REPORT_FORMAT"
-_REPORT_COLOR_ENV = "METAPATHOLOGY_COLOR"
-_MONITOR_PATH_HOOKS_ENV = "METAPATHOLOGY_MONITOR_PATH_HOOKS"
-_MONITOR_IMPORTER_CACHE_ENV = "METAPATHOLOGY_MONITOR_IMPORTER_CACHE"
-_MONITOR_SYS_PATH_ENV = "METAPATHOLOGY_MONITOR_SYS_PATH"
-_DEEP_ENV = "METAPATHOLOGY_DEEP"
-_DEEP_PATH_HOOKS_ENV = "METAPATHOLOGY_DEEP_PATH_HOOKS"
-_DEEP_PATH_ENTRY_FINDERS_ENV = "METAPATHOLOGY_DEEP_PATH_ENTRY_FINDERS"
-_DEEP_LOADERS_ENV = "METAPATHOLOGY_DEEP_LOADERS"
-_DEEP_IMPORT_OUTCOMES_ENV = "METAPATHOLOGY_DEEP_IMPORT_OUTCOMES"
-_TRUE_ENV_VALUES = frozenset(("1", "true", "yes", "on"))
-_FALSE_ENV_VALUES = frozenset(("0", "false", "no", "off"))
 _IMPLEMENTATION_NAME = sys.implementation.name
 _UNSUPPORTED_IMPLEMENTATION_WARNING = (
     f"metapathology supports CPython only; monitoring on {_IMPLEMENTATION_NAME!r} may be incomplete or inaccurate"
@@ -668,22 +656,41 @@ class Monitor:
             deep_loaders: Shadow mutable loader lifecycle methods.
             deep_import_outcomes: Profile CPython's complete import boundary.
         """
-        deep = self._resolve_bool(deep, _DEEP_ENV, False)
-        monitor_path_hooks = self._resolve_bool(monitor_path_hooks, _MONITOR_PATH_HOOKS_ENV, True)
-        monitor_importer_cache = self._resolve_bool(monitor_importer_cache, _MONITOR_IMPORTER_CACHE_ENV, True)
-        monitor_sys_path = self._resolve_bool(monitor_sys_path, _MONITOR_SYS_PATH_ENV, deep)
-        deep_path_hooks = self._resolve_bool(deep_path_hooks, _DEEP_PATH_HOOKS_ENV, deep)
-        deep_path_entry_finders = self._resolve_bool(deep_path_entry_finders, _DEEP_PATH_ENTRY_FINDERS_ENV, deep)
-        deep_loaders = self._resolve_bool(deep_loaders, _DEEP_LOADERS_ENV, deep)
-        deep_import_outcomes = self._resolve_bool(deep_import_outcomes, _DEEP_IMPORT_OUTCOMES_ENV, deep)
+        # os.fspath() may execute foreign code. Reduce it before taking the
+        # lifecycle lock; the resolver receives plain values only.
+        normalized_destination = normalize_report_destination(report_destination)
+        report_configuration_explicit = (
+            report_destination is not None or report_format is not None or report_color is not None
+        )
         with self._reinstall_lock:
             was_enabled = self._enabled
-            # Validate explicit output configuration before touching import
-            # state so a caller error cannot leave a partially installed monitor.
-            if not was_enabled:
-                self._configure_report(report_destination, report_format, report_color, use_environment=True)
-            elif report_destination is not None or report_format is not None or report_color is not None:
-                self._configure_report(report_destination, report_format, report_color, use_environment=False)
+            request = resolve_install_request(
+                report_at_exit=report_at_exit,
+                report_destination=normalized_destination,
+                report_destination_explicit=report_destination is not None,
+                report_format=report_format,
+                report_color=report_color,
+                monitor_path_hooks=monitor_path_hooks,
+                monitor_importer_cache=monitor_importer_cache,
+                monitor_sys_path=monitor_sys_path,
+                deep=deep,
+                deep_path_hooks=deep_path_hooks,
+                deep_path_entry_finders=deep_path_entry_finders,
+                deep_loaders=deep_loaders,
+                deep_import_outcomes=deep_import_outcomes,
+                use_environment=not was_enabled,
+                configure_report=not was_enabled or report_configuration_explicit,
+                current_report_destination=self._report_destination,
+                current_report_format=self._report_format,
+                current_report_color=self._report_color,
+            )
+            # Explicit errors were raised by the resolver before this point.
+            # Invalid environment values are retained as plain diagnostics.
+            for issue in request.issues:
+                self._record_internal_error(issue, ValueError())
+            self._report_destination = request.report_destination
+            self._report_format = request.report_format
+            self._report_color = request.report_color
             if not self._enabled:
                 if _IMPLEMENTATION_NAME != "cpython":
                     warnings.warn(_UNSUPPORTED_IMPLEMENTATION_WARNING, RuntimeWarning, stacklevel=3)
@@ -711,95 +718,26 @@ class Monitor:
                     # Audit hooks are irremovable; _audit goes inert when disabled.
                     sys.addaudithook(self._audit)
                     self._audit_installed = True
-            if monitor_path_hooks and not self._path_hooks_enabled:
+            if request.monitor_path_hooks and not self._path_hooks_enabled:
                 self._enable_path_hooks()
-            if monitor_importer_cache and not self._importer_cache_enabled:
+            if request.monitor_importer_cache and not self._importer_cache_enabled:
                 self._enable_importer_cache()
-            if monitor_sys_path and not self._sys_path_enabled:
+            if request.monitor_sys_path and not self._sys_path_enabled:
                 self._enable_sys_path()
-            if deep_path_entry_finders:
+            if request.deep_path_entry_finders:
                 self._deep_path_entry_finders = True
                 for path, finder in list(sys.path_importer_cache.items()):
                     if finder is not None:
                         self._instrument_deep_path_entry_finder(finder, path if type(path) is str else None)
-            if deep_loaders:
+            if request.deep_loaders:
                 self._deep_loaders = True
-            if deep_path_hooks and not self._deep_path_hooks:
+            if request.deep_path_hooks and not self._deep_path_hooks:
                 self._enable_deep_path_hooks()
-            if deep_import_outcomes and not self._deep_import_outcomes:
+            if request.deep_import_outcomes and not self._deep_import_outcomes:
                 self._enable_deep_import_outcomes()
-        if report_at_exit and not self._report_at_exit:
+        if request.report_at_exit and not self._report_at_exit:
             self._report_at_exit = True
             atexit.register(self._report_atexit)
-
-    def _resolve_bool(self, explicit: bool | None, environment_name: str, default: bool) -> bool:
-        """Resolve one explicit/environment/default boolean without raising."""
-        if explicit is not None:
-            return explicit
-        raw = os.environ.get(environment_name)
-        if raw is None:
-            return default
-        normalized = raw.strip().lower()
-        if normalized in _TRUE_ENV_VALUES:
-            return True
-        if normalized in _FALSE_ENV_VALUES:
-            return False
-        self._record_internal_error(f"environment_configuration.{environment_name}", ValueError())
-        return default
-
-    def _configure_report(
-        self,
-        destination: "str | PathLike[str] | None",
-        format: "Literal['text', 'json'] | None",
-        color: "Literal['auto', 'always', 'never'] | None",
-        *,
-        use_environment: bool,
-    ) -> None:
-        """Resolve explicit and environment-backed automatic report settings."""
-        resolved_destination: str | None
-        if destination is not None:
-            path = os.fspath(destination)
-            if not isinstance(path, str):
-                raise TypeError("report destinations must resolve to str, not bytes")
-            resolved_destination = path
-        elif use_environment:
-            environment_path = os.environ.get(_REPORT_DESTINATION_ENV)
-            resolved_destination = environment_path or None
-        else:
-            resolved_destination = self._report_destination
-
-        resolved_format: str | None = format
-        from_environment = False
-        if resolved_format is None and use_environment:
-            resolved_format = os.environ.get(_REPORT_FORMAT_ENV) or None
-            from_environment = resolved_format is not None
-        if resolved_format is None:
-            resolved_format = "json" if resolved_destination is not None else "text"
-        try:
-            validated_format = _report.validate_format(resolved_format)
-        except ValueError as exc:
-            if not from_environment:
-                raise
-            validated_format: Literal["text", "json"] = "json" if resolved_destination is not None else "text"
-            self._record_internal_error("report_configuration", exc)
-
-        resolved_color: str | None = color
-        color_from_environment = False
-        if resolved_color is None and use_environment:
-            resolved_color = os.environ.get(_REPORT_COLOR_ENV) or None
-            color_from_environment = resolved_color is not None
-        if resolved_color is None:
-            resolved_color = "auto" if use_environment else self._report_color
-        try:
-            validated_color = _report.validate_color(resolved_color)
-        except ValueError as exc:
-            if not color_from_environment:
-                raise
-            validated_color: Literal["auto", "always", "never"] = "auto"
-            self._record_internal_error(f"environment_configuration.{_REPORT_COLOR_ENV}", exc)
-        self._report_destination = resolved_destination
-        self._report_format = validated_format
-        self._report_color = validated_color
 
     def _enable_path_hooks(self) -> None:
         """Install the instrumented list around the current ``sys.path_hooks`` contents."""

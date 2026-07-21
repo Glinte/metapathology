@@ -11,6 +11,8 @@ import sys
 import tempfile
 from contextlib import suppress
 
+from metapathology._config import validate_report_color as validate_color
+from metapathology._config import validate_report_format as validate_format
 from metapathology._records import type_name
 from metapathology._report_data import capture_document, failed_json_document, json_document
 from metapathology._report_text import render_failure_lines, render_lines
@@ -27,26 +29,6 @@ if TYPE_CHECKING:
 
     _ColorMode = Literal["auto", "always", "never"]
     _ReportFormat = Literal["text", "json"]
-
-
-_REPORT_FORMATS = frozenset(("json", "text"))
-_COLOR_MODES = frozenset(("always", "auto", "never"))
-
-
-def validate_format(format: str) -> "_ReportFormat":
-    """Validate and narrow a public report-format value."""
-    if format not in _REPORT_FORMATS:
-        choices = ", ".join(sorted(_REPORT_FORMATS))
-        raise ValueError(f"unknown report format {format!r}; expected one of: {choices}")
-    return format  # type: ignore[return-value]
-
-
-def validate_color(color: str) -> "_ColorMode":
-    """Validate and narrow a public color-mode value."""
-    if color not in _COLOR_MODES:
-        choices = ", ".join(sorted(_COLOR_MODES))
-        raise ValueError(f"unknown color mode {color!r}; expected one of: {choices}")
-    return color  # type: ignore[return-value]
 
 
 def write_report(
