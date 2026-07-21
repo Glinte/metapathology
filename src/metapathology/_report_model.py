@@ -18,7 +18,7 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     from typing import Literal
 
-    from metapathology._monitor import (
+    from metapathology._monitor_model import (
         DeepImportOutcomesStatus,
         StandardFinderStatus,
         TargetOutcomeKind,

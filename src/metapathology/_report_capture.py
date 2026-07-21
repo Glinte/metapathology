@@ -28,7 +28,8 @@ from metapathology._report_model import (
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from metapathology._monitor import Monitor, MonitorSnapshot
+    from metapathology._monitor import Monitor
+    from metapathology._monitor_model import MonitorSnapshot
 
 
 _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"

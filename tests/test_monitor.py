@@ -1161,7 +1161,7 @@ def test_uninstall_concurrent_with_mutation_leaves_no_wrapper(run_python: RunPyt
 
 MONITOR_SNAPSHOT = """
 import metapathology
-from metapathology._monitor import MonitorSnapshot
+from metapathology._monitor_model import MonitorSnapshot
 
 monitor = metapathology.install(report_at_exit=False)
 import colorsys
