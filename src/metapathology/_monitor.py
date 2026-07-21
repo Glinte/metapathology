@@ -63,6 +63,8 @@ if TYPE_CHECKING:
     from _typeshed import SupportsRichComparison
     from _typeshed.importlib import MetaPathFinderProtocol, PathEntryFinderProtocol
 
+    from metapathology._records import DeepBoundary, DeepOutcome, MutationOp
+
     _FindSpec = Callable[[str, Sequence[str] | None, ModuleType | None], ModuleSpec | None]
     _ImportListItemT = TypeVar("_ImportListItemT")
     _MetaPathEntry = MetaPathFinderProtocol
@@ -1115,12 +1117,12 @@ class Monitor:
 
     def _record_deep_call(
         self,
-        boundary: str,
+        boundary: "DeepBoundary",
         object_id: int,
         object_type_name: str,
         fullname: str | None,
         path: str | None,
-        outcome: str,
+        outcome: "DeepOutcome",
         exception_type_name: str | None,
         module_state_before: ModuleCacheState | None = None,
         module_state_after: ModuleCacheState | None = None,
@@ -1807,7 +1809,7 @@ class Monitor:
     def _on_meta_path_mutation(
         self,
         mutated: "_InstrumentedMetaPath",
-        op: str,
+        op: "MutationOp",
         added: tuple[object, ...],
         removed: tuple[object, ...],
         frame: "FrameType",
@@ -1866,7 +1868,7 @@ class Monitor:
     def _on_path_hooks_mutation(
         self,
         mutated: "_InstrumentedPathHooks",
-        op: str,
+        op: "MutationOp",
         added: tuple[object, ...],
         removed: tuple[object, ...],
         frame: "FrameType",
@@ -1935,7 +1937,7 @@ class Monitor:
     def _on_sys_path_mutation(
         self,
         mutated: "_InstrumentedSysPath",
-        op: str,
+        op: "MutationOp",
         added: tuple[object, ...],
         removed: tuple[object, ...],
         frame: "FrameType",
@@ -2047,7 +2049,7 @@ class _InstrumentedImportList(list["_ImportListItemT"]):
         """
         self._extend_and_record("extend", items, sys._getframe(1))
 
-    def _extend_and_record(self, op: str, items: "Iterable[_ImportListItemT]", frame: "FrameType") -> None:
+    def _extend_and_record(self, op: "MutationOp", items: "Iterable[_ImportListItemT]", frame: "FrameType") -> None:
         """Shared ``extend``/``__iadd__`` body: extend in place, then record what landed.
 
         Args:
@@ -2215,7 +2217,7 @@ class _InstrumentedImportList(list["_ImportListItemT"]):
 
     def _notify(
         self,
-        op: str,
+        op: "MutationOp",
         added: tuple[object, ...],
         removed: tuple[object, ...],
         frame: "FrameType",
@@ -2234,7 +2236,7 @@ class _InstrumentedMetaPath(_InstrumentedImportList["_MetaPathEntry"]):
 
     def _notify(
         self,
-        op: str,
+        op: "MutationOp",
         added: tuple[object, ...],
         removed: tuple[object, ...],
         frame: "FrameType",
@@ -2312,7 +2314,7 @@ class _InstrumentedPathHooks(_InstrumentedImportList["_PathHook"]):
 
     def _notify(
         self,
-        op: str,
+        op: "MutationOp",
         added: tuple[object, ...],
         removed: tuple[object, ...],
         frame: "FrameType",
@@ -2327,7 +2329,7 @@ class _InstrumentedSysPath(_InstrumentedImportList[str]):
 
     def _notify(
         self,
-        op: str,
+        op: "MutationOp",
         added: tuple[object, ...],
         removed: tuple[object, ...],
         frame: "FrameType",

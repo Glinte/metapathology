@@ -352,6 +352,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-timeout" },
     { name = "ruff" },
+    { name = "typing-extensions" },
 ]
 docs = [
     { name = "zensical" },
@@ -369,6 +370,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=6.3" },
     { name = "pytest-timeout", specifier = ">=2.4" },
     { name = "ruff", specifier = ">=0.12.11" },
+    { name = "typing-extensions", specifier = ">=4.12" },
 ]
 docs = [{ name = "zensical", specifier = ">=0.0.47,<0.1" }]
 

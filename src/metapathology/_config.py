@@ -7,6 +7,8 @@ state. It deliberately does not import the monitor or reporting pipeline.
 
 import os
 
+from metapathology._records import _Record
+
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
@@ -35,23 +37,8 @@ _REPORT_FORMATS = frozenset(("json", "text"))
 _COLOR_MODES = frozenset(("always", "auto", "never"))
 
 
-class InstallRequest:
+class InstallRequest(_Record):
     """Fully resolved configuration consumed by one monitor installation."""
-
-    __slots__ = (
-        "deep_import_outcomes",
-        "deep_loaders",
-        "deep_path_entry_finders",
-        "deep_path_hooks",
-        "issues",
-        "monitor_importer_cache",
-        "monitor_path_hooks",
-        "monitor_sys_path",
-        "report_at_exit",
-        "report_color",
-        "report_destination",
-        "report_format",
-    )
 
     report_at_exit: bool
     report_destination: str | None
@@ -65,38 +52,6 @@ class InstallRequest:
     deep_loaders: bool
     deep_import_outcomes: bool
     issues: tuple[str, ...]
-
-    def __init__(
-        self,
-        *,
-        report_at_exit: bool,
-        report_destination: str | None,
-        report_format: "_ReportFormat",
-        report_color: "_ColorMode",
-        monitor_path_hooks: bool,
-        monitor_importer_cache: bool,
-        monitor_sys_path: bool,
-        deep_path_hooks: bool,
-        deep_path_entry_finders: bool,
-        deep_loaders: bool,
-        deep_import_outcomes: bool,
-        issues: tuple[str, ...],
-    ) -> None:
-        object.__setattr__(self, "report_at_exit", report_at_exit)
-        object.__setattr__(self, "report_destination", report_destination)
-        object.__setattr__(self, "report_format", report_format)
-        object.__setattr__(self, "report_color", report_color)
-        object.__setattr__(self, "monitor_path_hooks", monitor_path_hooks)
-        object.__setattr__(self, "monitor_importer_cache", monitor_importer_cache)
-        object.__setattr__(self, "monitor_sys_path", monitor_sys_path)
-        object.__setattr__(self, "deep_path_hooks", deep_path_hooks)
-        object.__setattr__(self, "deep_path_entry_finders", deep_path_entry_finders)
-        object.__setattr__(self, "deep_loaders", deep_loaders)
-        object.__setattr__(self, "deep_import_outcomes", deep_import_outcomes)
-        object.__setattr__(self, "issues", issues)
-
-    def __setattr__(self, name: str, value: object) -> None:
-        raise AttributeError(f"{type(self).__name__!r} attribute {name!r} is read-only")
 
 
 def normalize_report_destination(destination: "str | PathLike[str] | None") -> str | None:

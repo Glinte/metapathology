@@ -3,74 +3,167 @@
 Records hold only primitive data (type names, ids, precomputed strings)
 extracted at capture time. Foreign objects are never repr()'d while an import
 may be in flight; all formatting happens at report time in ``_report``.
+
+Each record is declared as a small class of field annotations. ``_RecordMeta``
+derives ``__slots__``, the public ``_fields`` order, and a read-only ``__init__``
+from those annotations, so the field list is stated once. Records are frozen
+(read-only after construction) and intentionally identity-compared: two records
+with equal fields are distinct captured events, so no ``__eq__`` is generated.
+
+The field vocabularies (``MutationOp`` etc.) and ``dataclass_transform`` are
+imported only under ``TYPE_CHECKING``; annotations that reference them use
+forward-reference strings so the module needs no runtime ``typing`` import.
 """
 
 import types
 
-# Static analyzers treat this conventional name as true; runtime record users
-# do not need traceback solely to resolve the StackSummary annotation.
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from traceback import StackSummary
-    from typing import Generic, NoReturn, TypeVar, overload
+    from typing import ClassVar, Literal
     from typing import cast as _cast
 
-    _FieldT = TypeVar("_FieldT")
+    # ``dataclass_transform`` lives in ``typing`` only from 3.11; import it from
+    # ``typing_extensions`` (checker-only, never imported at runtime) so the
+    # 3.10 type-check target still resolves it.
+    from typing_extensions import dataclass_transform
 
+    # ``annotationlib`` (3.14+) is unavailable at the 3.10 check target; the
+    # runtime branch below binds it. None here keeps its usage sites dead code
+    # for the checker.
+    _annotationlib = None
 
-if TYPE_CHECKING:
-
-    class _ReadOnlyField(Generic[_FieldT]):
-        def __init__(self, slot: str) -> None: ...
-
-        @overload
-        def __get__(self, instance: None, owner: type[object] | None = None) -> "_ReadOnlyField[_FieldT]": ...
-
-        @overload
-        def __get__(self, instance: object, owner: type[object] | None = None) -> _FieldT: ...
-
-        def __get__(
-            self, instance: object | None, owner: type[object] | None = None
-        ) -> "_ReadOnlyField[_FieldT] | _FieldT": ...
-
-        def __set__(self, instance: object, value: NoReturn) -> NoReturn: ...
-
+    # Closed vocabularies for enum-like record fields. Free-form captured
+    # strings (type names, module names, paths, thread names) stay ``str``.
+    MutationOp = Literal[
+        "append",
+        "insert",
+        "extend",
+        "remove",
+        "pop",
+        "clear",
+        "reverse",
+        "sort",
+        "__setitem__",
+        "__delitem__",
+        "__iadd__",
+        "__imul__",
+    ]
+    CacheState = Literal["unavailable", "missing", "none", "object"]
+    ProtocolAvailability = Literal["callable", "non_callable", "indeterminate", "absent"]
+    LocationsState = Literal["not_applicable", "captured", "post_hoc", "deferred", "failed"]
+    DeepBoundary = Literal[
+        "path_entry_finder",
+        "loader_create_module",
+        "loader_exec_module",
+        "path_hook",
+    ]
+    DeepOutcome = Literal[
+        "started",
+        "loaded",
+        "failed",
+        "found",
+        "not_found",
+        "returned",
+        "raised",
+        "unobserved_reentrant",
+    ]
 else:
 
     def _cast(_type: object, value: object) -> object:
         return value
 
-    class _ReadOnlyField:
-        """Expose a private slot without permitting assignment through its public name."""
+    def dataclass_transform(**_kwargs: object):
+        """Runtime no-op standing in for ``typing.dataclass_transform``."""
 
-        __slots__ = ("_slot",)
-
-        def __init__(self, slot: str) -> None:
-            self._slot = slot
-
-        def __get__(self, instance: object | None, owner: type[object] | None = None) -> object:
-            if instance is None:
-                return self
-            return getattr(instance, self._slot)
-
-        def __set__(self, instance: object, value: object) -> None:
-            raise AttributeError(f"{type(instance).__name__!r} attribute {self._slot[1:]!r} is read-only")
-
-        @classmethod
-        def __class_getitem__(cls, item: object) -> type["_ReadOnlyField"]:
+        def decorate(cls: object) -> object:
             return cls
 
+        return decorate
 
-class _Record:
-    """Shared repr and read-only public-field setup for captured event records."""
+    try:
+        # Python 3.14+ (PEP 649): class namespaces expose a lazy
+        # ``__annotate_func__`` instead of an eager ``__annotations__`` dict.
+        import annotationlib as _annotationlib
+    except ImportError:  # Python < 3.14
+        _annotationlib = None
+
+
+_MISSING = object()
+
+
+def _field_names(namespace: "dict[str, object]") -> "tuple[str, ...]":
+    """Return the public field names annotated in a class namespace, in order.
+
+    Reads the eager ``__annotations__`` dict on Python < 3.14, or the lazy
+    ``__annotate__`` function on 3.14+. ``FORWARDREF`` format keeps
+    ``TYPE_CHECKING``-only field types (e.g. ``MutationOp``) from being
+    evaluated; only the annotation keys are needed here.
+    """
+    annotations = namespace.get("__annotations__")
+    if not isinstance(annotations, dict) and _annotationlib is not None:
+        annotate = namespace.get("__annotate_func__")
+        if annotate is not None:
+            annotations = _annotationlib.call_annotate_function(annotate, _annotationlib.Format.FORWARDREF)
+    if not isinstance(annotations, dict):
+        return ()
+    return tuple(name for name in annotations if isinstance(name, str) and not name.startswith("_"))
+
+
+def _make_init(cls_name: str, fields: "tuple[str, ...]", defaults: "dict[str, object]"):
+    """Build a read-only ``__init__`` that assigns fields positionally or by keyword."""
+
+    def __init__(self: object, *args: object, **kwargs: object) -> None:
+        if len(args) > len(fields):
+            raise TypeError(f"{cls_name}() takes at most {len(fields)} positional arguments")
+        values: dict[str, object] = dict(zip(fields, args))
+        for key, value in kwargs.items():
+            if key not in fields:
+                raise TypeError(f"{cls_name}() got an unexpected keyword argument {key!r}")
+            if key in values:
+                raise TypeError(f"{cls_name}() got multiple values for argument {key!r}")
+            values[key] = value
+        for name in fields:
+            if name not in values:
+                if name in defaults:
+                    values[name] = defaults[name]
+                else:
+                    raise TypeError(f"{cls_name}() missing required argument {name!r}")
+            object.__setattr__(self, name, values[name])
+
+    return __init__
+
+
+@dataclass_transform(frozen_default=True, eq_default=False)
+class _RecordMeta(type):
+    """Derive slots, field order, and a frozen ``__init__`` from field annotations."""
+
+    def __new__(mcs, name: str, bases: "tuple[type, ...]", namespace: "dict[str, object]") -> type:
+        fields = _field_names(namespace)
+        if fields:
+            defaults = {n: namespace.pop(n) for n in fields if n in namespace}
+            namespace["__slots__"] = fields
+            namespace["_fields"] = fields
+            namespace["__init__"] = _make_init(name, fields, defaults)
+        return super().__new__(mcs, name, bases, namespace)
+
+
+class _Record(metaclass=_RecordMeta):
+    """Frozen, slotted base with a shared repr and read-only enforcement."""
 
     __slots__ = ()
-    _fields: tuple[str, ...] = ()
+    _fields: "ClassVar[tuple[str, ...]]" = ()
 
-    def __init_subclass__(cls) -> None:
-        for field in cls._fields:
-            setattr(cls, field, _ReadOnlyField(f"_{field}"))
+    if not TYPE_CHECKING:
+        # Runtime read-only enforcement. Hidden from the checker, which already
+        # treats records as frozen (via ``dataclass_transform``) and forbids
+        # overriding ``__setattr__``/``__delattr__`` on a frozen dataclass.
+        def __setattr__(self, name: str, value: object) -> None:
+            raise AttributeError(f"{type(self).__name__!r} attribute {name!r} is read-only")
+
+        def __delattr__(self, name: str) -> None:
+            raise AttributeError(f"{type(self).__name__!r} attribute {name!r} is read-only")
 
     def __repr__(self) -> str:
         fields = ", ".join(f"{name}={getattr(self, name)!r}" for name in self._fields)
@@ -91,16 +184,9 @@ def type_name(obj: object) -> str:
 class ObjectRef(_Record):
     """Plain identity metadata for an observed foreign object."""
 
-    __slots__ = ("_name", "_object_id", "_type_name")
-    _fields = ("object_id", "type_name", "name")
-    object_id = _ReadOnlyField[int]("_object_id")
-    type_name = _ReadOnlyField[str]("_type_name")
-    name = _ReadOnlyField[str | None]("_name")
-
-    def __init__(self, object_id: int, type_name: str, name: str | None = None) -> None:
-        self._object_id = object_id
-        self._type_name = type_name
-        self._name = name
+    object_id: int
+    type_name: str
+    name: str | None = None
 
     @classmethod
     def of(cls, obj: object) -> "ObjectRef":
@@ -127,80 +213,29 @@ class ObjectRef(_Record):
 class FinderProtocol(_Record):
     """Conservative raw-dictionary evidence for one finder protocol."""
 
-    __slots__ = ("_availability", "_defined_by", "_evidence")
-    _fields = ("availability", "evidence", "defined_by")
-    availability = _ReadOnlyField[str]("_availability")
-    evidence = _ReadOnlyField[str]("_evidence")
-    defined_by = _ReadOnlyField[str | None]("_defined_by")
-
-    def __init__(self, availability: str, evidence: str, defined_by: str | None) -> None:
-        self._availability = availability
-        self._evidence = evidence
-        self._defined_by = defined_by
+    availability: "ProtocolAvailability"
+    evidence: str
+    defined_by: str | None
 
 
 class FinderContract(_Record):
     """Protocol inventory captured before metapathology changes a finder."""
 
-    __slots__ = (
-        "_find_module",
-        "_find_spec",
-        "_finder_id",
-        "_finder_type_name",
-        "_observation",
-        "_observation_seq",
-        "_position",
-    )
-    _fields = (
-        "finder_id",
-        "finder_type_name",
-        "position",
-        "observation",
-        "observation_seq",
-        "find_spec",
-        "find_module",
-    )
-    finder_id = _ReadOnlyField[int]("_finder_id")
-    finder_type_name = _ReadOnlyField[str]("_finder_type_name")
-    position = _ReadOnlyField[int]("_position")
-    observation = _ReadOnlyField[str]("_observation")
-    observation_seq = _ReadOnlyField[int | None]("_observation_seq")
-    find_spec = _ReadOnlyField[FinderProtocol]("_find_spec")
-    find_module = _ReadOnlyField[FinderProtocol]("_find_module")
-
-    def __init__(
-        self,
-        *,
-        finder_id: int,
-        finder_type_name: str,
-        position: int,
-        observation: str,
-        observation_seq: int | None,
-        find_spec: FinderProtocol,
-        find_module: FinderProtocol,
-    ) -> None:
-        self._finder_id = finder_id
-        self._finder_type_name = finder_type_name
-        self._position = position
-        self._observation = observation
-        self._observation_seq = observation_seq
-        self._find_spec = find_spec
-        self._find_module = find_module
+    finder_id: int
+    finder_type_name: str
+    position: int
+    observation: str
+    observation_seq: int | None
+    find_spec: FinderProtocol
+    find_module: FinderProtocol
 
 
 class ModuleCacheState(_Record):
     """Plain identity state for one name in a module cache."""
 
-    __slots__ = ("_object_id", "_state", "_type_name")
-    _fields = ("state", "object_id", "type_name")
-    state = _ReadOnlyField[str]("_state")
-    object_id = _ReadOnlyField[int | None]("_object_id")
-    type_name = _ReadOnlyField[str | None]("_type_name")
-
-    def __init__(self, state: str, object_id: int | None = None, type_name: str | None = None) -> None:
-        self._state = state
-        self._object_id = object_id
-        self._type_name = type_name
+    state: "CacheState"
+    object_id: int | None = None
+    type_name: str | None = None
 
 
 class ImporterCacheEntry(_Record):
@@ -209,87 +244,29 @@ class ImporterCacheEntry(_Record):
     ``finder=None`` represents a negative cache entry, not an absent path.
     """
 
-    __slots__ = ("_finder", "_path")
-    _fields = ("path", "finder")
-    path = _ReadOnlyField[str]("_path")
-    finder = _ReadOnlyField[ObjectRef | None]("_finder")
-
-    def __init__(self, path: str, finder: ObjectRef | None) -> None:
-        self._path = path
-        self._finder = finder
+    path: str
+    finder: ObjectRef | None
 
 
 class ImporterCacheReplacement(_Record):
     """One cache path whose finder identity or negative status changed."""
 
-    __slots__ = ("_after", "_before", "_path")
-    _fields = ("path", "before", "after")
-    path = _ReadOnlyField[str]("_path")
-    before = _ReadOnlyField[ObjectRef | None]("_before")
-    after = _ReadOnlyField[ObjectRef | None]("_after")
-
-    def __init__(
-        self,
-        path: str,
-        before: ObjectRef | None,
-        after: ObjectRef | None,
-    ) -> None:
-        self._path = path
-        self._before = before
-        self._after = after
+    path: str
+    before: ObjectRef | None
+    after: ObjectRef | None
 
 
 class ImporterCacheDiff(_Record):
-    """Changes found between two passive importer-cache observations."""
+    """A batch of importer-cache changes observed at one observation point."""
 
-    __slots__ = (
-        "_added",
-        "_non_string_keys_after",
-        "_non_string_keys_before",
-        "_observation",
-        "_removed",
-        "_replaced",
-        "_seq",
-        "_thread_name",
-    )
-    _fields = (
-        "seq",
-        "observation",
-        "added",
-        "removed",
-        "replaced",
-        "non_string_keys_before",
-        "non_string_keys_after",
-        "thread_name",
-    )
-    seq = _ReadOnlyField[int]("_seq")
-    observation = _ReadOnlyField[str]("_observation")
-    added = _ReadOnlyField[tuple[ImporterCacheEntry, ...]]("_added")
-    removed = _ReadOnlyField[tuple[ImporterCacheEntry, ...]]("_removed")
-    replaced = _ReadOnlyField[tuple[ImporterCacheReplacement, ...]]("_replaced")
-    non_string_keys_before = _ReadOnlyField[int]("_non_string_keys_before")
-    non_string_keys_after = _ReadOnlyField[int]("_non_string_keys_after")
-    thread_name = _ReadOnlyField[str]("_thread_name")
-
-    def __init__(
-        self,
-        seq: int,
-        observation: str,
-        added: tuple[ImporterCacheEntry, ...],
-        removed: tuple[ImporterCacheEntry, ...],
-        replaced: tuple[ImporterCacheReplacement, ...],
-        non_string_keys_before: int,
-        non_string_keys_after: int,
-        thread_name: str,
-    ) -> None:
-        self._seq = seq
-        self._observation = observation
-        self._added = added
-        self._removed = removed
-        self._replaced = replaced
-        self._non_string_keys_before = non_string_keys_before
-        self._non_string_keys_after = non_string_keys_after
-        self._thread_name = thread_name
+    seq: int
+    observation: str
+    added: tuple[ImporterCacheEntry, ...]
+    removed: tuple[ImporterCacheEntry, ...]
+    replaced: tuple[ImporterCacheReplacement, ...]
+    non_string_keys_before: int
+    non_string_keys_after: int
+    thread_name: str
 
 
 class ImportAuditStart(_Record):
@@ -302,64 +279,16 @@ class ImportAuditStart(_Record):
     events.
     """
 
-    __slots__ = (
-        "_attempt_id",
-        "_fullname",
-        "_importer_cache_id",
-        "_importer_cache_size",
-        "_meta_path_id",
-        "_meta_path_type_names",
-        "_path_hooks_id",
-        "_seq",
-        "_thread_id",
-        "_thread_name",
-    )
-    _fields = (
-        "seq",
-        "attempt_id",
-        "fullname",
-        "meta_path_id",
-        "meta_path_type_names",
-        "path_hooks_id",
-        "importer_cache_id",
-        "importer_cache_size",
-        "thread_name",
-        "thread_id",
-    )
-    seq = _ReadOnlyField[int]("_seq")
-    attempt_id = _ReadOnlyField[int]("_attempt_id")
-    fullname = _ReadOnlyField[str]("_fullname")
-    meta_path_id = _ReadOnlyField[int]("_meta_path_id")
-    meta_path_type_names = _ReadOnlyField[tuple[str, ...]]("_meta_path_type_names")
-    path_hooks_id = _ReadOnlyField[int | None]("_path_hooks_id")
-    importer_cache_id = _ReadOnlyField[int | None]("_importer_cache_id")
-    importer_cache_size = _ReadOnlyField[int | None]("_importer_cache_size")
-    thread_name = _ReadOnlyField[str]("_thread_name")
-    thread_id = _ReadOnlyField[int]("_thread_id")
-
-    def __init__(
-        self,
-        seq: int,
-        attempt_id: int,
-        fullname: str,
-        meta_path_id: int,
-        meta_path_type_names: tuple[str, ...],
-        path_hooks_id: int | None,
-        importer_cache_id: int | None,
-        importer_cache_size: int | None,
-        thread_name: str,
-        thread_id: int,
-    ) -> None:
-        self._seq = seq
-        self._attempt_id = attempt_id
-        self._fullname = fullname
-        self._meta_path_id = meta_path_id
-        self._meta_path_type_names = meta_path_type_names
-        self._path_hooks_id = path_hooks_id
-        self._importer_cache_id = importer_cache_id
-        self._importer_cache_size = importer_cache_size
-        self._thread_name = thread_name
-        self._thread_id = thread_id
+    seq: int
+    attempt_id: int
+    fullname: str
+    meta_path_id: int
+    meta_path_type_names: tuple[str, ...]
+    path_hooks_id: int | None
+    importer_cache_id: int | None
+    importer_cache_size: int | None
+    thread_name: str
+    thread_id: int
 
 
 class MetaPathMutation(_Record):
@@ -381,36 +310,13 @@ class MetaPathMutation(_Record):
             without source lines (they are resolved at report time).
     """
 
-    __slots__ = ("_added", "_contents_after", "_op", "_removed", "_seq", "_stack", "_thread_name")
-    _fields = ("seq", "op", "added", "removed", "contents_after", "thread_name", "stack")
-    seq = _ReadOnlyField[int]("_seq")
-    op = _ReadOnlyField[str]("_op")
-    added = _ReadOnlyField[tuple[str, ...]]("_added")
-    removed = _ReadOnlyField[tuple[str, ...]]("_removed")
-    contents_after = _ReadOnlyField[tuple[str, ...]]("_contents_after")
-    thread_name = _ReadOnlyField[str]("_thread_name")
-    if TYPE_CHECKING:
-        stack = _ReadOnlyField[StackSummary]("_stack")
-    else:
-        stack = _ReadOnlyField("_stack")
-
-    def __init__(
-        self,
-        seq: int,
-        op: str,
-        added: tuple[str, ...],
-        removed: tuple[str, ...],
-        contents_after: tuple[str, ...],
-        thread_name: str,
-        stack: "StackSummary",
-    ) -> None:
-        self._seq = seq
-        self._op = op
-        self._added = added
-        self._removed = removed
-        self._contents_after = contents_after
-        self._thread_name = thread_name
-        self._stack = stack
+    seq: int
+    op: "MutationOp"
+    added: tuple[str, ...]
+    removed: tuple[str, ...]
+    contents_after: tuple[str, ...]
+    thread_name: str
+    stack: "StackSummary"
 
 
 class MetaPathReassignment(_Record):
@@ -434,225 +340,72 @@ class MetaPathReassignment(_Record):
             attribute assignment raises no event, so that stack is unknowable).
     """
 
-    __slots__ = ("_during_import", "_new_contents", "_old_contents", "_seq", "_stack", "_thread_name")
-    _fields = ("seq", "during_import", "old_contents", "new_contents", "thread_name", "stack")
-    seq = _ReadOnlyField[int]("_seq")
-    during_import = _ReadOnlyField[str]("_during_import")
-    old_contents = _ReadOnlyField[tuple[str, ...]]("_old_contents")
-    new_contents = _ReadOnlyField[tuple[str, ...]]("_new_contents")
-    thread_name = _ReadOnlyField[str]("_thread_name")
-    if TYPE_CHECKING:
-        stack = _ReadOnlyField[StackSummary]("_stack")
-    else:
-        stack = _ReadOnlyField("_stack")
-
-    def __init__(
-        self,
-        seq: int,
-        during_import: str,
-        old_contents: tuple[str, ...],
-        new_contents: tuple[str, ...],
-        thread_name: str,
-        stack: "StackSummary",
-    ) -> None:
-        self._seq = seq
-        self._during_import = during_import
-        self._old_contents = old_contents
-        self._new_contents = new_contents
-        self._thread_name = thread_name
-        self._stack = stack
+    seq: int
+    during_import: str
+    old_contents: tuple[str, ...]
+    new_contents: tuple[str, ...]
+    thread_name: str
+    stack: "StackSummary"
 
 
 class PathHooksMutation(_Record):
     """A mutating method call observed on the instrumented ``sys.path_hooks`` list."""
 
-    __slots__ = ("_added", "_contents_after", "_op", "_removed", "_seq", "_stack", "_thread_name")
-    _fields = ("seq", "op", "added", "removed", "contents_after", "thread_name", "stack")
-    seq = _ReadOnlyField[int]("_seq")
-    op = _ReadOnlyField[str]("_op")
-    added = _ReadOnlyField[tuple[ObjectRef, ...]]("_added")
-    removed = _ReadOnlyField[tuple[ObjectRef, ...]]("_removed")
-    contents_after = _ReadOnlyField[tuple[ObjectRef, ...]]("_contents_after")
-    thread_name = _ReadOnlyField[str]("_thread_name")
-    if TYPE_CHECKING:
-        stack = _ReadOnlyField[StackSummary]("_stack")
-    else:
-        stack = _ReadOnlyField("_stack")
-
-    def __init__(
-        self,
-        seq: int,
-        op: str,
-        added: tuple[ObjectRef, ...],
-        removed: tuple[ObjectRef, ...],
-        contents_after: tuple[ObjectRef, ...],
-        thread_name: str,
-        stack: "StackSummary",
-    ) -> None:
-        self._seq = seq
-        self._op = op
-        self._added = added
-        self._removed = removed
-        self._contents_after = contents_after
-        self._thread_name = thread_name
-        self._stack = stack
+    seq: int
+    op: "MutationOp"
+    added: tuple[ObjectRef, ...]
+    removed: tuple[ObjectRef, ...]
+    contents_after: tuple[ObjectRef, ...]
+    thread_name: str
+    stack: "StackSummary"
 
 
 class PathHooksReassignment(_Record):
     """``sys.path_hooks`` replacement detected at the next import audit event."""
 
-    __slots__ = ("_during_import", "_new_contents", "_old_contents", "_seq", "_stack", "_thread_name")
-    _fields = ("seq", "during_import", "old_contents", "new_contents", "thread_name", "stack")
-    seq = _ReadOnlyField[int]("_seq")
-    during_import = _ReadOnlyField[str]("_during_import")
-    old_contents = _ReadOnlyField[tuple[ObjectRef, ...]]("_old_contents")
-    new_contents = _ReadOnlyField[tuple[ObjectRef, ...]]("_new_contents")
-    thread_name = _ReadOnlyField[str]("_thread_name")
-    if TYPE_CHECKING:
-        stack = _ReadOnlyField[StackSummary]("_stack")
-    else:
-        stack = _ReadOnlyField("_stack")
-
-    def __init__(
-        self,
-        seq: int,
-        during_import: str,
-        old_contents: tuple[ObjectRef, ...],
-        new_contents: tuple[ObjectRef, ...],
-        thread_name: str,
-        stack: "StackSummary",
-    ) -> None:
-        self._seq = seq
-        self._during_import = during_import
-        self._old_contents = old_contents
-        self._new_contents = new_contents
-        self._thread_name = thread_name
-        self._stack = stack
+    seq: int
+    during_import: str
+    old_contents: tuple[ObjectRef, ...]
+    new_contents: tuple[ObjectRef, ...]
+    thread_name: str
+    stack: "StackSummary"
 
 
 class SysPathMutation(_Record):
     """A mutating method call observed on the opt-in instrumented ``sys.path`` list."""
 
-    __slots__ = ("_added", "_contents_after", "_op", "_removed", "_seq", "_stack", "_thread_name")
-    _fields = ("seq", "op", "added", "removed", "contents_after", "thread_name", "stack")
-    seq = _ReadOnlyField[int]("_seq")
-    op = _ReadOnlyField[str]("_op")
-    added = _ReadOnlyField[tuple[str, ...]]("_added")
-    removed = _ReadOnlyField[tuple[str, ...]]("_removed")
-    contents_after = _ReadOnlyField[tuple[str, ...]]("_contents_after")
-    thread_name = _ReadOnlyField[str]("_thread_name")
-    if TYPE_CHECKING:
-        stack = _ReadOnlyField[StackSummary]("_stack")
-    else:
-        stack = _ReadOnlyField("_stack")
-
-    def __init__(
-        self,
-        seq: int,
-        op: str,
-        added: tuple[str, ...],
-        removed: tuple[str, ...],
-        contents_after: tuple[str, ...],
-        thread_name: str,
-        stack: "StackSummary",
-    ) -> None:
-        self._seq = seq
-        self._op = op
-        self._added = added
-        self._removed = removed
-        self._contents_after = contents_after
-        self._thread_name = thread_name
-        self._stack = stack
+    seq: int
+    op: "MutationOp"
+    added: tuple[str, ...]
+    removed: tuple[str, ...]
+    contents_after: tuple[str, ...]
+    thread_name: str
+    stack: "StackSummary"
 
 
 class SysPathReassignment(_Record):
     """``sys.path`` replacement detected at the next import audit event."""
 
-    __slots__ = ("_during_import", "_new_contents", "_old_contents", "_seq", "_stack", "_thread_name")
-    _fields = ("seq", "during_import", "old_contents", "new_contents", "thread_name", "stack")
-    seq = _ReadOnlyField[int]("_seq")
-    during_import = _ReadOnlyField[str]("_during_import")
-    old_contents = _ReadOnlyField[tuple[str, ...]]("_old_contents")
-    new_contents = _ReadOnlyField[tuple[str, ...]]("_new_contents")
-    thread_name = _ReadOnlyField[str]("_thread_name")
-    if TYPE_CHECKING:
-        stack = _ReadOnlyField[StackSummary]("_stack")
-    else:
-        stack = _ReadOnlyField("_stack")
-
-    def __init__(
-        self,
-        seq: int,
-        during_import: str,
-        old_contents: tuple[str, ...],
-        new_contents: tuple[str, ...],
-        thread_name: str,
-        stack: "StackSummary",
-    ) -> None:
-        self._seq = seq
-        self._during_import = during_import
-        self._old_contents = old_contents
-        self._new_contents = new_contents
-        self._thread_name = thread_name
-        self._stack = stack
+    seq: int
+    during_import: str
+    old_contents: tuple[str, ...]
+    new_contents: tuple[str, ...]
+    thread_name: str
+    stack: "StackSummary"
 
 
 class SpecSummary(_Record):
     """Import-safe semantic summary of a finder-produced module spec."""
 
-    __slots__ = (
-        "_cached",
-        "_is_namespace",
-        "_is_package",
-        "_loader",
-        "_locations_state",
-        "_origin",
-        "_spec",
-        "_submodule_search_locations",
-        "_unavailable_fields",
-    )
-    _fields = (
-        "spec",
-        "loader",
-        "origin",
-        "cached",
-        "is_package",
-        "is_namespace",
-        "submodule_search_locations",
-        "locations_state",
-        "unavailable_fields",
-    )
-    spec = _ReadOnlyField[ObjectRef]("_spec")
-    loader = _ReadOnlyField[ObjectRef | None]("_loader")
-    origin = _ReadOnlyField[str | ObjectRef | None]("_origin")
-    cached = _ReadOnlyField[str | ObjectRef | None]("_cached")
-    is_package = _ReadOnlyField[bool | None]("_is_package")
-    is_namespace = _ReadOnlyField[bool | None]("_is_namespace")
-    submodule_search_locations = _ReadOnlyField[tuple[str | ObjectRef, ...] | None]("_submodule_search_locations")
-    locations_state = _ReadOnlyField[str]("_locations_state")
-    unavailable_fields = _ReadOnlyField[tuple[str, ...]]("_unavailable_fields")
-
-    def __init__(
-        self,
-        spec: ObjectRef,
-        loader: ObjectRef | None,
-        origin: str | ObjectRef | None,
-        cached: str | ObjectRef | None,
-        is_package: bool | None,
-        is_namespace: bool | None,
-        submodule_search_locations: tuple[str | ObjectRef, ...] | None,
-        locations_state: str,
-        unavailable_fields: tuple[str, ...] = (),
-    ) -> None:
-        self._spec = spec
-        self._loader = loader
-        self._origin = origin
-        self._cached = cached
-        self._is_package = is_package
-        self._is_namespace = is_namespace
-        self._submodule_search_locations = submodule_search_locations
-        self._locations_state = locations_state
-        self._unavailable_fields = unavailable_fields
+    spec: ObjectRef
+    loader: ObjectRef | None
+    origin: str | ObjectRef | None
+    cached: str | ObjectRef | None
+    is_package: bool | None
+    is_namespace: bool | None
+    submodule_search_locations: tuple[str | ObjectRef, ...] | None
+    locations_state: "LocationsState"
+    unavailable_fields: tuple[str, ...] = ()
 
 
 class FindSpecCall(_Record):
@@ -682,243 +435,63 @@ class FindSpecCall(_Record):
         thread_name: Name of the thread that ran the import.
     """
 
-    __slots__ = (
-        "_exception_type_name",
-        "_finder_id",
-        "_finder_type_name",
-        "_found",
-        "_fullname",
-        "_loader_type_name",
-        "_module_state_after",
-        "_module_state_before",
-        "_origin",
-        "_search_path",
-        "_search_path_kind",
-        "_seq",
-        "_spec_summary",
-        "_target_state",
-        "_thread_id",
-        "_thread_name",
-    )
-    _fields = (
-        "seq",
-        "fullname",
-        "finder_type_name",
-        "finder_id",
-        "found",
-        "loader_type_name",
-        "origin",
-        "module_state_before",
-        "module_state_after",
-        "search_path",
-        "search_path_kind",
-        "spec_summary",
-        "exception_type_name",
-        "thread_name",
-        "thread_id",
-        "target_state",
-    )
-    seq = _ReadOnlyField[int]("_seq")
-    fullname = _ReadOnlyField[str]("_fullname")
-    finder_type_name = _ReadOnlyField[str]("_finder_type_name")
-    finder_id = _ReadOnlyField[int]("_finder_id")
-    found = _ReadOnlyField[bool]("_found")
-    loader_type_name = _ReadOnlyField[str | None]("_loader_type_name")
-    origin = _ReadOnlyField[str | None]("_origin")
-    module_state_before = _ReadOnlyField[ModuleCacheState | None]("_module_state_before")
-    module_state_after = _ReadOnlyField[ModuleCacheState | None]("_module_state_after")
-    search_path = _ReadOnlyField[tuple[str, ...]]("_search_path")
-    search_path_kind = _ReadOnlyField[str]("_search_path_kind")
-    spec_summary = _ReadOnlyField[SpecSummary | None]("_spec_summary")
-    exception_type_name = _ReadOnlyField[str | None]("_exception_type_name")
-    thread_name = _ReadOnlyField[str]("_thread_name")
-    thread_id = _ReadOnlyField[int]("_thread_id")
-    target_state = _ReadOnlyField[ModuleCacheState | None]("_target_state")
-
-    def __init__(
-        self,
-        seq: int,
-        fullname: str,
-        finder_type_name: str,
-        finder_id: int,
-        found: bool,
-        loader_type_name: str | None,
-        origin: str | None,
-        search_path: tuple[str, ...],
-        search_path_kind: str,
-        spec_summary: SpecSummary | None,
-        exception_type_name: str | None,
-        thread_name: str,
-        thread_id: int,
-        module_state_before: ModuleCacheState | None = None,
-        module_state_after: ModuleCacheState | None = None,
-        target_state: ModuleCacheState | None = None,
-    ) -> None:
-        self._seq = seq
-        self._fullname = fullname
-        self._finder_type_name = finder_type_name
-        self._finder_id = finder_id
-        self._found = found
-        self._loader_type_name = loader_type_name
-        self._origin = origin
-        self._module_state_before = module_state_before
-        self._module_state_after = module_state_after
-        self._search_path = search_path
-        self._search_path_kind = search_path_kind
-        self._spec_summary = spec_summary
-        self._exception_type_name = exception_type_name
-        self._thread_name = thread_name
-        self._thread_id = thread_id
-        self._target_state = target_state
+    seq: int
+    fullname: str
+    finder_type_name: str
+    finder_id: int
+    found: bool
+    loader_type_name: str | None
+    origin: str | None
+    search_path: tuple[str, ...]
+    search_path_kind: str
+    spec_summary: SpecSummary | None
+    exception_type_name: str | None
+    thread_name: str
+    thread_id: int
+    module_state_before: ModuleCacheState | None = None
+    module_state_after: ModuleCacheState | None = None
+    target_state: ModuleCacheState | None = None
 
 
 class DeepDiagnosticCall(_Record):
     """One call crossing an explicitly enabled deep-diagnostics boundary."""
 
-    __slots__ = (
-        "_boundary",
-        "_exception_type_name",
-        "_fullname",
-        "_module_state_after",
-        "_module_state_before",
-        "_object_id",
-        "_object_type_name",
-        "_outcome",
-        "_path",
-        "_seq",
-        "_target_state",
-        "_thread_id",
-        "_thread_name",
-    )
-    _fields = (
-        "seq",
-        "boundary",
-        "object_id",
-        "object_type_name",
-        "fullname",
-        "path",
-        "outcome",
-        "module_state_before",
-        "module_state_after",
-        "exception_type_name",
-        "thread_name",
-        "thread_id",
-        "target_state",
-    )
-    seq = _ReadOnlyField[int]("_seq")
-    boundary = _ReadOnlyField[str]("_boundary")
-    object_id = _ReadOnlyField[int]("_object_id")
-    object_type_name = _ReadOnlyField[str]("_object_type_name")
-    fullname = _ReadOnlyField[str | None]("_fullname")
-    path = _ReadOnlyField[str | None]("_path")
-    outcome = _ReadOnlyField[str]("_outcome")
-    module_state_before = _ReadOnlyField[ModuleCacheState | None]("_module_state_before")
-    module_state_after = _ReadOnlyField[ModuleCacheState | None]("_module_state_after")
-    exception_type_name = _ReadOnlyField[str | None]("_exception_type_name")
-    thread_name = _ReadOnlyField[str]("_thread_name")
-    thread_id = _ReadOnlyField[int]("_thread_id")
-    target_state = _ReadOnlyField[ModuleCacheState | None]("_target_state")
-
-    def __init__(
-        self,
-        seq: int,
-        boundary: str,
-        object_id: int,
-        object_type_name: str,
-        fullname: str | None,
-        path: str | None,
-        outcome: str,
-        exception_type_name: str | None,
-        thread_name: str,
-        thread_id: int,
-        module_state_before: ModuleCacheState | None = None,
-        module_state_after: ModuleCacheState | None = None,
-        target_state: ModuleCacheState | None = None,
-    ) -> None:
-        self._seq = seq
-        self._boundary = boundary
-        self._object_id = object_id
-        self._object_type_name = object_type_name
-        self._fullname = fullname
-        self._path = path
-        self._outcome = outcome
-        self._module_state_before = module_state_before
-        self._module_state_after = module_state_after
-        self._exception_type_name = exception_type_name
-        self._thread_name = thread_name
-        self._thread_id = thread_id
-        self._target_state = target_state
+    seq: int
+    boundary: "DeepBoundary"
+    object_id: int
+    object_type_name: str
+    fullname: str | None
+    path: str | None
+    outcome: "DeepOutcome"
+    exception_type_name: str | None
+    thread_name: str
+    thread_id: int
+    module_state_before: ModuleCacheState | None = None
+    module_state_after: ModuleCacheState | None = None
+    target_state: ModuleCacheState | None = None
 
 
 class DeepImportEvent(_Record):
     """Entry or exact completion observed at CPython's complete import boundary."""
 
-    __slots__ = ("_attempt_id", "_fullname", "_outcome", "_seq", "_thread_id", "_thread_name")
-    _fields = ("seq", "attempt_id", "fullname", "outcome", "thread_id", "thread_name")
-    seq = _ReadOnlyField[int]("_seq")
-    attempt_id = _ReadOnlyField[int]("_attempt_id")
-    fullname = _ReadOnlyField[str]("_fullname")
-    outcome = _ReadOnlyField[str]("_outcome")
-    thread_id = _ReadOnlyField[int]("_thread_id")
-    thread_name = _ReadOnlyField[str]("_thread_name")
-
-    def __init__(
-        self, seq: int, attempt_id: int, fullname: str, outcome: str, thread_id: int, thread_name: str
-    ) -> None:
-        self._seq = seq
-        self._attempt_id = attempt_id
-        self._fullname = fullname
-        self._outcome = outcome
-        self._thread_id = thread_id
-        self._thread_name = thread_name
+    seq: int
+    attempt_id: int
+    fullname: str
+    outcome: "DeepOutcome"
+    thread_id: int
+    thread_name: str
 
 
 class StandardFinderCall(_Record):
     """A captured aggregate call to a shared standard finder."""
 
-    __slots__ = (
-        "_attempt_id",
-        "_finder_type_name",
-        "_fullname",
-        "_seq",
-        "_spec_summary",
-        "_thread_id",
-        "_thread_name",
-    )
-    _fields = (
-        "seq",
-        "attempt_id",
-        "fullname",
-        "finder_type_name",
-        "spec_summary",
-        "thread_id",
-        "thread_name",
-    )
-    seq = _ReadOnlyField[int]("_seq")
-    attempt_id = _ReadOnlyField[int]("_attempt_id")
-    fullname = _ReadOnlyField[str]("_fullname")
-    finder_type_name = _ReadOnlyField[str]("_finder_type_name")
-    spec_summary = _ReadOnlyField[SpecSummary]("_spec_summary")
-    thread_id = _ReadOnlyField[int]("_thread_id")
-    thread_name = _ReadOnlyField[str]("_thread_name")
-
-    def __init__(
-        self,
-        seq: int,
-        attempt_id: int,
-        fullname: str,
-        finder_type_name: str,
-        spec_summary: SpecSummary,
-        thread_id: int,
-        thread_name: str,
-    ) -> None:
-        self._seq = seq
-        self._attempt_id = attempt_id
-        self._fullname = fullname
-        self._finder_type_name = finder_type_name
-        self._spec_summary = spec_summary
-        self._thread_id = thread_id
-        self._thread_name = thread_name
+    seq: int
+    attempt_id: int
+    fullname: str
+    finder_type_name: str
+    spec_summary: SpecSummary
+    thread_id: int
+    thread_name: str
 
 
 class InternalError(_Record):
@@ -937,18 +510,10 @@ class InternalError(_Record):
             machinery can execute arbitrary code while an import is in flight.
     """
 
-    __slots__ = ("_exception_type_name", "_message", "_seq", "_where")
-    _fields = ("seq", "where", "exception_type_name", "message")
-    seq = _ReadOnlyField[int]("_seq")
-    where = _ReadOnlyField[str]("_where")
-    exception_type_name = _ReadOnlyField[str]("_exception_type_name")
-    message = _ReadOnlyField[str | None]("_message")
-
-    def __init__(self, seq: int, where: str, exception_type_name: str, message: str | None = None) -> None:
-        self._seq = seq
-        self._where = where
-        self._exception_type_name = exception_type_name
-        self._message = message
+    seq: int
+    where: str
+    exception_type_name: str
+    message: str | None = None
 
 
 # Everything the monitor records goes into one chronological log; ``seq`` orders records across types.

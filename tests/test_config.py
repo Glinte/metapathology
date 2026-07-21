@@ -64,7 +64,7 @@ def test_defaults_resolve_to_one_immutable_request() -> None:
     assert request.monitor_sys_path is False
     assert request.issues == ()
     with pytest.raises(AttributeError):
-        request.monitor_sys_path = True
+        setattr(request, "monitor_sys_path", True)
 
 
 def test_deep_defaults_and_explicit_overrides_are_resolved_together() -> None:

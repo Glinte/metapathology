@@ -35,7 +35,6 @@ from metapathology._records import (
     StandardFinderCall,
     SysPathMutation,
     SysPathReassignment,
-    _ReadOnlyField,
     _Record,
     type_name,
 )
@@ -88,37 +87,17 @@ _SCHEMA_MINOR = 1
 class ReportError(_Record):
     """One failure while copying or analysing report-time state."""
 
-    __slots__ = ("_exception_type_name", "_where")
-    _fields = ("where", "exception_type_name")
-    where = _ReadOnlyField[str]("_where")
-    exception_type_name = _ReadOnlyField[str]("_exception_type_name")
-
-    def __init__(self, where: str, exception_type_name: str) -> None:
-        self._where = where
-        self._exception_type_name = exception_type_name
+    where: str
+    exception_type_name: str
 
 
 class TargetOutcome(_Record):
     """Plain reduction of how the monitored target finished."""
 
-    __slots__ = ("_exception_type_name", "_exit_code", "_kind", "_missing_module")
-    _fields = ("kind", "exception_type_name", "missing_module", "exit_code")
-    kind = _ReadOnlyField[str]("_kind")
-    exception_type_name = _ReadOnlyField[str | None]("_exception_type_name")
-    missing_module = _ReadOnlyField[str | None]("_missing_module")
-    exit_code = _ReadOnlyField[int | None]("_exit_code")
-
-    def __init__(
-        self,
-        kind: str,
-        exception_type_name: str | None,
-        missing_module: str | None,
-        exit_code: int | None,
-    ) -> None:
-        self._kind = kind
-        self._exception_type_name = exception_type_name
-        self._missing_module = missing_module
-        self._exit_code = exit_code
+    kind: str
+    exception_type_name: str | None
+    missing_module: str | None
+    exit_code: int | None
 
 
 class ReportSummary(_Record):
@@ -128,426 +107,111 @@ class ReportSummary(_Record):
     by the text renderer so no human sentences enter the JSON contract.
     """
 
-    __slots__ = (
-        "_actionable",
-        "_informational",
-        "_top_explanation_id",
-        "_top_finding_id",
-        "_unresolved_import_count",
-        "_warning",
-    )
-    _fields = (
-        "actionable",
-        "warning",
-        "informational",
-        "unresolved_import_count",
-        "top_finding_id",
-        "top_explanation_id",
-    )
-    actionable = _ReadOnlyField[int]("_actionable")
-    warning = _ReadOnlyField[int]("_warning")
-    informational = _ReadOnlyField[int]("_informational")
-    unresolved_import_count = _ReadOnlyField[int]("_unresolved_import_count")
-    top_finding_id = _ReadOnlyField[str | None]("_top_finding_id")
-    top_explanation_id = _ReadOnlyField[str | None]("_top_explanation_id")
-
-    def __init__(
-        self,
-        *,
-        actionable: int,
-        warning: int,
-        informational: int,
-        unresolved_import_count: int,
-        top_finding_id: str | None,
-        top_explanation_id: str | None,
-    ) -> None:
-        self._actionable = actionable
-        self._warning = warning
-        self._informational = informational
-        self._unresolved_import_count = unresolved_import_count
-        self._top_finding_id = top_finding_id
-        self._top_explanation_id = top_explanation_id
+    actionable: int
+    warning: int
+    informational: int
+    unresolved_import_count: int
+    top_finding_id: str | None
+    top_explanation_id: str | None
 
 
 class SkippedFinder(_Record):
     """Report-safe description of an uninstrumented finder."""
 
-    __slots__ = ("_expected", "_finder_type_name", "_reason")
-    _fields = ("finder_type_name", "reason", "expected")
-    finder_type_name = _ReadOnlyField[str]("_finder_type_name")
-    reason = _ReadOnlyField[str]("_reason")
-    expected = _ReadOnlyField[bool]("_expected")
-
-    def __init__(self, finder_type_name: str, reason: str, expected: bool) -> None:
-        self._finder_type_name = finder_type_name
-        self._reason = reason
-        self._expected = expected
+    finder_type_name: str
+    reason: str
+    expected: bool
 
 
 class LoaderInventory(_Record):
     """Post-hoc metadata copied from one ``sys.modules`` snapshot."""
 
-    __slots__ = ("_available", "_entries", "_non_string_keys")
-    _fields = ("available", "entries", "non_string_keys")
-    available = _ReadOnlyField[bool]("_available")
-    entries = _ReadOnlyField[tuple[ModuleMetadata, ...]]("_entries")
-    non_string_keys = _ReadOnlyField[int]("_non_string_keys")
-
-    def __init__(self, available: bool, entries: tuple[ModuleMetadata, ...], non_string_keys: int) -> None:
-        self._available = available
-        self._entries = entries
-        self._non_string_keys = non_string_keys
+    available: bool
+    entries: "tuple[ModuleMetadata, ...]"
+    non_string_keys: int
 
 
 class ImportAttempt(_Record):
     """Conservative report-time correlation of one import audit start."""
 
-    __slots__ = (
-        "_attempt_id",
-        "_event_seqs",
-        "_fullname",
-        "_presence",
-        "_progress",
-        "_start_event_seq",
-        "_thread_id",
-        "_thread_name",
-    )
-    _fields = (
-        "attempt_id",
-        "fullname",
-        "start_event_seq",
-        "event_seqs",
-        "thread_id",
-        "thread_name",
-        "progress",
-        "presence",
-    )
-    attempt_id = _ReadOnlyField[int]("_attempt_id")
-    fullname = _ReadOnlyField[str]("_fullname")
-    start_event_seq = _ReadOnlyField[int]("_start_event_seq")
-    event_seqs = _ReadOnlyField[tuple[int, ...]]("_event_seqs")
-    thread_id = _ReadOnlyField[int]("_thread_id")
-    thread_name = _ReadOnlyField[str]("_thread_name")
-    progress = _ReadOnlyField[str]("_progress")
-    presence = _ReadOnlyField[str]("_presence")
-
-    def __init__(
-        self,
-        attempt_id: int,
-        fullname: str,
-        start_event_seq: int,
-        event_seqs: tuple[int, ...],
-        thread_id: int,
-        thread_name: str,
-        progress: str,
-        presence: str,
-    ) -> None:
-        self._attempt_id = attempt_id
-        self._fullname = fullname
-        self._start_event_seq = start_event_seq
-        self._event_seqs = event_seqs
-        self._thread_id = thread_id
-        self._thread_name = thread_name
-        self._progress = progress
-        self._presence = presence
+    attempt_id: int
+    fullname: str
+    start_event_seq: int
+    event_seqs: tuple[int, ...]
+    thread_id: int
+    thread_name: str
+    progress: str
+    presence: str
 
 
 class StandardResolution(_Record):
     """Captured or conservatively inferred standard resolution evidence."""
 
-    __slots__ = (
-        "_attempt_id",
-        "_category",
-        "_component_event_seqs",
-        "_event_seq",
-        "_evidence_level",
-        "_finder_type_name",
-        "_fullname",
-        "_later_finders",
-        "_loader_type_name",
-        "_origin",
-        "_state_phase",
-    )
-    _fields = (
-        "attempt_id",
-        "fullname",
-        "finder_type_name",
-        "category",
-        "loader_type_name",
-        "origin",
-        "evidence_level",
-        "state_phase",
-        "event_seq",
-        "component_event_seqs",
-        "later_finders",
-    )
-    attempt_id = _ReadOnlyField[int]("_attempt_id")
-    fullname = _ReadOnlyField[str]("_fullname")
-    finder_type_name = _ReadOnlyField[str]("_finder_type_name")
-    category = _ReadOnlyField[str]("_category")
-    loader_type_name = _ReadOnlyField[str | None]("_loader_type_name")
-    origin = _ReadOnlyField[str | None]("_origin")
-    evidence_level = _ReadOnlyField[str]("_evidence_level")
-    state_phase = _ReadOnlyField[str]("_state_phase")
-    event_seq = _ReadOnlyField[int | None]("_event_seq")
-    component_event_seqs = _ReadOnlyField[tuple[int, ...]]("_component_event_seqs")
-    later_finders = _ReadOnlyField[tuple[str, ...]]("_later_finders")
-
-    def __init__(
-        self,
-        *,
-        attempt_id: int,
-        fullname: str,
-        finder_type_name: str,
-        category: str,
-        loader_type_name: str | None,
-        origin: str | None,
-        evidence_level: str,
-        state_phase: str,
-        event_seq: int | None,
-        component_event_seqs: tuple[int, ...],
-        later_finders: tuple[str, ...],
-    ) -> None:
-        self._attempt_id = attempt_id
-        self._fullname = fullname
-        self._finder_type_name = finder_type_name
-        self._category = category
-        self._loader_type_name = loader_type_name
-        self._origin = origin
-        self._evidence_level = evidence_level
-        self._state_phase = state_phase
-        self._event_seq = event_seq
-        self._component_event_seqs = component_event_seqs
-        self._later_finders = later_finders
+    attempt_id: int
+    fullname: str
+    finder_type_name: str
+    category: str
+    loader_type_name: str | None
+    origin: str | None
+    evidence_level: str
+    state_phase: str
+    event_seq: int | None
+    component_event_seqs: tuple[int, ...]
+    later_finders: tuple[str, ...]
 
 
 class ResolutionRoute(_Record):
     """One captured or probed route to resolving a module name."""
 
-    __slots__ = (
-        "_event_seq",
-        "_evidence_level",
-        "_exception_type_name",
-        "_finder_id",
-        "_finder_type_name",
-        "_kind",
-        "_limitations",
-        "_module",
-        "_predicts_alternative_winner",
-        "_purpose",
-        "_route_id",
-        "_search_path",
-        "_search_path_kind",
-        "_search_path_phase",
-        "_signals",
-        "_spec_summary",
-        "_state_phase",
-        "_status",
-    )
-    _fields = (
-        "route_id",
-        "module",
-        "kind",
-        "purpose",
-        "limitations",
-        "evidence_level",
-        "state_phase",
-        "predicts_alternative_winner",
-        "finder_type_name",
-        "finder_id",
-        "status",
-        "spec_summary",
-        "exception_type_name",
-        "event_seq",
-        "search_path",
-        "search_path_kind",
-        "search_path_phase",
-        "signals",
-    )
-    route_id = _ReadOnlyField[str]("_route_id")
-    module = _ReadOnlyField[str]("_module")
-    kind = _ReadOnlyField[str]("_kind")
-    purpose = _ReadOnlyField[str]("_purpose")
-    limitations = _ReadOnlyField[tuple[str, ...]]("_limitations")
-    evidence_level = _ReadOnlyField[str]("_evidence_level")
-    state_phase = _ReadOnlyField[str]("_state_phase")
-    predicts_alternative_winner = _ReadOnlyField[bool]("_predicts_alternative_winner")
-    finder_type_name = _ReadOnlyField[str]("_finder_type_name")
-    finder_id = _ReadOnlyField[int | None]("_finder_id")
-    status = _ReadOnlyField[str]("_status")
-    spec_summary = _ReadOnlyField[SpecSummary | None]("_spec_summary")
-    exception_type_name = _ReadOnlyField[str | None]("_exception_type_name")
-    event_seq = _ReadOnlyField[int | None]("_event_seq")
-    search_path = _ReadOnlyField[tuple[str, ...]]("_search_path")
-    search_path_kind = _ReadOnlyField[str]("_search_path_kind")
-    search_path_phase = _ReadOnlyField[str]("_search_path_phase")
-    signals = _ReadOnlyField[tuple[str, ...]]("_signals")
-
-    def __init__(
-        self,
-        *,
-        route_id: str,
-        module: str,
-        kind: str,
-        purpose: str,
-        limitations: tuple[str, ...],
-        evidence_level: str,
-        state_phase: str,
-        predicts_alternative_winner: bool,
-        finder_type_name: str,
-        finder_id: int | None,
-        status: str,
-        spec_summary: SpecSummary | None,
-        exception_type_name: str | None,
-        event_seq: int | None,
-        search_path: tuple[str, ...],
-        search_path_kind: str,
-        search_path_phase: str,
-        signals: tuple[str, ...] = (),
-    ) -> None:
-        self._route_id = route_id
-        self._module = module
-        self._kind = kind
-        self._purpose = purpose
-        self._limitations = limitations
-        self._evidence_level = evidence_level
-        self._state_phase = state_phase
-        self._predicts_alternative_winner = predicts_alternative_winner
-        self._finder_type_name = finder_type_name
-        self._finder_id = finder_id
-        self._status = status
-        self._spec_summary = spec_summary
-        self._exception_type_name = exception_type_name
-        self._event_seq = event_seq
-        self._search_path = search_path
-        self._search_path_kind = search_path_kind
-        self._search_path_phase = search_path_phase
-        self._signals = signals
+    route_id: str
+    module: str
+    kind: str
+    purpose: str
+    limitations: tuple[str, ...]
+    evidence_level: str
+    state_phase: str
+    predicts_alternative_winner: bool
+    finder_type_name: str
+    finder_id: int | None
+    status: str
+    spec_summary: SpecSummary | None
+    exception_type_name: str | None
+    event_seq: int | None
+    search_path: tuple[str, ...]
+    search_path_kind: str
+    search_path_phase: str
+    signals: tuple[str, ...] = ()
 
 
 class StructuralComparison(_Record):
     """Identity-only comparison of install and report-time import structure."""
 
-    __slots__ = (
-        "_evidence_level",
-        "_importer_cache_changed",
-        "_importer_cache_changed_paths",
-        "_importer_cache_event_seqs",
-        "_path_hooks_changed",
-    )
-    _fields = (
-        "evidence_level",
-        "path_hooks_changed",
-        "importer_cache_changed",
-        "importer_cache_changed_paths",
-        "importer_cache_event_seqs",
-    )
-    evidence_level = _ReadOnlyField[str]("_evidence_level")
-    path_hooks_changed = _ReadOnlyField[bool | None]("_path_hooks_changed")
-    importer_cache_changed = _ReadOnlyField[bool | None]("_importer_cache_changed")
-    importer_cache_changed_paths = _ReadOnlyField[tuple[str, ...]]("_importer_cache_changed_paths")
-    importer_cache_event_seqs = _ReadOnlyField[tuple[int, ...]]("_importer_cache_event_seqs")
-
-    def __init__(
-        self,
-        path_hooks_changed: bool | None,
-        importer_cache_changed: bool | None,
-        importer_cache_changed_paths: tuple[str, ...],
-        importer_cache_event_seqs: tuple[int, ...],
-    ) -> None:
-        self._evidence_level = "structural_comparison"
-        self._path_hooks_changed = path_hooks_changed
-        self._importer_cache_changed = importer_cache_changed
-        self._importer_cache_changed_paths = importer_cache_changed_paths
-        self._importer_cache_event_seqs = importer_cache_event_seqs
+    path_hooks_changed: bool | None
+    importer_cache_changed: bool | None
+    importer_cache_changed_paths: tuple[str, ...]
+    importer_cache_event_seqs: tuple[int, ...]
+    # Constant discriminator; not a constructor argument.
+    evidence_level: str = "structural_comparison"
 
 
 class RouteComparison(_Record):
     """Neutral semantic differences between two resolution routes."""
 
-    __slots__ = (
-        "_cached_differs",
-        "_comparison_id",
-        "_complete",
-        "_left_locations_state",
-        "_left_route_id",
-        "_loader_type_differs",
-        "_locations_reordered",
-        "_only_in_left_route",
-        "_only_in_right_route",
-        "_origin_differs",
-        "_package_status_differs",
-        "_right_locations_state",
-        "_right_route_id",
-        "_status_differs",
-        "_structural_comparison",
-    )
-    _fields = (
-        "comparison_id",
-        "left_route_id",
-        "right_route_id",
-        "complete",
-        "status_differs",
-        "loader_type_differs",
-        "origin_differs",
-        "cached_differs",
-        "package_status_differs",
-        "only_in_left_route",
-        "only_in_right_route",
-        "locations_reordered",
-        "left_locations_state",
-        "right_locations_state",
-        "structural_comparison",
-    )
-    comparison_id = _ReadOnlyField[str]("_comparison_id")
-    left_route_id = _ReadOnlyField[str]("_left_route_id")
-    right_route_id = _ReadOnlyField[str]("_right_route_id")
-    complete = _ReadOnlyField[bool]("_complete")
-    status_differs = _ReadOnlyField[bool]("_status_differs")
-    loader_type_differs = _ReadOnlyField[bool | None]("_loader_type_differs")
-    origin_differs = _ReadOnlyField[bool | None]("_origin_differs")
-    cached_differs = _ReadOnlyField[bool | None]("_cached_differs")
-    package_status_differs = _ReadOnlyField[bool | None]("_package_status_differs")
-    only_in_left_route = _ReadOnlyField[tuple[str, ...]]("_only_in_left_route")
-    only_in_right_route = _ReadOnlyField[tuple[str, ...]]("_only_in_right_route")
-    locations_reordered = _ReadOnlyField[bool | None]("_locations_reordered")
-    left_locations_state = _ReadOnlyField[str]("_left_locations_state")
-    right_locations_state = _ReadOnlyField[str]("_right_locations_state")
-    structural_comparison = _ReadOnlyField[StructuralComparison]("_structural_comparison")
-
-    def __init__(
-        self,
-        comparison_id: str,
-        left_route_id: str,
-        right_route_id: str,
-        status_differs: bool,
-        complete: bool,
-        loader_type_differs: bool | None,
-        origin_differs: bool | None,
-        cached_differs: bool | None,
-        package_status_differs: bool | None,
-        only_in_left_route: tuple[str, ...],
-        only_in_right_route: tuple[str, ...],
-        locations_reordered: bool | None,
-        left_locations_state: str,
-        right_locations_state: str,
-        structural_comparison: StructuralComparison,
-    ) -> None:
-        self._comparison_id = comparison_id
-        self._left_route_id = left_route_id
-        self._right_route_id = right_route_id
-        self._status_differs = status_differs
-        self._complete = complete
-        self._loader_type_differs = loader_type_differs
-        self._origin_differs = origin_differs
-        self._cached_differs = cached_differs
-        self._package_status_differs = package_status_differs
-        self._only_in_left_route = only_in_left_route
-        self._only_in_right_route = only_in_right_route
-        self._locations_reordered = locations_reordered
-        self._left_locations_state = left_locations_state
-        self._right_locations_state = right_locations_state
-        self._structural_comparison = structural_comparison
+    comparison_id: str
+    left_route_id: str
+    right_route_id: str
+    status_differs: bool
+    complete: bool
+    loader_type_differs: bool | None
+    origin_differs: bool | None
+    cached_differs: bool | None
+    package_status_differs: bool | None
+    only_in_left_route: tuple[str, ...]
+    only_in_right_route: tuple[str, ...]
+    locations_reordered: bool | None
+    left_locations_state: str
+    right_locations_state: str
+    structural_comparison: StructuralComparison
 
 
 class _StructuralContext:
@@ -576,445 +240,106 @@ class _StructuralContext:
 class Finding(_Record):
     """Structured evidence for one human or machine-readable finding."""
 
-    __slots__ = (
-        "_attempt_ids",
-        "_claim",
-        "_deep_call",
-        "_evidence_level",
-        "_finder_contract",
-        "_finding_id",
-        "_kind",
-        "_limitations",
-        "_module",
-        "_module_state_baseline",
-        "_route_comparison_id",
-        "_route_ids",
-        "_severity",
-        "_signals",
-        "_structural_comparison",
-        "_subject_kind",
-        "_supporting_event_seqs",
-    )
-    _fields = (
-        "attempt_ids",
-        "finding_id",
-        "kind",
-        "module",
-        "claim",
-        "deep_call",
-        "evidence_level",
-        "finder_contract",
-        "limitations",
-        "module_state_baseline",
-        "severity",
-        "signals",
-        "subject_kind",
-        "supporting_event_seqs",
-        "route_ids",
-        "route_comparison_id",
-        "structural_comparison",
-    )
-    attempt_ids = _ReadOnlyField[tuple[int, ...]]("_attempt_ids")
-    finding_id = _ReadOnlyField[str]("_finding_id")
-    kind = _ReadOnlyField[str]("_kind")
-    module = _ReadOnlyField[str]("_module")
-    claim = _ReadOnlyField[FindSpecCall | None]("_claim")
-    deep_call = _ReadOnlyField[DeepDiagnosticCall | None]("_deep_call")
-    evidence_level = _ReadOnlyField[str]("_evidence_level")
-    finder_contract = _ReadOnlyField[FinderContract | None]("_finder_contract")
-    limitations = _ReadOnlyField[tuple[str, ...]]("_limitations")
-    module_state_baseline = _ReadOnlyField[ModuleCacheState | None]("_module_state_baseline")
-    severity = _ReadOnlyField[str]("_severity")
-    signals = _ReadOnlyField[tuple[str, ...]]("_signals")
-    subject_kind = _ReadOnlyField[str]("_subject_kind")
-    supporting_event_seqs = _ReadOnlyField[tuple[int, ...]]("_supporting_event_seqs")
-    route_ids = _ReadOnlyField[tuple[str, ...]]("_route_ids")
-    route_comparison_id = _ReadOnlyField[str | None]("_route_comparison_id")
-    structural_comparison = _ReadOnlyField[StructuralComparison | None]("_structural_comparison")
-
-    def __init__(
-        self,
-        finding_id: str,
-        kind: str,
-        module: str,
-        claim: FindSpecCall | None = None,
-        route_ids: tuple[str, ...] = (),
-        route_comparison_id: str | None = None,
-        structural_comparison: StructuralComparison | None = None,
-        deep_call: DeepDiagnosticCall | None = None,
-        evidence_level: str = "post_hoc",
-        limitations: tuple[str, ...] = (),
-        subject_kind: str = "module",
-        finder_contract: FinderContract | None = None,
-        supporting_event_seqs: tuple[int, ...] = (),
-        severity: str = "warning",
-        signals: tuple[str, ...] = (),
-        module_state_baseline: ModuleCacheState | None = None,
-        attempt_ids: tuple[int, ...] = (),
-    ) -> None:
-        self._attempt_ids = attempt_ids
-        self._finding_id = finding_id
-        self._kind = kind
-        self._module = module
-        self._claim = claim
-        self._deep_call = deep_call
-        self._evidence_level = evidence_level
-        self._finder_contract = finder_contract
-        self._limitations = limitations
-        self._module_state_baseline = module_state_baseline
-        self._severity = severity
-        self._signals = signals
-        self._subject_kind = subject_kind
-        self._supporting_event_seqs = supporting_event_seqs
-        self._route_ids = route_ids
-        self._route_comparison_id = route_comparison_id
-        self._structural_comparison = structural_comparison
+    finding_id: str
+    kind: str
+    module: str
+    claim: FindSpecCall | None = None
+    route_ids: tuple[str, ...] = ()
+    route_comparison_id: str | None = None
+    structural_comparison: StructuralComparison | None = None
+    deep_call: DeepDiagnosticCall | None = None
+    evidence_level: str = "post_hoc"
+    limitations: tuple[str, ...] = ()
+    subject_kind: str = "module"
+    finder_contract: FinderContract | None = None
+    supporting_event_seqs: tuple[int, ...] = ()
+    severity: str = "warning"
+    signals: tuple[str, ...] = ()
+    module_state_baseline: ModuleCacheState | None = None
+    attempt_ids: tuple[int, ...] = ()
 
 
 class CausalExplanation(_Record):
     """Deterministic synthesis joining a primary finding to its likely effect."""
 
-    __slots__ = (
-        "_alternatives",
-        "_boundary",
-        "_candidate_path",
-        "_cause_finding_id",
-        "_confidence",
-        "_effect_status",
-        "_event_seqs",
-        "_explanation_id",
-        "_finder_type_name",
-        "_kind",
-        "_later_finders",
-        "_next_observation",
-        "_omitted_location",
-        "_origin",
-        "_standard_attempt_id",
-        "_state_after",
-        "_state_before",
-        "_subject",
-    )
-    _fields = (
-        "alternatives",
-        "boundary",
-        "explanation_id",
-        "kind",
-        "confidence",
-        "subject",
-        "effect_status",
-        "cause_finding_id",
-        "finder_type_name",
-        "omitted_location",
-        "candidate_path",
-        "later_finders",
-        "origin",
-        "standard_attempt_id",
-        "state_before",
-        "state_after",
-        "event_seqs",
-        "next_observation",
-    )
-    alternatives = _ReadOnlyField[tuple[str, ...]]("_alternatives")
-    boundary = _ReadOnlyField[str | None]("_boundary")
-    explanation_id = _ReadOnlyField[str]("_explanation_id")
-    kind = _ReadOnlyField[str]("_kind")
-    confidence = _ReadOnlyField[str]("_confidence")
-    subject = _ReadOnlyField[str]("_subject")
-    effect_status = _ReadOnlyField[str]("_effect_status")
-    cause_finding_id = _ReadOnlyField[str | None]("_cause_finding_id")
-    finder_type_name = _ReadOnlyField[str]("_finder_type_name")
-    omitted_location = _ReadOnlyField[str]("_omitted_location")
-    candidate_path = _ReadOnlyField[str]("_candidate_path")
-    later_finders = _ReadOnlyField[tuple[str, ...]]("_later_finders")
-    origin = _ReadOnlyField[str | None]("_origin")
-    standard_attempt_id = _ReadOnlyField[int | None]("_standard_attempt_id")
-    state_before = _ReadOnlyField[ModuleCacheState | None]("_state_before")
-    state_after = _ReadOnlyField[ModuleCacheState | None]("_state_after")
-    event_seqs = _ReadOnlyField[tuple[int, ...]]("_event_seqs")
-    next_observation = _ReadOnlyField[str | None]("_next_observation")
-
-    def __init__(
-        self,
-        *,
-        explanation_id: str,
-        kind: str,
-        confidence: str,
-        subject: str,
-        effect_status: str,
-        cause_finding_id: str | None,
-        finder_type_name: str,
-        omitted_location: str,
-        candidate_path: str,
-        event_seqs: tuple[int, ...],
-        next_observation: str | None,
-        origin: str | None = None,
-        standard_attempt_id: int | None = None,
-        later_finders: tuple[str, ...] = (),
-        boundary: str | None = None,
-        state_before: ModuleCacheState | None = None,
-        state_after: ModuleCacheState | None = None,
-        alternatives: tuple[str, ...] = (),
-    ) -> None:
-        self._alternatives = alternatives
-        self._boundary = boundary
-        self._explanation_id = explanation_id
-        self._kind = kind
-        self._later_finders = later_finders
-        self._confidence = confidence
-        self._subject = subject
-        self._effect_status = effect_status
-        self._cause_finding_id = cause_finding_id
-        self._finder_type_name = finder_type_name
-        self._omitted_location = omitted_location
-        self._origin = origin
-        self._standard_attempt_id = standard_attempt_id
-        self._state_before = state_before
-        self._state_after = state_after
-        self._candidate_path = candidate_path
-        self._event_seqs = event_seqs
-        self._next_observation = next_observation
+    explanation_id: str
+    kind: str
+    confidence: str
+    subject: str
+    effect_status: str
+    cause_finding_id: str | None
+    finder_type_name: str
+    omitted_location: str
+    candidate_path: str
+    event_seqs: tuple[int, ...]
+    next_observation: str | None
+    origin: str | None = None
+    standard_attempt_id: int | None = None
+    later_finders: tuple[str, ...] = ()
+    boundary: str | None = None
+    state_before: ModuleCacheState | None = None
+    state_after: ModuleCacheState | None = None
+    alternatives: tuple[str, ...] = ()
 
 
 class EarlySiteBootstrap(_Record):
     """Report-safe provenance for generated early site activation."""
 
-    __slots__ = ("_activation_source", "_earlier_pth_files", "_path", "_site_packages")
-    _fields = ("path", "site_packages", "activation_source", "earlier_pth_files")
-    path = _ReadOnlyField[str]("_path")
-    site_packages = _ReadOnlyField[str]("_site_packages")
-    activation_source = _ReadOnlyField[str]("_activation_source")
-    earlier_pth_files = _ReadOnlyField[tuple[str, ...]]("_earlier_pth_files")
-
-    def __init__(
-        self,
-        path: str,
-        site_packages: str,
-        activation_source: str,
-        earlier_pth_files: tuple[str, ...],
-    ) -> None:
-        self._path = path
-        self._site_packages = site_packages
-        self._activation_source = activation_source
-        self._earlier_pth_files = earlier_pth_files
+    path: str
+    site_packages: str
+    activation_source: str
+    earlier_pth_files: tuple[str, ...]
 
 
 class FrozenBootstrap(_Record):
     """Report-safe provenance for activation inside a frozen application."""
 
-    __slots__ = ("_boundary", "_integration", "_path")
-    _fields = ("integration", "path", "boundary")
-    integration = _ReadOnlyField[str]("_integration")
-    path = _ReadOnlyField[str]("_path")
-    boundary = _ReadOnlyField[str]("_boundary")
-
-    def __init__(self, integration: str, path: str, boundary: str) -> None:
-        self._integration = integration
-        self._path = path
-        self._boundary = boundary
+    integration: str
+    path: str
+    boundary: str
 
 
 class ReportDocument(_Record):
     """One sequence-cutoff snapshot shared by all report renderers."""
 
-    __slots__ = (
-        "_argv",
-        "_attempts",
-        "_baseline_module_count",
-        "_current_importer_cache",
-        "_current_importer_cache_non_string_keys",
-        "_current_meta_path",
-        "_current_path_hooks",
-        "_cutoff_seq",
-        "_cwd",
-        "_deep_diagnostics",
-        "_deep_import_outcomes_status",
-        "_early_site_bootstrap",
-        "_events",
-        "_explanations",
-        "_finder_contracts",
-        "_findings",
-        "_frozen_bootstrap",
-        "_generated_at",
-        "_importer_cache_coalesced",
-        "_importer_cache_enabled",
-        "_importer_cache_observations",
-        "_initial_importer_cache",
-        "_initial_importer_cache_non_string_keys",
-        "_initial_meta_path",
-        "_initial_path_hooks",
-        "_loader_inventory",
-        "_modules_since_install",
-        "_monitor_enabled",
-        "_path_hooks_enabled",
-        "_report_errors",
-        "_resolution_routes",
-        "_route_comparisons",
-        "_skipped_finders",
-        "_standard_finder_status",
-        "_standard_resolutions",
-        "_summary",
-        "_sys_path_enabled",
-        "_target_outcome",
-    )
-    _fields = (
-        "generated_at",
-        "attempts",
-        "cutoff_seq",
-        "monitor_enabled",
-        "baseline_module_count",
-        "initial_meta_path",
-        "current_meta_path",
-        "path_hooks_enabled",
-        "initial_path_hooks",
-        "current_path_hooks",
-        "importer_cache_enabled",
-        "initial_importer_cache",
-        "initial_importer_cache_non_string_keys",
-        "current_importer_cache",
-        "current_importer_cache_non_string_keys",
-        "importer_cache_observations",
-        "importer_cache_coalesced",
-        "loader_inventory",
-        "modules_since_install",
-        "events",
-        "explanations",
-        "early_site_bootstrap",
-        "frozen_bootstrap",
-        "deep_diagnostics",
-        "deep_import_outcomes_status",
-        "skipped_finders",
-        "standard_resolutions",
-        "standard_finder_status",
-        "findings",
-        "resolution_routes",
-        "route_comparisons",
-        "finder_contracts",
-        "report_errors",
-        "summary",
-        "sys_path_enabled",
-        "target_outcome",
-        "cwd",
-        "argv",
-    )
-    generated_at = _ReadOnlyField[str]("_generated_at")
-    attempts = _ReadOnlyField[tuple[ImportAttempt, ...]]("_attempts")
-    cutoff_seq = _ReadOnlyField[int]("_cutoff_seq")
-    monitor_enabled = _ReadOnlyField[bool]("_monitor_enabled")
-    baseline_module_count = _ReadOnlyField[int]("_baseline_module_count")
-    initial_meta_path = _ReadOnlyField[tuple[str, ...]]("_initial_meta_path")
-    current_meta_path = _ReadOnlyField[tuple[str, ...] | None]("_current_meta_path")
-    path_hooks_enabled = _ReadOnlyField[bool]("_path_hooks_enabled")
-    initial_path_hooks = _ReadOnlyField[tuple[ObjectRef, ...]]("_initial_path_hooks")
-    current_path_hooks = _ReadOnlyField[tuple[ObjectRef, ...] | None]("_current_path_hooks")
-    importer_cache_enabled = _ReadOnlyField[bool]("_importer_cache_enabled")
-    initial_importer_cache = _ReadOnlyField[tuple[ImporterCacheEntry, ...]]("_initial_importer_cache")
-    initial_importer_cache_non_string_keys = _ReadOnlyField[int]("_initial_importer_cache_non_string_keys")
-    current_importer_cache = _ReadOnlyField[tuple[ImporterCacheEntry, ...] | None]("_current_importer_cache")
-    current_importer_cache_non_string_keys = _ReadOnlyField[int | None]("_current_importer_cache_non_string_keys")
-    importer_cache_observations = _ReadOnlyField[int]("_importer_cache_observations")
-    importer_cache_coalesced = _ReadOnlyField[int]("_importer_cache_coalesced")
-    loader_inventory = _ReadOnlyField[LoaderInventory]("_loader_inventory")
-    modules_since_install = _ReadOnlyField[tuple[str, ...] | None]("_modules_since_install")
-    events = _ReadOnlyField[tuple[MonitorEvent, ...]]("_events")
-    explanations = _ReadOnlyField[tuple[CausalExplanation, ...]]("_explanations")
-    early_site_bootstrap = _ReadOnlyField[EarlySiteBootstrap | None]("_early_site_bootstrap")
-    frozen_bootstrap = _ReadOnlyField[FrozenBootstrap | None]("_frozen_bootstrap")
-    deep_diagnostics = _ReadOnlyField[tuple[str, ...]]("_deep_diagnostics")
-    deep_import_outcomes_status = _ReadOnlyField[str]("_deep_import_outcomes_status")
-    skipped_finders = _ReadOnlyField[tuple[SkippedFinder, ...]]("_skipped_finders")
-    standard_resolutions = _ReadOnlyField[tuple[StandardResolution, ...]]("_standard_resolutions")
-    standard_finder_status = _ReadOnlyField[str]("_standard_finder_status")
-    findings = _ReadOnlyField[tuple[Finding, ...]]("_findings")
-    resolution_routes = _ReadOnlyField[tuple[ResolutionRoute, ...]]("_resolution_routes")
-    route_comparisons = _ReadOnlyField[tuple[RouteComparison, ...]]("_route_comparisons")
-    finder_contracts = _ReadOnlyField[tuple[FinderContract, ...]]("_finder_contracts")
-    report_errors = _ReadOnlyField[tuple[ReportError, ...]]("_report_errors")
-    summary = _ReadOnlyField[ReportSummary]("_summary")
-    sys_path_enabled = _ReadOnlyField[bool]("_sys_path_enabled")
-    target_outcome = _ReadOnlyField[TargetOutcome | None]("_target_outcome")
-    cwd = _ReadOnlyField[str | None]("_cwd")
-    argv = _ReadOnlyField[tuple[str, ...]]("_argv")
-
-    def __init__(
-        self,
-        *,
-        generated_at: str,
-        attempts: tuple[ImportAttempt, ...],
-        cutoff_seq: int,
-        monitor_enabled: bool,
-        baseline_module_count: int,
-        initial_meta_path: tuple[str, ...],
-        current_meta_path: tuple[str, ...] | None,
-        path_hooks_enabled: bool,
-        initial_path_hooks: tuple[ObjectRef, ...],
-        current_path_hooks: tuple[ObjectRef, ...] | None,
-        importer_cache_enabled: bool,
-        initial_importer_cache: tuple[ImporterCacheEntry, ...],
-        initial_importer_cache_non_string_keys: int,
-        current_importer_cache: tuple[ImporterCacheEntry, ...] | None,
-        current_importer_cache_non_string_keys: int | None,
-        importer_cache_observations: int,
-        importer_cache_coalesced: int,
-        loader_inventory: LoaderInventory,
-        modules_since_install: tuple[str, ...] | None,
-        events: tuple[MonitorEvent, ...],
-        explanations: tuple[CausalExplanation, ...],
-        early_site_bootstrap: EarlySiteBootstrap | None,
-        frozen_bootstrap: FrozenBootstrap | None,
-        deep_diagnostics: tuple[str, ...],
-        deep_import_outcomes_status: str,
-        skipped_finders: tuple[SkippedFinder, ...],
-        standard_resolutions: tuple[StandardResolution, ...],
-        standard_finder_status: str,
-        findings: tuple[Finding, ...],
-        resolution_routes: tuple[ResolutionRoute, ...],
-        route_comparisons: tuple[RouteComparison, ...],
-        finder_contracts: tuple[FinderContract, ...],
-        report_errors: tuple[ReportError, ...],
-        summary: ReportSummary,
-        sys_path_enabled: bool,
-        target_outcome: TargetOutcome | None,
-        cwd: str | None,
-        argv: tuple[str, ...],
-    ) -> None:
-        self._generated_at = generated_at
-        self._attempts = attempts
-        self._cutoff_seq = cutoff_seq
-        self._monitor_enabled = monitor_enabled
-        self._baseline_module_count = baseline_module_count
-        self._initial_meta_path = initial_meta_path
-        self._current_meta_path = current_meta_path
-        self._path_hooks_enabled = path_hooks_enabled
-        self._initial_path_hooks = initial_path_hooks
-        self._current_path_hooks = current_path_hooks
-        self._importer_cache_enabled = importer_cache_enabled
-        self._initial_importer_cache = initial_importer_cache
-        self._initial_importer_cache_non_string_keys = initial_importer_cache_non_string_keys
-        self._current_importer_cache = current_importer_cache
-        self._current_importer_cache_non_string_keys = current_importer_cache_non_string_keys
-        self._importer_cache_observations = importer_cache_observations
-        self._importer_cache_coalesced = importer_cache_coalesced
-        self._loader_inventory = loader_inventory
-        self._modules_since_install = modules_since_install
-        self._events = events
-        self._explanations = explanations
-        self._early_site_bootstrap = early_site_bootstrap
-        self._frozen_bootstrap = frozen_bootstrap
-        self._deep_diagnostics = deep_diagnostics
-        self._deep_import_outcomes_status = deep_import_outcomes_status
-        self._skipped_finders = skipped_finders
-        self._standard_resolutions = standard_resolutions
-        self._standard_finder_status = standard_finder_status
-        self._findings = findings
-        self._resolution_routes = resolution_routes
-        self._route_comparisons = route_comparisons
-        self._finder_contracts = finder_contracts
-        self._report_errors = report_errors
-        self._summary = summary
-        self._sys_path_enabled = sys_path_enabled
-        self._target_outcome = target_outcome
-        self._cwd = cwd
-        self._argv = argv
+    generated_at: str
+    attempts: tuple[ImportAttempt, ...]
+    cutoff_seq: int
+    monitor_enabled: bool
+    baseline_module_count: int
+    initial_meta_path: tuple[str, ...]
+    current_meta_path: tuple[str, ...] | None
+    path_hooks_enabled: bool
+    initial_path_hooks: tuple[ObjectRef, ...]
+    current_path_hooks: tuple[ObjectRef, ...] | None
+    importer_cache_enabled: bool
+    initial_importer_cache: tuple[ImporterCacheEntry, ...]
+    initial_importer_cache_non_string_keys: int
+    current_importer_cache: tuple[ImporterCacheEntry, ...] | None
+    current_importer_cache_non_string_keys: int | None
+    importer_cache_observations: int
+    importer_cache_coalesced: int
+    loader_inventory: LoaderInventory
+    modules_since_install: tuple[str, ...] | None
+    events: tuple[MonitorEvent, ...]
+    explanations: tuple[CausalExplanation, ...]
+    early_site_bootstrap: EarlySiteBootstrap | None
+    frozen_bootstrap: FrozenBootstrap | None
+    deep_diagnostics: tuple[str, ...]
+    deep_import_outcomes_status: str
+    skipped_finders: tuple[SkippedFinder, ...]
+    standard_resolutions: tuple[StandardResolution, ...]
+    standard_finder_status: str
+    findings: tuple[Finding, ...]
+    resolution_routes: tuple[ResolutionRoute, ...]
+    route_comparisons: tuple[RouteComparison, ...]
+    finder_contracts: tuple[FinderContract, ...]
+    report_errors: tuple[ReportError, ...]
+    summary: ReportSummary
+    sys_path_enabled: bool
+    target_outcome: TargetOutcome | None
+    cwd: str | None
+    argv: tuple[str, ...]
 
 
 def capture_document(monitor: "Monitor") -> ReportDocument:
