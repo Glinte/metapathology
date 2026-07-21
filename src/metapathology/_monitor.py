@@ -85,6 +85,7 @@ if TYPE_CHECKING:
     ]
 
     _FindSpec = Callable[[str, Sequence[str] | None, ModuleType | None], ModuleSpec | None]
+    _ProfileFunction = Callable[[FrameType, str, object], object]
     _ImportListItemT = TypeVar("_ImportListItemT")
     _MetaPathEntry = MetaPathFinderProtocol
     _PathHook = Callable[[str], PathEntryFinderProtocol]
@@ -257,6 +258,31 @@ class MonitorSnapshot(_Record):
     target_outcome: _TargetOutcomeState | None
 
 
+class _OwnedValue(_Record):
+    """A process-global value replaced by this monitor installation."""
+
+    previous: object
+    installed: object
+
+
+class _OwnedAttribute(_Record):
+    """An instance-dict shadow owned by this monitor installation."""
+
+    target: object
+    name: str
+    previous: object
+    installed: object
+
+
+class _FinderPatch(_Record):
+    """A finder claim or committed instance-dict shadow."""
+
+    finder: object
+    original: "_FindSpec | None"
+    previous: object
+    installed: object
+
+
 class _ThreadState(threading.local):
     """Per-thread re-entrancy flag with a default for newly seen threads."""
 
@@ -407,6 +433,7 @@ class Monitor:
         self._audit_installed = False
         # Whether our atexit callback is currently registered (mirrors it for unregister).
         self._report_at_exit = False
+        self._atexit_callback = self._report_atexit
         # Resolved automatic report destination. None means stderr. The PID is
         # added only when an automatic file report is written; explicit paths
         # passed to write_report() remain unchanged.
@@ -420,16 +447,19 @@ class Monitor:
         # The exact list object we last put into sys.meta_path. The audit hook
         # compares by identity: a mismatch means someone reassigned sys.meta_path.
         self._instrumented: _InstrumentedMetaPath | None = None
+        self._meta_path_lease: _OwnedValue | None = None
         # Path-hooks monitoring is independently enableable. Observed hooks remain strongly
         # referenced while active so recorded ids cannot be reused mid-capture.
         self._path_hooks_enabled = False
         self._instrumented_path_hooks: _InstrumentedPathHooks | None = None
+        self._path_hooks_lease: _OwnedValue | None = None
         self._initial_path_hooks: tuple[ObjectRef, ...] = ()
         self._observed_path_hooks: dict[int, object] = {}
         # Opt-in because replacing sys.path has a wider compatibility surface
         # than observing the import-specific lists enabled by default.
         self._sys_path_enabled = False
         self._instrumented_sys_path: _InstrumentedSysPath | None = None
+        self._sys_path_lease: _OwnedValue | None = None
         # Importer-cache diffing retains one install snapshot and one rolling
         # comparison snapshot.
         # Full observations are coalesced when one is already in progress;
@@ -447,9 +477,9 @@ class Monitor:
         self._observed_cache_finders: dict[int, object] = {}
         # Both dicts key by id(finder) and hold strong finder references, keeping ids
         # unique for the process lifetime.
-        # id -> (finder, callable find_spec, previous instance-dict value). A
-        # None callable marks an in-progress claim so callers cannot double-wrap.
-        self._patched: dict[int, tuple[object, _FindSpec | None, object]] = {}
+        # A None original marks an in-progress claim so callers cannot
+        # double-wrap the same finder.
+        self._patched: dict[int, _FinderPatch] = {}
         # id -> (finder, human-readable reason it could not be instrumented).
         self._skipped: dict[int, tuple[object, str]] = {}
         # sys.modules names at install time; the report analyzes only modules
@@ -468,9 +498,11 @@ class Monitor:
         self._standard_finder_status: StandardFinderStatus = "disabled"
         self._deep_import_code: types.CodeType | None = None
         self._path_finder_code: types.CodeType | None = None
+        self._sys_profile_lease: _OwnedValue | None = None
+        self._thread_profile_lease: _OwnedValue | None = None
         self._deep_hook_wrappers: dict[int, _DeepPathHook] = {}
-        self._deep_finder_patches: dict[int, tuple[object, object]] = {}
-        self._deep_loader_patches: dict[int, tuple[object, tuple[tuple[str, object], ...]]] = {}
+        self._deep_finder_patches: dict[int, _OwnedAttribute] = {}
+        self._deep_loader_patches: dict[int, tuple[_OwnedAttribute, ...]] = {}
         # How the monitored target finished, recorded by the CLI (or any
         # embedder) before the report is written. Reduced to plain data at
         # record time; exception messages are never captured.
@@ -758,6 +790,7 @@ class Monitor:
                 finally:
                     self._local.active = False
                 self._instrumented = instrumented
+                self._meta_path_lease = _OwnedValue(current, instrumented)
                 sys.meta_path = instrumented
                 if not self._audit_installed:
                     # Audit hooks are irremovable; _audit goes inert when disabled.
@@ -782,7 +815,7 @@ class Monitor:
                 self._enable_deep_import_outcomes()
         if request.report_at_exit and not self._report_at_exit:
             self._report_at_exit = True
-            atexit.register(self._report_atexit)
+            atexit.register(self._atexit_callback)
 
     def _enable_path_hooks(self) -> None:
         """Install the instrumented list around the current ``sys.path_hooks`` contents."""
@@ -793,6 +826,7 @@ class Monitor:
             self._observed_path_hooks.update((reference.object_id, hook) for reference, hook in zip(initial, contents))
         self._initial_path_hooks = initial
         self._instrumented_path_hooks = instrumented
+        self._path_hooks_lease = _OwnedValue(sys.path_hooks, instrumented)
         self._path_hooks_enabled = True
         sys.path_hooks = instrumented
 
@@ -800,6 +834,7 @@ class Monitor:
         """Install the opt-in mutation observer around current ``sys.path``."""
         instrumented = _InstrumentedSysPath(sys.path, self)
         self._instrumented_sys_path = instrumented
+        self._sys_path_lease = _OwnedValue(sys.path, instrumented)
         self._sys_path_enabled = True
         sys.path = instrumented
 
@@ -823,8 +858,13 @@ class Monitor:
         )
         self._deep_import_outcomes = True
         self._deep_import_outcomes_status = "active_current_and_future_threading_threads_cache_hits_not_observed"
-        threading.setprofile(self._profile_import_boundary)
-        sys.setprofile(self._profile_import_boundary)
+        profile = self._profile_import_boundary
+        previous_thread_profile = threading.getprofile()
+        previous_sys_profile = sys.getprofile()
+        threading.setprofile(profile)
+        self._thread_profile_lease = _OwnedValue(previous_thread_profile, profile)
+        sys.setprofile(profile)
+        self._sys_profile_lease = _OwnedValue(previous_sys_profile, profile)
 
     def _profile_import_boundary(self, frame: "FrameType", event: str, arg: object) -> None:
         """Record paired entry and completion for the captured ``_find_and_load`` code."""
@@ -998,7 +1038,7 @@ class Monitor:
                     self._deep_local.active = False
 
             instance_dict["find_spec"] = wrapped
-            self._deep_finder_patches[id(finder)] = (finder, previous)
+            self._deep_finder_patches[id(finder)] = _OwnedAttribute(finder, "find_spec", previous, wrapped)
         except Exception as exc:
             self._record_internal_error("deep_path_entry_finder", exc)
 
@@ -1006,7 +1046,7 @@ class Monitor:
         """Shadow one mutable loader's modern lifecycle methods when requested."""
         if loader is None or not self._deep_loaders or id(loader) in self._deep_loader_patches:
             return
-        patches: list[tuple[str, object]] = []
+        patches: list[_OwnedAttribute] = []
         instance_dict: dict[str, object] | None = None
         try:
             raw_instance_dict = object.__getattribute__(loader, "__dict__")
@@ -1075,7 +1115,7 @@ class Monitor:
                         self._deep_local.active = False
 
                 instance_dict["create_module"] = wrapped_create
-                patches.append(("create_module", previous_create))
+                patches.append(_OwnedAttribute(loader, "create_module", previous_create, wrapped_create))
 
             try:
                 original_exec = getattr(loader, "exec_module")
@@ -1140,17 +1180,13 @@ class Monitor:
                         self._deep_local.active = False
 
                 instance_dict["exec_module"] = wrapped_exec
-                patches.append(("exec_module", previous_exec))
+                patches.append(_OwnedAttribute(loader, "exec_module", previous_exec, wrapped_exec))
 
             if patches:
-                self._deep_loader_patches[id(loader)] = (loader, tuple(patches))
+                self._deep_loader_patches[id(loader)] = tuple(patches)
         except BaseException as exc:
-            if instance_dict is not None:
-                for name, previous in reversed(patches):
-                    if previous is _MISSING:
-                        instance_dict.pop(name, None)
-                    else:
-                        instance_dict[name] = previous
+            for patch in reversed(patches):
+                self._restore_owned_attribute(patch)
             # Record even a KeyboardInterrupt/SystemExit, but reraise control-flow
             # exceptions after undoing the partial patches; only swallow our own
             # bugs (ordinary Exception) so instrumentation never perturbs the program.
@@ -1211,40 +1247,57 @@ class Monitor:
             self._observe_importer_cache("uninstall")
             self._enabled = False
             if self._deep_import_outcomes:
-                sys.setprofile(None)
-                threading.setprofile(None)
+                sys_profile_lease = self._sys_profile_lease
+                if sys_profile_lease is not None and sys.getprofile() is sys_profile_lease.installed:
+                    sys.setprofile(_cast("_ProfileFunction | None", sys_profile_lease.previous))
+                thread_profile_lease = self._thread_profile_lease
+                if thread_profile_lease is not None and threading.getprofile() is thread_profile_lease.installed:
+                    threading.setprofile(_cast("_ProfileFunction | None", thread_profile_lease.previous))
+                self._sys_profile_lease = None
+                self._thread_profile_lease = None
                 self._deep_import_outcomes = False
                 self._deep_import_code = None
                 self._path_finder_code = None
                 self._deep_import_outcomes_status = "inactive_after_uninstall"
                 self._standard_finder_status = "inactive_after_uninstall"
             current = sys.meta_path
-            if isinstance(current, _InstrumentedMetaPath):
+            meta_path_lease = self._meta_path_lease
+            if meta_path_lease is not None and current is meta_path_lease.installed:
                 sys.meta_path = list(current)
             self._instrumented = None
+            self._meta_path_lease = None
             if self._path_hooks_enabled:
                 try:
-                    sys.path_hooks = list(sys.path_hooks)
+                    path_hooks_lease = self._path_hooks_lease
+                    if path_hooks_lease is not None and sys.path_hooks is path_hooks_lease.installed:
+                        sys.path_hooks = list(sys.path_hooks)
                 except Exception as exc:
                     self._record_internal_error("uninstall_path_hooks", exc)
                 self._path_hooks_enabled = False
                 self._instrumented_path_hooks = None
+                self._path_hooks_lease = None
             if self._sys_path_enabled:
                 try:
-                    sys.path = list(sys.path)
+                    sys_path_lease = self._sys_path_lease
+                    if sys_path_lease is not None and sys.path is sys_path_lease.installed:
+                        sys.path = list(sys.path)
                 except Exception as exc:
                     self._record_internal_error("uninstall_sys_path", exc)
                 self._sys_path_enabled = False
                 self._instrumented_sys_path = None
-            for finder, previous in list(self._deep_finder_patches.values()):
-                self._restore_attribute(finder, "find_spec", previous)
-            for loader, patches in list(self._deep_loader_patches.values()):
-                for name, previous in reversed(patches):
-                    self._restore_attribute(loader, name, previous)
+                self._sys_path_lease = None
+            for patch in list(self._deep_finder_patches.values()):
+                self._restore_owned_attribute(patch)
+            for patches in list(self._deep_loader_patches.values()):
+                for patch in reversed(patches):
+                    self._restore_owned_attribute(patch)
             if self._deep_hook_wrappers:
                 try:
-                    restored = [self._original_path_hook(hook) for hook in list(sys.path_hooks)]
-                    sys.path_hooks = _cast("list[_PathHook]", restored)
+                    current_hooks = sys.path_hooks
+                    for index, hook in enumerate(list(current_hooks)):
+                        wrapper = self._deep_hook_wrappers.get(id(hook))
+                        if wrapper is not None and wrapper is hook:
+                            list.__setitem__(current_hooks, index, wrapper.hook)
                 except Exception as exc:
                     self._record_internal_error("uninstall_deep_path_hooks", exc)
             self._deep_hook_wrappers.clear()
@@ -1253,8 +1306,8 @@ class Monitor:
             self._deep_path_hooks = False
             self._deep_path_entry_finders = False
             self._deep_loaders = False
-            for finder, _original, previous in list(self._patched.values()):
-                self._restore_attribute(finder, "find_spec", previous)
+            for patch in list(self._patched.values()):
+                self._restore_finder_patch(patch)
             with self._record_lock:
                 self._patched.clear()
                 self._skipped.clear()
@@ -1266,10 +1319,21 @@ class Monitor:
                 self._importer_cache_observation_active = False
         if self._report_at_exit:
             self._report_at_exit = False
-            atexit.unregister(self._report_atexit)
+            atexit.unregister(self._atexit_callback)
+
+    @classmethod
+    def _restore_owned_attribute(cls, patch: _OwnedAttribute) -> None:
+        """Restore an attribute only while the installed shadow is still owned."""
+        cls._restore_attribute(patch.target, patch.name, patch.previous, patch.installed)
+
+    @classmethod
+    def _restore_finder_patch(cls, patch: _FinderPatch) -> None:
+        """Restore a committed finder shadow without disturbing a replacement."""
+        if patch.installed is not _MISSING:
+            cls._restore_attribute(patch.finder, "find_spec", patch.previous, patch.installed)
 
     @staticmethod
-    def _restore_attribute(obj: object, name: str, previous: object) -> None:
+    def _restore_attribute(obj: object, name: str, previous: object, installed: object) -> None:
         """Restore an instance-dict shadow without invoking foreign setters.
 
         Idempotent: ``uninstall()`` and a racing instrumentation attempt may both
@@ -1283,13 +1347,16 @@ class Monitor:
             obj: The shadowed (or claimed) object.
             name: The instance-dict key to reset.
             previous: The prior value, or ``_MISSING`` if the key was absent.
+            installed: The exact shadow this monitor installed.
         """
         try:
             instance_dict = object.__getattribute__(obj, "__dict__")
             if type(instance_dict) is not dict:
                 return
+            if instance_dict.get(name, _MISSING) is not installed:
+                return
             if previous is _MISSING:
-                del instance_dict[name]
+                instance_dict.pop(name, None)
             else:
                 instance_dict[name] = previous
         except Exception:
@@ -1485,6 +1552,7 @@ class Monitor:
                     self._observe_finder_contract(finder, position, "reassignment", None)
                     self._instrument_finder(finder)
                 self._instrumented = replacement
+                self._meta_path_lease = _OwnedValue(current_meta_path, replacement)
                 sys.meta_path = replacement
                 meta_data = (old_contents, new_contents)
 
@@ -1501,6 +1569,7 @@ class Monitor:
                 new_hook_contents = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in new_hooks)
                 path_replacement = _InstrumentedPathHooks(new_hooks, self)
                 self._instrumented_path_hooks = path_replacement
+                self._path_hooks_lease = _OwnedValue(current_path_hooks, path_replacement)
                 sys.path_hooks = path_replacement
                 with self._record_lock:
                     self._observed_path_hooks.update((id(hook), hook) for hook in (*old_hooks, *new_hooks))
@@ -1515,6 +1584,7 @@ class Monitor:
                 new_paths = tuple(_path_item_name(item) for item in list(current_sys_path))
                 sys_path_replacement = _InstrumentedSysPath(current_sys_path, self)
                 self._instrumented_sys_path = sys_path_replacement
+                self._sys_path_lease = _OwnedValue(current_sys_path, sys_path_replacement)
                 sys.path = sys_path_replacement
                 sys_path_data = (old_paths, new_paths)
         if meta_data is None and path_hooks_data is None and sys_path_data is None:
@@ -1576,7 +1646,7 @@ class Monitor:
             if finder_id in self._patched or finder_id in self._skipped:
                 return
             # Claim the id before touching the finder so concurrent callers don't double-wrap.
-            self._patched[finder_id] = (finder, None, _MISSING)
+            self._patched[finder_id] = _FinderPatch(finder, None, _MISSING, _MISSING)
         if isinstance(finder, type):
             # Class entries (PathFinder and friends) are shared stdlib state; never mutate them.
             reason = (
@@ -1615,7 +1685,7 @@ class Monitor:
             # uninstall() restores the same state our own undo would.
             if not self._enabled or finder_id not in self._patched:
                 return
-            self._patched[finder_id] = (finder, None, previous)
+            self._patched[finder_id] = _FinderPatch(finder, None, previous, _MISSING)
         wrapper = self._make_find_spec_wrapper(type_name(finder), finder_id, typed_original)
         try:
             setattr(finder, "find_spec", wrapper)
@@ -1640,12 +1710,12 @@ class Monitor:
         with self._record_lock:
             committed = self._enabled and finder_id in self._patched
             if committed:
-                self._patched[finder_id] = (finder, typed_original, previous)
+                self._patched[finder_id] = _FinderPatch(finder, typed_original, previous, wrapper)
         if not committed:
             # Lost the race with uninstall(): undo the shadow ourselves, outside
             # _record_lock. Idempotent against uninstall()'s own restore in
             # either order.
-            self._restore_attribute(finder, "find_spec", previous)
+            self._restore_attribute(finder, "find_spec", previous, wrapper)
 
     def _skip_finder(self, finder_id: int, finder: object, reason: str) -> None:
         """Mark a finder as uninstrumentable, releasing any claim taken by ``_instrument_finder``.

@@ -548,3 +548,88 @@ def test_exact_outcomes_refuse_an_existing_profiler(run_python: RunPython) -> No
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "OK"
+
+
+def test_exact_outcomes_preserve_later_profiler_replacements(run_python: RunPython) -> None:
+    proc = run_python(
+        "import sys, threading, metapathology\n"
+        "monitor = metapathology.install(report_at_exit=False, deep_import_outcomes=True)\n"
+        "sys_profile = lambda frame, event, arg: None\n"
+        "thread_profile = lambda frame, event, arg: None\n"
+        "sys.setprofile(sys_profile)\n"
+        "threading.setprofile(thread_profile)\n"
+        "metapathology.uninstall()\n"
+        "assert sys.getprofile() is sys_profile\n"
+        "assert threading.getprofile() is thread_profile\n"
+        "sys.setprofile(None)\n"
+        "threading.setprofile(None)\n"
+        "print('OK')\n"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+def test_deep_path_entry_finder_preserves_later_shadow(run_python: RunPython) -> None:
+    proc = run_python(
+        "import sys, metapathology\n"
+        "class Finder:\n"
+        "    def find_spec(self, fullname, target=None): return None\n"
+        "finder = Finder()\n"
+        "sys.path_importer_cache['owned-finder-probe'] = finder\n"
+        "metapathology.install(report_at_exit=False, deep_path_entry_finders=True)\n"
+        "replacement = lambda fullname, target=None: None\n"
+        "finder.find_spec = replacement\n"
+        "metapathology.uninstall()\n"
+        "assert finder.__dict__['find_spec'] is replacement\n"
+        "print('OK')\n"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+def test_deep_loader_preserves_later_method_shadows(run_python: RunPython) -> None:
+    proc = run_python(
+        "import importlib.util, sys, metapathology\n"
+        "class Loader:\n"
+        "    def create_module(self, spec): return None\n"
+        "    def exec_module(self, module): module.VALUE = 1\n"
+        "class Finder:\n"
+        "    def __init__(self, loader): self.loader = loader\n"
+        "    def find_spec(self, fullname, path=None, target=None):\n"
+        "        if fullname == 'owned_loader_probe':\n"
+        "            return importlib.util.spec_from_loader(fullname, self.loader)\n"
+        "        return None\n"
+        "loader = Loader()\n"
+        "finder = Finder(loader)\n"
+        "sys.meta_path.insert(0, finder)\n"
+        "metapathology.install(report_at_exit=False, deep_loaders=True)\n"
+        "import owned_loader_probe\n"
+        "replacement_create = lambda spec: None\n"
+        "replacement_exec = lambda module: None\n"
+        "loader.create_module = replacement_create\n"
+        "loader.exec_module = replacement_exec\n"
+        "metapathology.uninstall()\n"
+        "assert loader.__dict__['create_module'] is replacement_create\n"
+        "assert loader.__dict__['exec_module'] is replacement_exec\n"
+        "sys.meta_path.remove(finder)\n"
+        "print('OK')\n"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+def test_deep_path_hooks_restore_only_owned_wrappers(run_python: RunPython) -> None:
+    proc = run_python(
+        "import sys, metapathology\n"
+        "original_hooks = list(sys.path_hooks)\n"
+        "metapathology.install(report_at_exit=False, monitor_path_hooks=True, deep_path_hooks=True)\n"
+        "replacement = lambda path: (_ for _ in ()).throw(ImportError)\n"
+        "sys.path_hooks[0] = replacement\n"
+        "metapathology.uninstall()\n"
+        "assert sys.path_hooks[0] is replacement\n"
+        "assert all(current is original for current, original in zip(sys.path_hooks[1:], original_hooks[1:]))\n"
+        "sys.path_hooks = original_hooks\n"
+        "print('OK')\n"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"

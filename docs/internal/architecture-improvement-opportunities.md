@@ -45,6 +45,13 @@ Apply this convention to:
 This makes reversibility a shared lifecycle invariant instead of a collection
 of mechanism-specific checks.
 
+Status: complete for resource ownership. Profiler callbacks and import-list
+installations retain explicit owned values; finder, path-entry finder, and
+loader shadows retain both their prior and installed values; deep path-hook
+cleanup replaces only wrappers still owned by the monitor; and the exact
+registered exit callback is retained. Cleanup preserves any later third-party
+replacement. Lifecycle transition serialization remains item 1.
+
 ## 3. Introduce an explicit monitor snapshot contract
 
 Reporting currently copies the event cutoff and then reads other monitor-owned

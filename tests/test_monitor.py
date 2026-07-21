@@ -795,6 +795,75 @@ def test_concurrent_uninstall_is_idempotent(run_python: RunPython) -> None:
     assert "OK" in proc.stdout
 
 
+UNINSTALL_PRESERVES_REPLACEMENTS = """
+import sys
+
+import metapathology
+
+original_meta_path = sys.meta_path
+original_path_hooks = sys.path_hooks
+original_sys_path = sys.path
+monitor = metapathology.install(
+    report_at_exit=False,
+    monitor_path_hooks=True,
+    monitor_sys_path=True,
+)
+replacement_meta_path = []
+replacement_path_hooks = []
+replacement_sys_path = []
+sys.meta_path = replacement_meta_path
+sys.path_hooks = replacement_path_hooks
+sys.path = replacement_sys_path
+
+metapathology.uninstall()
+
+assert sys.meta_path is replacement_meta_path
+assert sys.path_hooks is replacement_path_hooks
+assert sys.path is replacement_sys_path
+sys.meta_path = original_meta_path
+sys.path_hooks = original_path_hooks
+sys.path = original_sys_path
+print("OK")
+"""
+
+
+def test_uninstall_preserves_replaced_import_lists(run_python: RunPython) -> None:
+    proc = run_python(UNINSTALL_PRESERVES_REPLACEMENTS)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+UNINSTALL_PRESERVES_FINDER_REPLACEMENT = """
+import sys
+
+import metapathology
+
+class Finder:
+    def find_spec(self, fullname, path=None, target=None):
+        return None
+
+finder = Finder()
+sys.meta_path.insert(0, finder)
+metapathology.install(report_at_exit=False)
+
+def replacement(fullname, path=None, target=None):
+    return None
+
+finder.find_spec = replacement
+metapathology.uninstall()
+
+assert finder.__dict__["find_spec"] is replacement
+sys.meta_path.remove(finder)
+print("OK")
+"""
+
+
+def test_uninstall_preserves_replaced_finder_shadow(run_python: RunPython) -> None:
+    proc = run_python(UNINSTALL_PRESERVES_FINDER_REPLACEMENT)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
 # On a reinstall the audit hook is already registered and _enabled is set
 # before the finder-instrumentation loop runs, so an import triggered from a
 # finder's lazy find_spec attribute re-enters _reinstall on the same thread
