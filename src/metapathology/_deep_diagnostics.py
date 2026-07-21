@@ -149,7 +149,7 @@ class _DeepDiagnostics:
         typed_hook = _cast("_PathHook", hook)
         if id(hook) in self._deep_hook_wrappers:
             return typed_hook
-        wrapper = self._make_deep_path_hook(typed_hook)
+        wrapper = _DeepPathHook(self, typed_hook)
         self._deep_hook_wrappers[id(wrapper)] = wrapper
         return wrapper
 
@@ -271,21 +271,9 @@ class _DeepDiagnostics:
         """Replace current path hooks with wrappers only after explicit opt-in."""
         self._deep_path_hooks = True
         for index, hook in enumerate(list(sys.path_hooks)):
-            wrapper = self._make_deep_path_hook(hook)
+            wrapper = _DeepPathHook(self, hook)
             self._deep_hook_wrappers[id(wrapper)] = wrapper
             list.__setitem__(sys.path_hooks, index, wrapper)
-
-    def _make_deep_path_hook(self, hook: "_PathHook") -> "_DeepPathHook":
-        """Return an exact-delegating path-hook wrapper.
-
-        The wrapper compares equal to (and hashes as) the hook it shadows so
-        that third parties scanning ``sys.path_hooks`` by equality still find
-        their own hook. PyInstaller's ``PyiFrozenFinder.fallback_finder`` does
-        exactly this (``hook == self.path_hook``) to locate the hooks after its
-        own and build a fallback ``FileFinder`` for on-disk extension modules;
-        a wrapper that did not compare equal silently disabled that fallback.
-        """
-        return _DeepPathHook(self, hook)
 
     def instrument_path_entry_finder(self, finder: object, path: str | None = None) -> None:
         """Shadow one mutable path-entry finder's find_spec when requested."""
