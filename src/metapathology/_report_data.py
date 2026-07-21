@@ -95,6 +95,32 @@ if TYPE_CHECKING:
     ]
     FindingSeverity = Literal["actionable", "warning", "informational"]
     FindingSubjectKind = Literal["module", "finder", "path"]
+    FindingKind = Literal[
+        "failed_after_mutation",
+        "finder_side_effect",
+        "legacy_finder_contract",
+        "module_replacement",
+        "namespace_truncation",
+        "no_spec",
+        "path_hook_shadow",
+        "regular_module_shadows_namespace",
+        "repeated_load_failure",
+        "repeated_loader_execution",
+    ]
+    FindingEvidenceLevel = Literal["post_hoc", "captured", "correlated", "structural_inference"]
+    ImportPresence = Literal["unknown", "present_at_report", "absent_at_report"]
+    ResolutionCategory = Literal["namespace", "built_in", "frozen", "source", "bytecode", "extension", "zip"]
+    StatePhase = Literal["import", "report"]
+    StandardEvidenceLevel = Literal["captured", "inferred"]
+    RouteKind = Literal["captured_claim", "standard_path_probe"]
+    RoutePurpose = Literal[
+        "record_selected_custom_meta_path_route",
+        "show_standard_path_route_bypassed_by_captured_claim",
+    ]
+    RouteEvidenceLevel = Literal["captured", "live_probe"]
+    RouteStatus = Literal["found", "not_found", "failed", "target_unavailable"]
+    SearchPathPhase = Literal["import"]
+    LocationsComparisonState = Literal["not_applicable", "captured", "post_hoc", "deferred", "failed", "unavailable"]
 
 
 _MODULE_FILE_SUFFIXES = (".py", ".pyc", ".pyd", ".so")
@@ -161,7 +187,7 @@ class ImportAttempt(_Record):
     thread_id: int
     thread_name: str
     progress: str
-    presence: str
+    presence: "ImportPresence"
 
 
 class StandardResolution(_Record):
@@ -170,11 +196,11 @@ class StandardResolution(_Record):
     attempt_id: int
     fullname: str
     finder_type_name: str
-    category: str
+    category: "ResolutionCategory"
     loader_type_name: str | None
     origin: str | None
-    evidence_level: str
-    state_phase: str
+    evidence_level: "StandardEvidenceLevel"
+    state_phase: "StatePhase"
     event_seq: int | None
     component_event_seqs: tuple[int, ...]
     later_finders: tuple[str, ...]
@@ -185,21 +211,21 @@ class ResolutionRoute(_Record):
 
     route_id: str
     module: str
-    kind: str
-    purpose: str
+    kind: "RouteKind"
+    purpose: "RoutePurpose"
     limitations: tuple[str, ...]
-    evidence_level: str
-    state_phase: str
+    evidence_level: "RouteEvidenceLevel"
+    state_phase: "StatePhase"
     predicts_alternative_winner: bool
     finder_type_name: str
     finder_id: int | None
-    status: str
+    status: "RouteStatus"
     spec_summary: SpecSummary | None
     exception_type_name: str | None
     event_seq: int | None
     search_path: tuple[str, ...]
     search_path_kind: str
-    search_path_phase: str
+    search_path_phase: "SearchPathPhase"
     signals: tuple[str, ...] = ()
 
 
@@ -211,7 +237,7 @@ class StructuralComparison(_Record):
     importer_cache_changed_paths: tuple[str, ...]
     importer_cache_event_seqs: tuple[int, ...]
     # Constant discriminator; not a constructor argument.
-    evidence_level: str = "structural_comparison"
+    evidence_level: 'Literal["structural_comparison"]' = "structural_comparison"
 
 
 class RouteComparison(_Record):
@@ -229,8 +255,8 @@ class RouteComparison(_Record):
     only_in_left_route: tuple[str, ...]
     only_in_right_route: tuple[str, ...]
     locations_reordered: bool | None
-    left_locations_state: str
-    right_locations_state: str
+    left_locations_state: "LocationsComparisonState"
+    right_locations_state: "LocationsComparisonState"
     structural_comparison: StructuralComparison
 
 
@@ -261,14 +287,14 @@ class Finding(_Record):
     """Structured evidence for one human or machine-readable finding."""
 
     finding_id: str
-    kind: str
+    kind: "FindingKind"
     module: str
     claim: FindSpecCall | None = None
     route_ids: tuple[str, ...] = ()
     route_comparison_id: str | None = None
     structural_comparison: StructuralComparison | None = None
     deep_call: DeepDiagnosticCall | None = None
-    evidence_level: str = "post_hoc"
+    evidence_level: "FindingEvidenceLevel" = "post_hoc"
     limitations: tuple[str, ...] = ()
     subject_kind: "FindingSubjectKind" = "module"
     finder_contract: FinderContract | None = None
@@ -720,7 +746,7 @@ def _standard_resolutions(
 
 def _standard_spec_classification(
     summary: SpecSummary | None,
-) -> tuple[str, str, str | None, str | None] | None:
+) -> "tuple[str, ResolutionCategory, str | None, str | None] | None":
     """Classify only loader shapes owned by CPython's standard finders."""
     if summary is None:
         return None
@@ -732,7 +758,7 @@ def _standard_spec_classification(
         return "BuiltinImporter", "built_in", loader_type_name, origin
     if loader_type_name == "FrozenImporter":
         return "FrozenImporter", "frozen", loader_type_name, origin
-    categories = {
+    categories: dict[str, ResolutionCategory] = {
         "SourceFileLoader": "source",
         "SourcelessFileLoader": "bytecode",
         "ExtensionFileLoader": "extension",
@@ -1920,7 +1946,7 @@ def _standard_path_route(
     name: str,
     search_path: tuple[str, ...],
     search_path_kind: str,
-    status: str,
+    status: "RouteStatus",
     spec_summary: SpecSummary | None = None,
     exception_type_name: str | None = None,
 ) -> ResolutionRoute:
