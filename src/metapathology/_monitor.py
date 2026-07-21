@@ -932,31 +932,16 @@ class Monitor:
             list.__setitem__(sys.path_hooks, index, wrapper)
 
     def _make_deep_path_hook(self, hook: "_PathHook") -> "_PathHook":
-        """Return an exact-delegating path-hook wrapper."""
-        hook_id = id(hook)
-        hook_name = type_name(hook)
+        """Return an exact-delegating path-hook wrapper.
 
-        @functools.wraps(hook, assigned=(), updated=())
-        def wrapped(path: str) -> "PathEntryFinderProtocol":
-            if not self._enabled or getattr(self._local, "report_analysis", False):
-                return hook(path)
-            if self._deep_local.active:
-                self._record_deep_call("path_hook", hook_id, hook_name, None, path, "unobserved_reentrant", None)
-                return hook(path)
-            self._deep_local.active = True
-            try:
-                try:
-                    finder = hook(path)
-                except BaseException as exc:
-                    self._record_deep_call("path_hook", hook_id, hook_name, None, path, "raised", type(exc).__name__)
-                    raise
-                self._record_deep_call("path_hook", hook_id, hook_name, None, path, "returned", None)
-                self._instrument_deep_path_entry_finder(finder, path)
-                return finder
-            finally:
-                self._deep_local.active = False
-
-        return wrapped
+        The wrapper compares equal to (and hashes as) the hook it shadows so
+        that third parties scanning ``sys.path_hooks`` by equality still find
+        their own hook. PyInstaller's ``PyiFrozenFinder.fallback_finder`` does
+        exactly this (``hook == self.path_hook``) to locate the hooks after its
+        own and build a fallback ``FileFinder`` for on-disk extension modules;
+        a wrapper that did not compare equal silently disabled that fallback.
+        """
+        return _DeepPathHook(self, hook)
 
     def _instrument_deep_path_entry_finder(self, finder: object, path: str | None = None) -> None:
         """Shadow one mutable path-entry finder's find_spec when requested."""
@@ -2308,6 +2293,61 @@ class _InstrumentedMetaPath(_InstrumentedImportList["_MetaPathEntry"]):
         frame: "FrameType",
     ) -> None:
         self._monitor._on_meta_path_mutation(self, op, added, removed, frame)
+
+
+class _DeepPathHook:
+    """Exact-delegating ``sys.path_hooks`` wrapper for deep path-hook tracing.
+
+    Callable like the hook it shadows, but also forwards equality and hashing
+    to that hook so third-party code scanning ``sys.path_hooks`` by ``==``
+    (e.g. PyInstaller's ``PyiFrozenFinder.fallback_finder``) still recognizes
+    its own hook through the wrapper. Identity (``is``) comparisons cannot be
+    intercepted and still see the wrapper — an inherent limitation of shadowing
+    at this layer.
+    """
+
+    __slots__ = ("__wrapped__", "_hook", "_hook_id", "_hook_name", "_monitor")
+
+    def __init__(self, monitor: "Monitor", hook: "_PathHook") -> None:
+        self._monitor = monitor
+        self._hook = hook
+        self._hook_id = id(hook)
+        self._hook_name = type_name(hook)
+        # __wrapped__ link used by inspect.unwrap for introspection.
+        self.__wrapped__ = hook
+
+    def __call__(self, path: str) -> "PathEntryFinderProtocol":
+        monitor = self._monitor
+        hook = self._hook
+        if not monitor._enabled or getattr(monitor._local, "report_analysis", False):
+            return hook(path)
+        if monitor._deep_local.active:
+            monitor._record_deep_call(
+                "path_hook", self._hook_id, self._hook_name, None, path, "unobserved_reentrant", None
+            )
+            return hook(path)
+        monitor._deep_local.active = True
+        try:
+            try:
+                finder = hook(path)
+            except BaseException as exc:
+                monitor._record_deep_call(
+                    "path_hook", self._hook_id, self._hook_name, None, path, "raised", type(exc).__name__
+                )
+                raise
+            monitor._record_deep_call("path_hook", self._hook_id, self._hook_name, None, path, "returned", None)
+            monitor._instrument_deep_path_entry_finder(finder, path)
+            return finder
+        finally:
+            monitor._deep_local.active = False
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, _DeepPathHook):
+            return self._hook == other._hook
+        return self._hook == other
+
+    def __hash__(self) -> int:
+        return hash(self._hook)
 
 
 class _InstrumentedPathHooks(_InstrumentedImportList["_PathHook"]):

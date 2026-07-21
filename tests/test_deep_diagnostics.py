@@ -59,7 +59,10 @@ monitor = metapathology.install(
     deep_path_entry_finders=True,
     deep_loaders=True,
 )
-assert hook not in sys.path_hooks
+# The wrapper shadows the hook by identity but compares equal to it, so
+# ``in`` (which uses ``==``) still finds it while ``is`` sees the wrapper.
+assert hook in sys.path_hooks
+assert not any(candidate is hook for candidate in sys.path_hooks)
 assert any(getattr(candidate, "__wrapped__", None) is hook for candidate in sys.path_hooks)
 
 
@@ -68,7 +71,8 @@ def later_hook(path):
 
 
 sys.path_hooks.append(later_hook)
-assert later_hook not in sys.path_hooks
+assert later_hook in sys.path_hooks
+assert not any(candidate is later_hook for candidate in sys.path_hooks)
 assert any(getattr(candidate, "__wrapped__", None) is later_hook for candidate in sys.path_hooks)
 sys.path_importer_cache.pop(sentinel, None)
 __import__("deep_outer")
@@ -133,6 +137,55 @@ def test_distinct_hooks_accepting_one_path_report_structural_shadow(run_python: 
         "assert finding['evidence']['level'] == 'structural_inference'\n"
         "assert len(finding['evidence']['event_refs']) == 2\n"
         "assert '[path-hook-shadow]' in metapathology.render_report()\n"
+        "print('OK')\n",
+        str(tmp_path),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
+def test_deep_path_hook_wrapper_survives_equality_scan(run_python: RunPython, tmp_path: Path) -> None:
+    """A third party locating its own hook by ``==`` must still find it.
+
+    PyInstaller's ``PyiFrozenFinder.fallback_finder`` walks ``sys.path_hooks``
+    testing ``hook == self.path_hook`` to find the hooks after its own and
+    build a fallback ``FileFinder``. A deep wrapper that did not compare equal
+    to the shadowed hook broke that scan, silently disabling on-disk extension
+    imports in frozen apps. The wrapper delegates equality, so the scan works.
+    """
+    proc = run_python(
+        "import sys, metapathology\n"
+        "created = []\n"
+        "sentinel = sys.argv[1]\n"
+        "class FallbackFinder:\n"
+        "    def find_spec(self, fullname, target=None): return None\n"
+        "def anchor_hook(path):\n"
+        "    raise ImportError\n"
+        "def tail_hook(path):\n"
+        "    if path != sentinel:\n"
+        "        raise ImportError\n"
+        "    created.append(path)\n"
+        "    return FallbackFinder()\n"
+        "sys.path_hooks[:0] = [anchor_hook, tail_hook]\n"
+        "metapathology.install(report_at_exit=False, deep_path_hooks=True)\n"
+        # Emulate the fallback scan: find our anchor by equality, then build
+        # the first hook that comes after it.
+        "anchor_seen = False\n"
+        "fallback = None\n"
+        "for hook in sys.path_hooks:\n"
+        "    if hook == anchor_hook:\n"
+        "        anchor_seen = True\n"
+        "        continue\n"
+        "    if not anchor_seen:\n"
+        "        continue\n"
+        "    try:\n"
+        "        fallback = hook(sentinel)\n"
+        "        break\n"
+        "    except ImportError:\n"
+        "        pass\n"
+        "assert anchor_seen, 'anchor hook not found via == scan'\n"
+        "assert isinstance(fallback, FallbackFinder), fallback\n"
+        "assert created == [sentinel], created\n"
         "print('OK')\n",
         str(tmp_path),
     )
