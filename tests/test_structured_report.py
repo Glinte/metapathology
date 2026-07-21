@@ -2,13 +2,39 @@
 
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from metapathology._records import InternalError, MonitorEvent
+from metapathology._report_json import _json_events
+
 RunPython = Callable[..., "subprocess.CompletedProcess[str]"]
+
+
+class _CountingEvents:
+    """Iterable that fails a regression back to repeated event-log scans."""
+
+    def __init__(self, events: tuple[MonitorEvent, ...]) -> None:
+        self.events = events
+        self.iterations = 0
+
+    def __iter__(self) -> Iterator[MonitorEvent]:
+        self.iterations += 1
+        yield from self.events
+
+
+def test_json_event_projection_traverses_exhaustive_log_once() -> None:
+    events = _CountingEvents((InternalError(7, "audit_hook", "RuntimeError"),))
+
+    timeline, counts, internal_error_refs = _json_events(events)
+
+    assert events.iterations == 1
+    assert timeline[0]["kind"] == "internal_error"
+    assert internal_error_refs == ["event:7"]
+    assert all(count == 0 for count in counts.values())
 
 
 JSON_REPORT = r"""

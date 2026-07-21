@@ -80,7 +80,24 @@ from metapathology._report_schema import (
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from traceback import FrameSummary
+    from typing import Literal
+
+    EventCountKind = Literal[
+        "audit_starts",
+        "calls",
+        "deep_calls",
+        "deep_import_events",
+        "importer_cache_diffs",
+        "mutations",
+        "path_hook_mutations",
+        "path_hook_reassignments",
+        "reassignments",
+        "standard_finder_calls",
+        "sys_path_mutations",
+        "sys_path_reassignments",
+    ]
 
 
 _SCHEMA_NAME = "metapathology.report"
@@ -88,70 +105,112 @@ _SCHEMA_MAJOR = 1
 _SCHEMA_MINOR = 1
 
 
+def _json_events(
+    events: "Iterable[MonitorEvent]",
+) -> "tuple[list[EventJSON], dict[EventCountKind, int], list[str]]":
+    """Serialize and aggregate the exhaustive event log in one traversal."""
+    counts: dict[EventCountKind, int] = {
+        "audit_starts": 0,
+        "calls": 0,
+        "deep_calls": 0,
+        "deep_import_events": 0,
+        "importer_cache_diffs": 0,
+        "mutations": 0,
+        "path_hook_mutations": 0,
+        "path_hook_reassignments": 0,
+        "reassignments": 0,
+        "standard_finder_calls": 0,
+        "sys_path_mutations": 0,
+        "sys_path_reassignments": 0,
+    }
+    timeline: list[EventJSON] = []
+    internal_error_refs: list[str] = []
+    for event in events:
+        timeline.append(_json_event(event))
+        if isinstance(event, FindSpecCall):
+            counts["calls"] += 1
+        elif isinstance(event, ImportAuditStart):
+            counts["audit_starts"] += 1
+        elif isinstance(event, DeepDiagnosticCall):
+            counts["deep_calls"] += 1
+        elif isinstance(event, DeepImportEvent):
+            counts["deep_import_events"] += 1
+        elif isinstance(event, StandardFinderCall):
+            counts["standard_finder_calls"] += 1
+        elif isinstance(event, MetaPathMutation):
+            counts["mutations"] += 1
+        elif isinstance(event, MetaPathReassignment):
+            counts["reassignments"] += 1
+        elif isinstance(event, PathHooksMutation):
+            counts["path_hook_mutations"] += 1
+        elif isinstance(event, PathHooksReassignment):
+            counts["path_hook_reassignments"] += 1
+        elif isinstance(event, SysPathMutation):
+            counts["sys_path_mutations"] += 1
+        elif isinstance(event, SysPathReassignment):
+            counts["sys_path_reassignments"] += 1
+        elif isinstance(event, ImporterCacheDiff):
+            counts["importer_cache_diffs"] += 1
+        elif isinstance(event, InternalError):
+            internal_error_refs.append(f"event:{event.seq}")
+    return timeline, counts, internal_error_refs
+
+
 def json_document(document: ReportDocument) -> ReportJSON:
     """Project one report document onto the stable JSON schema."""
-    mutations = sum(isinstance(event, MetaPathMutation) for event in document.events)
-    reassignments = sum(isinstance(event, MetaPathReassignment) for event in document.events)
-    path_hook_mutations = sum(isinstance(event, PathHooksMutation) for event in document.events)
-    path_hook_reassignments = sum(isinstance(event, PathHooksReassignment) for event in document.events)
-    sys_path_mutations = sum(isinstance(event, SysPathMutation) for event in document.events)
-    sys_path_reassignments = sum(isinstance(event, SysPathReassignment) for event in document.events)
-    importer_cache_diffs = sum(isinstance(event, ImporterCacheDiff) for event in document.events)
-    audit_starts = sum(isinstance(event, ImportAuditStart) for event in document.events)
-    calls = sum(isinstance(event, FindSpecCall) for event in document.events)
-    deep_calls = sum(isinstance(event, DeepDiagnosticCall) for event in document.events)
-    deep_import_events = sum(isinstance(event, DeepImportEvent) for event in document.events)
-    standard_finder_calls = sum(isinstance(event, StandardFinderCall) for event in document.events)
-    report_status: ReportStatus = (
-        "partial"
-        if document.report_errors or any(isinstance(event, InternalError) for event in document.events)
-        else "complete"
-    )
+    timeline, event_counts, internal_error_refs = _json_events(document.events)
+    report_status: ReportStatus = "partial" if document.report_errors or internal_error_refs else "complete"
     version = sys.version_info
     mechanisms: list[MechanismJSON] = [
-        _mechanism("meta_path_mutations", document.monitor_enabled, mutations, "best_effort"),
-        _mechanism("meta_path_reassignments", document.monitor_enabled, reassignments, "import_boundaries"),
-        _mechanism("import_audit_starts", document.monitor_enabled, audit_starts, "resolution_starts"),
-        _mechanism("finder_attribution", document.monitor_enabled, calls, "instrumented_finders"),
+        _mechanism("meta_path_mutations", document.monitor_enabled, event_counts["mutations"], "best_effort"),
+        _mechanism(
+            "meta_path_reassignments", document.monitor_enabled, event_counts["reassignments"], "import_boundaries"
+        ),
+        _mechanism("import_audit_starts", document.monitor_enabled, event_counts["audit_starts"], "resolution_starts"),
+        _mechanism("finder_attribution", document.monitor_enabled, event_counts["calls"], "instrumented_finders"),
         _mechanism(
             "finder_contracts",
             document.monitor_enabled,
             len(document.finder_contracts),
             "first_observation_per_identity",
         ),
-        _mechanism("deep_diagnostics", bool(document.deep_diagnostics), deep_calls, "delegated_boundaries"),
+        _mechanism(
+            "deep_diagnostics", bool(document.deep_diagnostics), event_counts["deep_calls"], "delegated_boundaries"
+        ),
         _mechanism(
             "deep_import_outcomes",
             "import_outcomes" in document.deep_diagnostics,
-            deep_import_events,
+            event_counts["deep_import_events"],
             document.deep_import_outcomes_status,
         ),
         _mechanism(
             "standard_finder_aggregate",
             document.standard_finder_status.startswith("active_"),
-            standard_finder_calls,
+            event_counts["standard_finder_calls"],
             document.standard_finder_status,
         ),
         _route_analysis_mechanism(document),
-        _mechanism("path_hooks_mutations", document.path_hooks_enabled, path_hook_mutations, "best_effort"),
+        _mechanism(
+            "path_hooks_mutations", document.path_hooks_enabled, event_counts["path_hook_mutations"], "best_effort"
+        ),
         _mechanism(
             "path_hooks_reassignments",
             document.path_hooks_enabled,
-            path_hook_reassignments,
+            event_counts["path_hook_reassignments"],
             "import_boundaries",
         ),
-        _mechanism("sys_path_mutations", document.sys_path_enabled, sys_path_mutations, "best_effort"),
+        _mechanism("sys_path_mutations", document.sys_path_enabled, event_counts["sys_path_mutations"], "best_effort"),
         _mechanism(
             "sys_path_reassignments",
             document.sys_path_enabled,
-            sys_path_reassignments,
+            event_counts["sys_path_reassignments"],
             "import_boundaries",
         ),
         _cache_snapshot_mechanism(document),
         _mechanism(
             "importer_cache_diffs",
             document.importer_cache_enabled,
-            importer_cache_diffs,
+            event_counts["importer_cache_diffs"],
             "passive_boundaries",
         ),
     ]
@@ -231,15 +290,13 @@ def json_document(document: ReportDocument) -> ReportJSON:
         "standard_resolutions": [_json_standard_resolution(resolution) for resolution in document.standard_resolutions],
         "resolution_routes": [_json_resolution_route(route) for route in document.resolution_routes],
         "route_comparisons": [_json_route_comparison(comparison) for comparison in document.route_comparisons],
-        "timeline": [_json_event(event) for event in document.events],
+        "timeline": timeline,
         "findings": [_json_finding(finding) for finding in document.findings],
         "explanations": [_json_explanation(explanation) for explanation in document.explanations],
         "summary": _json_summary(document.summary),
         "target_outcome": _json_target_outcome(document.target_outcome),
         "diagnostics": {
-            "internal_error_refs": [
-                f"event:{event.seq}" for event in document.events if isinstance(event, InternalError)
-            ],
+            "internal_error_refs": internal_error_refs,
             "report_errors": [
                 {"exception_type_name": error.exception_type_name, "where": error.where}
                 for error in document.report_errors
