@@ -73,8 +73,28 @@ TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from traceback import FrameSummary
+    from typing import Literal
 
     from metapathology._monitor import Monitor
+
+    # Closed vocabularies for report-layer enum fields.
+    ExplanationConfidence = Literal["captured", "correlated", "inferred", "unknown"]
+    ExplanationKind = Literal[
+        "ambiguous_contention",
+        "captured_claim",
+        "finder",
+        "finder_side_effect",
+        "module_replacement",
+        "namespace_candidate_displaced",
+        "namespace_truncation_failure",
+        "path",
+        "repeated_load_failure",
+        "repeated_loader_execution",
+        "standard_path_probe",
+        "standard_winner_precedence",
+    ]
+    FindingSeverity = Literal["actionable", "warning", "informational"]
+    FindingSubjectKind = Literal["module", "finder", "path"]
 
 
 _MODULE_FILE_SUFFIXES = (".py", ".pyc", ".pyd", ".so")
@@ -250,10 +270,10 @@ class Finding(_Record):
     deep_call: DeepDiagnosticCall | None = None
     evidence_level: str = "post_hoc"
     limitations: tuple[str, ...] = ()
-    subject_kind: str = "module"
+    subject_kind: "FindingSubjectKind" = "module"
     finder_contract: FinderContract | None = None
     supporting_event_seqs: tuple[int, ...] = ()
-    severity: str = "warning"
+    severity: "FindingSeverity" = "warning"
     signals: tuple[str, ...] = ()
     module_state_baseline: ModuleCacheState | None = None
     attempt_ids: tuple[int, ...] = ()
@@ -263,8 +283,8 @@ class CausalExplanation(_Record):
     """Deterministic synthesis joining a primary finding to its likely effect."""
 
     explanation_id: str
-    kind: str
-    confidence: str
+    kind: "ExplanationKind"
+    confidence: "ExplanationConfidence"
     subject: str
     effect_status: str
     cause_finding_id: str | None
