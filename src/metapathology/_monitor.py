@@ -225,9 +225,28 @@ class _TargetOutcomeState:
 
 
 class _ThreadState(threading.local):
-    """Per-thread re-entrancy state with a default for newly seen threads."""
+    """Per-thread re-entrancy flag with a default for newly seen threads."""
 
     active = False
+
+
+class _ImportThreadState(_ThreadState):
+    """Thread-local state for the core import-observation hooks.
+
+    Class attributes are the per-thread defaults; each thread shadows them with
+    instance attributes on first assignment (``threading.local`` semantics).
+    """
+
+    report_analysis = False
+    thread_id: "int | None" = None
+    pending_import_attempt: "tuple[int, str] | None" = None
+
+
+class _DeepThreadState(_ThreadState):
+    """Thread-local state for the opt-in deep-diagnostics hooks."""
+
+    import_attempts: "tuple[tuple[int, str], ...]" = ()
+    path_finder_calls: "tuple[tuple[int, str], ...]" = ()
 
 
 def _capture_stack(frame: "FrameType") -> traceback.StackSummary:
@@ -339,8 +358,8 @@ class Monitor:
         # Per-thread re-entrancy flag around every hook and wrapper. Nested
         # imports still run normally, but our instrumentation delegates without
         # trying to observe itself recursively.
-        self._local = _ThreadState()
-        self._deep_local = _ThreadState()
+        self._local = _ImportThreadState()
+        self._deep_local = _DeepThreadState()
         # One counter for all record types, so the report can interleave the
         # different event kinds chronologically.
         self._seq = 0
@@ -416,7 +435,7 @@ class Monitor:
         self._standard_finder_status = "disabled"
         self._deep_import_code: types.CodeType | None = None
         self._path_finder_code: types.CodeType | None = None
-        self._deep_hook_wrappers: dict[int, tuple[object, object]] = {}
+        self._deep_hook_wrappers: dict[int, _DeepPathHook] = {}
         self._deep_finder_patches: dict[int, tuple[object, object]] = {}
         self._deep_loader_patches: dict[int, tuple[object, tuple[tuple[str, object], ...]]] = {}
         # How the monitored target finished, recorded by the CLI (or any
@@ -489,8 +508,8 @@ class Monitor:
 
     def _original_path_hook(self, hook: object) -> object:
         """Normalize one deep wrapper to the foreign hook it delegates to."""
-        wrapped = self._deep_hook_wrappers.get(id(hook))
-        return hook if wrapped is None else wrapped[1]
+        wrapper = self._deep_hook_wrappers.get(id(hook))
+        return hook if wrapper is None else wrapper.hook
 
     @property
     def baseline_modules(self) -> frozenset[str]:
@@ -594,7 +613,7 @@ class Monitor:
     def _begin_report_analysis(self) -> tuple[bool, bool]:
         """Make every monitor producer inert during report-time foreign calls."""
         previously_active = self._local.active
-        previously_reporting = getattr(self._local, "report_analysis", False)
+        previously_reporting = self._local.report_analysis
         self._local.active = True
         self._local.report_analysis = True
         return previously_active, previously_reporting
@@ -826,7 +845,7 @@ class Monitor:
 
     def _profile_import_boundary(self, frame: "FrameType", event: str, arg: object) -> None:
         """Record paired entry and completion for the captured ``_find_and_load`` code."""
-        if not self._enabled or not self._deep_import_outcomes or getattr(self._local, "report_analysis", False):
+        if not self._enabled or not self._deep_import_outcomes or self._local.report_analysis:
             return
         try:
             if frame.f_code is self._path_finder_code:
@@ -836,7 +855,7 @@ class Monitor:
                 if type(fullname) is not str:
                     return
                 thread_name = threading.current_thread().name
-                pending = getattr(self._local, "pending_import_attempt", None)
+                pending = self._local.pending_import_attempt
                 self._local.pending_import_attempt = None
                 with self._record_lock:
                     thread_id = self._thread_id_locked()
@@ -849,10 +868,10 @@ class Monitor:
                     self._events.append(
                         DeepImportEvent(self._seq, attempt_id, fullname, "started", thread_id, thread_name)
                     )
-                stack = getattr(self._deep_local, "import_attempts", ())
+                stack = self._deep_local.import_attempts
                 self._deep_local.import_attempts = (*stack, (attempt_id, fullname))
             elif frame.f_code is self._deep_import_code and event == "return":
-                stack = getattr(self._deep_local, "import_attempts", ())
+                stack = self._deep_local.import_attempts
                 if not stack:
                     return
                 attempt_id, fullname = stack[-1]
@@ -877,16 +896,16 @@ class Monitor:
         """Capture successful aggregate ``PathFinder`` results by code identity."""
         if event == "call":
             fullname = frame.f_locals.get("fullname")
-            attempts = getattr(self._deep_local, "import_attempts", ())
+            attempts = self._deep_local.import_attempts
             if type(fullname) is str and attempts:
                 attempt_id, attempt_name = attempts[-1]
                 if fullname == attempt_name:
-                    stack = getattr(self._deep_local, "path_finder_calls", ())
+                    stack = self._deep_local.path_finder_calls
                     self._deep_local.path_finder_calls = (*stack, (attempt_id, fullname))
             return
         if event != "return":
             return
-        stack = getattr(self._deep_local, "path_finder_calls", ())
+        stack = self._deep_local.path_finder_calls
         if not stack:
             return
         attempt_id, fullname = stack[-1]
@@ -920,10 +939,10 @@ class Monitor:
         self._deep_path_hooks = True
         for index, hook in enumerate(list(sys.path_hooks)):
             wrapper = self._make_deep_path_hook(hook)
-            self._deep_hook_wrappers[id(wrapper)] = (wrapper, hook)
+            self._deep_hook_wrappers[id(wrapper)] = wrapper
             list.__setitem__(sys.path_hooks, index, wrapper)
 
-    def _make_deep_path_hook(self, hook: "_PathHook") -> "_PathHook":
+    def _make_deep_path_hook(self, hook: "_PathHook") -> "_DeepPathHook":
         """Return an exact-delegating path-hook wrapper.
 
         The wrapper compares equal to (and hashes as) the hook it shadows so
@@ -948,7 +967,7 @@ class Monitor:
 
             @functools.wraps(original, assigned=(), updated=())
             def wrapped(fullname: str, target: object = None) -> object:
-                if not self._enabled or getattr(self._local, "report_analysis", False):
+                if not self._enabled or self._local.report_analysis:
                     return original(fullname, target)
                 target_state = None if target is None else ModuleCacheState("object", id(target), type_name(target))
                 if self._deep_local.active:
@@ -1024,7 +1043,7 @@ class Monitor:
                 @functools.wraps(original_create, assigned=(), updated=())
                 def wrapped_create(spec: object) -> object:
                     fullname = safe_spec_name(spec)
-                    if not self._enabled or getattr(self._local, "report_analysis", False):
+                    if not self._enabled or self._local.report_analysis:
                         return original_create(spec)
                     if self._deep_local.active:
                         self._record_deep_call(
@@ -1086,7 +1105,7 @@ class Monitor:
                 def wrapped_exec(module: object) -> object:
                     fullname = safe_module_name(module)
                     target_state = ModuleCacheState("object", id(module), type_name(module))
-                    if not self._enabled or getattr(self._local, "report_analysis", False):
+                    if not self._enabled or self._local.report_analysis:
                         return original_exec(module)
                     if self._deep_local.active:
                         self._record_deep_call(
@@ -1194,7 +1213,7 @@ class Monitor:
 
     def _thread_id_locked(self) -> int:
         """Return this thread's monitor identity while ``_record_lock`` is held."""
-        thread_id = getattr(self._local, "thread_id", None)
+        thread_id = self._local.thread_id
         if thread_id is None:
             self._thread_id += 1
             thread_id = self._thread_id
@@ -1241,8 +1260,7 @@ class Monitor:
                     self._restore_attribute(loader, name, previous)
             if self._deep_hook_wrappers:
                 try:
-                    originals = self._deep_hook_wrappers
-                    restored = [originals.get(id(hook), (None, hook))[1] for hook in list(sys.path_hooks)]
+                    restored = [self._original_path_hook(hook) for hook in list(sys.path_hooks)]
                     sys.path_hooks = _cast("list[_PathHook]", restored)
                 except Exception as exc:
                     self._record_internal_error("uninstall_deep_path_hooks", exc)
@@ -1929,7 +1947,7 @@ class Monitor:
                     if id(added_hook) in self._deep_hook_wrappers:
                         continue
                     wrapper = self._make_deep_path_hook(_cast("_PathHook", added_hook))
-                    self._deep_hook_wrappers[id(wrapper)] = (wrapper, added_hook)
+                    self._deep_hook_wrappers[id(wrapper)] = wrapper
                     for index, current in enumerate(mutated):
                         if current is added_hook:
                             list.__setitem__(mutated, index, wrapper)
@@ -2307,10 +2325,15 @@ class _DeepPathHook:
         # __wrapped__ link used by inspect.unwrap for introspection.
         self.__wrapped__ = hook
 
+    @property
+    def hook(self) -> "_PathHook":
+        """The foreign path hook this wrapper delegates to."""
+        return self._hook
+
     def __call__(self, path: str) -> "PathEntryFinderProtocol":
         monitor = self._monitor
         hook = self._hook
-        if not monitor._enabled or getattr(monitor._local, "report_analysis", False):
+        if not monitor._enabled or monitor._local.report_analysis:
             return hook(path)
         if monitor._deep_local.active:
             monitor._record_deep_call(
