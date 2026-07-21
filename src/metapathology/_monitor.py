@@ -456,7 +456,7 @@ class Monitor:
         self._path_hooks_enabled = False
         self._instrumented_path_hooks: _InstrumentedPathHooks | None = None
         self._path_hooks_lease: _OwnedValue | None = None
-        self._initial_path_hooks: tuple[ObjectRef, ...] = ()
+        self.initial_path_hooks: tuple[ObjectRef, ...] = ()
         self._observed_path_hooks: dict[int, object] = {}
         # Opt-in because replacing sys.path has a wider compatibility surface
         # than observing the import-specific lists enabled by default.
@@ -468,7 +468,7 @@ class Monitor:
         # Full observations are coalesced when one is already in progress;
         # diff events themselves remain exhaustive and unbounded.
         self._importer_cache_enabled = False
-        self._initial_importer_cache: tuple[ImporterCacheEntry, ...] = ()
+        self.initial_importer_cache: tuple[ImporterCacheEntry, ...] = ()
         self._initial_importer_cache_non_string_keys = 0
         self._latest_importer_cache: dict[str, ObjectRef | None] | None = None
         self._latest_importer_cache_non_string_keys: int | None = None
@@ -487,9 +487,9 @@ class Monitor:
         self._skipped: dict[int, tuple[object, str]] = {}
         # sys.modules names at install time; the report analyzes only modules
         # imported afterwards.
-        self._baseline_modules: frozenset[str] = frozenset()
+        self.baseline_modules: frozenset[str] = frozenset()
         # Finder display names at install time, for the report header.
-        self._initial_meta_path: tuple[str, ...] = ()
+        self.initial_meta_path: tuple[str, ...] = ()
         # Finder-contract observations are exhaustive over distinct finder identities and
         # retain the finder through the existing patched/skipped maps.
         self._finder_contracts: dict[int, FinderContract] = {}
@@ -517,19 +517,9 @@ class Monitor:
         return self._enabled
 
     @property
-    def initial_meta_path(self) -> tuple[str, ...]:
-        """Finder names in ``sys.meta_path`` at install time."""
-        return self._initial_meta_path
-
-    @property
     def path_hooks_enabled(self) -> bool:
         """Whether ``sys.path_hooks`` mutation monitoring is currently active."""
         return self._enabled and self._path_hooks_enabled
-
-    @property
-    def initial_path_hooks(self) -> tuple[ObjectRef, ...]:
-        """Safe hook identities captured when path-hook monitoring was enabled."""
-        return self._initial_path_hooks
 
     @property
     def importer_cache_enabled(self) -> bool:
@@ -565,11 +555,6 @@ class Monitor:
         """Availability of exact aggregate standard-finder evidence."""
         return self._standard_finder_status
 
-    @property
-    def initial_importer_cache(self) -> tuple[ImporterCacheEntry, ...]:
-        """String-keyed importer-cache entries captured when importer-cache diffing was enabled."""
-        return self._initial_importer_cache
-
     def _current_path_hook_refs(self) -> tuple[ObjectRef, ...]:
         """Copy current path-hook identities for report capture."""
         return tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in list(sys.path_hooks))
@@ -578,11 +563,6 @@ class Monitor:
         """Normalize one deep wrapper to the foreign hook it delegates to."""
         wrapper = self._deep_hook_wrappers.get(id(hook))
         return hook if wrapper is None else wrapper.hook
-
-    @property
-    def baseline_modules(self) -> frozenset[str]:
-        """Names present in ``sys.modules`` at install time."""
-        return self._baseline_modules
 
     @property
     def target_outcome(self) -> "_TargetOutcomeState | None":
@@ -631,7 +611,7 @@ class Monitor:
             latest = self._latest_importer_cache
             cache_state = _ImporterCacheReportState(
                 enabled=self._enabled and self._importer_cache_enabled,
-                initial_entries=self._initial_importer_cache,
+                initial_entries=self.initial_importer_cache,
                 initial_non_string_keys=self._initial_importer_cache_non_string_keys,
                 latest_entries=None if latest is None else _cache_entries(latest),
                 latest_non_string_keys=self._latest_importer_cache_non_string_keys,
@@ -647,10 +627,10 @@ class Monitor:
                 early_site_bootstrap=self._early_site_bootstrap,
                 frozen_bootstrap=self._frozen_bootstrap,
                 enabled=self._enabled,
-                baseline_modules=self._baseline_modules,
-                initial_meta_path=self._initial_meta_path,
+                baseline_modules=self.baseline_modules,
+                initial_meta_path=self.initial_meta_path,
                 path_hooks_enabled=self._enabled and self._path_hooks_enabled,
-                initial_path_hooks=self._initial_path_hooks,
+                initial_path_hooks=self.initial_path_hooks,
                 sys_path_enabled=self._enabled and self._sys_path_enabled,
                 deep_diagnostics=self.deep_diagnostics,
                 deep_import_outcomes_status=self._deep_import_outcomes_status,
@@ -783,9 +763,9 @@ class Monitor:
             if activate_monitor:
                 if _IMPLEMENTATION_NAME != "cpython":
                     warnings.warn(_UNSUPPORTED_IMPLEMENTATION_WARNING, RuntimeWarning, stacklevel=3)
-                self._baseline_modules = frozenset(sys.modules)
+                self.baseline_modules = frozenset(sys.modules)
                 current = sys.meta_path
-                self._initial_meta_path = tuple(type_name(f) for f in current)
+                self.initial_meta_path = tuple(type_name(f) for f in current)
                 instrumented = _InstrumentedMetaPath(current, self)
                 # Finder attribute access is foreign code and can import. This
                 # preparation runs outside the lifecycle lock; the active flag
@@ -840,7 +820,7 @@ class Monitor:
         instrumented = _InstrumentedPathHooks(contents, self)
         with self._record_lock:
             self._observed_path_hooks.update((reference.object_id, hook) for reference, hook in zip(initial, contents))
-        self._initial_path_hooks = initial
+        self.initial_path_hooks = initial
         self._instrumented_path_hooks = instrumented
         self._path_hooks_lease = _OwnedValue(sys.path_hooks, instrumented)
         self._path_hooks_enabled = True
@@ -1522,7 +1502,7 @@ class Monitor:
             self._importer_cache_observations += 1
             self._observed_cache_finders.update(finders)
             if initial or before is None:
-                self._initial_importer_cache = _cache_entries(snapshot)
+                self.initial_importer_cache = _cache_entries(snapshot)
                 self._initial_importer_cache_non_string_keys = non_string_keys
                 return
             added, removed, replaced = _diff_importer_cache(before, snapshot)

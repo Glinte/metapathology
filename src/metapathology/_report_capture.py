@@ -61,7 +61,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         findings, resolution_routes, route_comparisons = _suspicious_findings(
             snapshot.baseline_modules,
             events,
-            monitor.initial_path_hooks,
+            snapshot.initial_path_hooks,
             current_path_hooks,
             importer_cache.initial_entries,
             importer_cache.latest_entries,
