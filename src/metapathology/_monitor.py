@@ -115,7 +115,7 @@ def _raw_protocol_value(value: object, evidence: str, defined_by: str) -> Finder
             for owner in type.__getattribute__(type(value), "__mro__"):
                 if "__get__" in type.__getattribute__(owner, "__dict__"):
                     return FinderProtocol("indeterminate", evidence, defined_by)
-        except BaseException:
+        except Exception:
             return FinderProtocol("indeterminate", "inspection_error", None)
     return FinderProtocol("callable" if callable(value) else "non_callable", evidence, defined_by)
 
@@ -139,7 +139,7 @@ def _inspect_finder_protocol(finder: object, name: str) -> FinderProtocol:
             if name in namespace:
                 owner_name = type.__getattribute__(owner, "__name__")
                 return _raw_protocol_value(namespace[name], "class_dict", owner_name)
-    except BaseException:
+    except Exception:
         return FinderProtocol("indeterminate", "inspection_error", None)
     return FinderProtocol("absent", "class_mro", None)
 
@@ -866,7 +866,12 @@ class Monitor:
                         DeepImportEvent(self._seq, attempt_id, fullname, outcome, thread_id, thread_name)
                     )
         except BaseException as exc:
+            # Record even a KeyboardInterrupt/SystemExit for the report, but let
+            # control-flow exceptions keep propagating; only our own bugs
+            # (ordinary Exception) are swallowed to avoid perturbing the program.
             self._record_internal_error("deep_import_outcomes", exc)
+            if not isinstance(exc, Exception):
+                raise
 
     def _profile_path_finder(self, frame: "FrameType", event: str, arg: object) -> None:
         """Capture successful aggregate ``PathFinder`` results by code identity."""
@@ -1144,7 +1149,12 @@ class Monitor:
                         instance_dict.pop(name, None)
                     else:
                         instance_dict[name] = previous
+            # Record even a KeyboardInterrupt/SystemExit, but reraise control-flow
+            # exceptions after undoing the partial patches; only swallow our own
+            # bugs (ordinary Exception) so instrumentation never perturbs the program.
             self._record_internal_error("deep_loader", exc)
+            if not isinstance(exc, Exception):
+                raise
 
     def _record_deep_call(
         self,
@@ -1281,7 +1291,7 @@ class Monitor:
                 del instance_dict[name]
             else:
                 instance_dict[name] = previous
-        except BaseException:
+        except Exception:
             pass
 
     def _audit(self, event: str, args: tuple[object, ...]) -> None:

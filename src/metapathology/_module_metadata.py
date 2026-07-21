@@ -82,7 +82,7 @@ def module_cache_state(cache: object, name: str) -> ModuleCacheState:
         return ModuleCacheState("unavailable")
     try:
         value = dict.get(cache, name, _MISSING)
-    except BaseException:
+    except Exception:
         return ModuleCacheState("unavailable")
     if value is _MISSING:
         return ModuleCacheState("missing")
@@ -97,7 +97,7 @@ def module_namespace(module: object) -> tuple[dict[str, object] | None, str | No
         return None, "not_module"
     try:
         namespace = types.ModuleType.__getattribute__(_cast("types.ModuleType", module), "__dict__")
-    except BaseException as exc:
+    except Exception as exc:
         return None, f"namespace:{type_name(exc)}"
     if type(namespace) is not dict:
         return None, "namespace:unavailable"
@@ -108,7 +108,7 @@ def spec_namespace(spec: object) -> dict[str, object] | None:
     """Read an object's real dictionary without invoking foreign dispatch."""
     try:
         namespace = object.__getattribute__(spec, "__dict__")
-    except BaseException:
+    except Exception:
         return None
     return namespace if type(namespace) is dict else None
 
@@ -170,7 +170,7 @@ def inspect_module(name: str, module: object) -> ModuleMetadata:
         try:
             summary, raw_spec_loader = summarize_spec(spec, iterate_foreign_locations=False)
             spec_loader_available = "loader:missing" not in summary.unavailable_fields
-        except BaseException:
+        except Exception:
             summary = None
 
     module_loader_available = "__loader__" in namespace
