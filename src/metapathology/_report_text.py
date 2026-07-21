@@ -11,12 +11,12 @@ from metapathology._records import (
     ImportAuditStart,
     ImporterCacheDiff,
     ImporterCacheEntry,
-    ImportObjectRef,
     InternalError,
     MetaPathMutation,
     MetaPathReassignment,
     ModuleCacheState,
     MonitorEvent,
+    ObjectRef,
     PathHooksMutation,
     PathHooksReassignment,
     StandardFinderCall,
@@ -173,14 +173,14 @@ class _RenderContext:
             return f"{type_name} id 0x{finder_id:x}"
         return type_name
 
-    def hook_ref(self, reference: ImportObjectRef) -> str:
+    def hook_ref(self, reference: ObjectRef) -> str:
         """Name a path hook, adding its id only when the display label is ambiguous."""
         label = _ref_label(reference)
         if label in self.hook_ambiguous:
             return f"{label} id 0x{reference.object_id:x}"
         return label
 
-    def hook_refs(self, references: tuple[ImportObjectRef, ...]) -> str:
+    def hook_refs(self, references: tuple[ObjectRef, ...]) -> str:
         """Format a path-hook snapshot."""
         return "[" + ", ".join(self.hook_ref(reference) for reference in references) + "]"
 
@@ -218,12 +218,12 @@ class _RenderContext:
         return self.styled(text, _ANSI_YELLOW)
 
 
-def _note_label(ids_by_label: dict[str, set[int]], reference: ImportObjectRef) -> None:
+def _note_label(ids_by_label: dict[str, set[int]], reference: ObjectRef) -> None:
     """Record one displayed label/id pair for ambiguity detection."""
     ids_by_label.setdefault(_ref_label(reference), set()).add(reference.object_id)
 
 
-def _ref_label(reference: ImportObjectRef) -> str:
+def _ref_label(reference: ObjectRef) -> str:
     """Preferred display label: the callable's own name, else its type name."""
     return reference.type_name if reference.name is None else reference.name
 
@@ -947,7 +947,7 @@ def _observation_label(observation: str) -> str:
     return _OBSERVATION_LABELS.get(observation, _humanize(observation))
 
 
-def _ref_signatures(references: tuple[ImportObjectRef, ...]) -> tuple[tuple[int, str, str | None], ...]:
+def _ref_signatures(references: tuple[ObjectRef, ...]) -> tuple[tuple[int, str, str | None], ...]:
     """Comparable identity tuples for detecting an unchanged snapshot."""
     return tuple((reference.object_id, reference.type_name, reference.name) for reference in references)
 
@@ -1416,9 +1416,9 @@ def _inventory_entry_lines(entries: "list[ModuleMetadata]", context: _RenderCont
     return lines
 
 
-def _metadata_value(value: "str | ImportObjectRef | None", context: _RenderContext) -> str:
+def _metadata_value(value: "str | ObjectRef | None", context: _RenderContext) -> str:
     """Format already-reduced metadata without consulting live objects."""
-    if isinstance(value, ImportObjectRef):
+    if isinstance(value, ObjectRef):
         return f"<{_ref_label(value)}>"
     if value is None:
         return "None"
@@ -1512,7 +1512,7 @@ def _sys_path_reassignment_lines(reassignment: SysPathReassignment, context: _Re
     return lines
 
 
-def _cache_finder_name(finder: ImportObjectRef | None, force_id: bool = False) -> str:
+def _cache_finder_name(finder: ObjectRef | None, force_id: bool = False) -> str:
     """Format a captured cache finder or its negative marker.
 
     Cache finders are keyed by path, so their ids are usually noise;

@@ -23,12 +23,12 @@ from metapathology._records import (
     ImporterCacheDiff,
     ImporterCacheEntry,
     ImporterCacheReplacement,
-    ImportObjectRef,
     InternalError,
     MetaPathMutation,
     MetaPathReassignment,
     ModuleCacheState,
     MonitorEvent,
+    ObjectRef,
     PathHooksMutation,
     PathHooksReassignment,
     SpecSummary,
@@ -904,8 +904,8 @@ class ReportDocument(_Record):
     initial_meta_path = _ReadOnlyField[tuple[str, ...]]("_initial_meta_path")
     current_meta_path = _ReadOnlyField[tuple[str, ...] | None]("_current_meta_path")
     path_hooks_enabled = _ReadOnlyField[bool]("_path_hooks_enabled")
-    initial_path_hooks = _ReadOnlyField[tuple[ImportObjectRef, ...]]("_initial_path_hooks")
-    current_path_hooks = _ReadOnlyField[tuple[ImportObjectRef, ...] | None]("_current_path_hooks")
+    initial_path_hooks = _ReadOnlyField[tuple[ObjectRef, ...]]("_initial_path_hooks")
+    current_path_hooks = _ReadOnlyField[tuple[ObjectRef, ...] | None]("_current_path_hooks")
     importer_cache_enabled = _ReadOnlyField[bool]("_importer_cache_enabled")
     initial_importer_cache = _ReadOnlyField[tuple[ImporterCacheEntry, ...]]("_initial_importer_cache")
     initial_importer_cache_non_string_keys = _ReadOnlyField[int]("_initial_importer_cache_non_string_keys")
@@ -946,8 +946,8 @@ class ReportDocument(_Record):
         initial_meta_path: tuple[str, ...],
         current_meta_path: tuple[str, ...] | None,
         path_hooks_enabled: bool,
-        initial_path_hooks: tuple[ImportObjectRef, ...],
-        current_path_hooks: tuple[ImportObjectRef, ...] | None,
+        initial_path_hooks: tuple[ObjectRef, ...],
+        current_path_hooks: tuple[ObjectRef, ...] | None,
         importer_cache_enabled: bool,
         initial_importer_cache: tuple[ImporterCacheEntry, ...],
         initial_importer_cache_non_string_keys: int,
@@ -1215,8 +1215,8 @@ def _current_meta_path_names(report_errors: list[ReportError]) -> tuple[str, ...
         return None
 
 
-def _current_path_hooks(monitor: "Monitor", report_errors: list[ReportError]) -> tuple[ImportObjectRef, ...] | None:
-    """Copy current path-hook identities when T1 is active."""
+def _current_path_hooks(monitor: "Monitor", report_errors: list[ReportError]) -> tuple[ObjectRef, ...] | None:
+    """Copy current path-hook identities when path-hooks monitoring is active."""
     if not monitor.path_hooks_enabled:
         return None
     try:
@@ -1426,8 +1426,8 @@ def _modules_since_install(
 def _suspicious_findings(
     monitor: "Monitor",
     events: list[MonitorEvent],
-    initial_path_hooks: tuple[ImportObjectRef, ...],
-    current_path_hooks: tuple[ImportObjectRef, ...] | None,
+    initial_path_hooks: tuple[ObjectRef, ...],
+    current_path_hooks: tuple[ObjectRef, ...] | None,
     initial_importer_cache: tuple[ImporterCacheEntry, ...],
     current_importer_cache: tuple[ImporterCacheEntry, ...] | None,
     module_items: list[tuple[object, object]] | None,
@@ -2421,14 +2421,14 @@ def _loader_type(summary: SpecSummary) -> str | None:
 
 
 def _safe_path_value_changed(
-    observed: str | ImportObjectRef | None,
-    replayed: str | ImportObjectRef | None,
+    observed: str | ObjectRef | None,
+    replayed: str | ObjectRef | None,
 ) -> bool | None:
     if type(observed) is str and type(replayed) is str:
         return not _same_path(observed, replayed)
     if observed is None and replayed is None:
         return False
-    if isinstance(observed, ImportObjectRef) or isinstance(replayed, ImportObjectRef):
+    if isinstance(observed, ObjectRef) or isinstance(replayed, ObjectRef):
         return None
     return True
 
@@ -2446,8 +2446,8 @@ def _path_key(path: str) -> str:
 
 def _structural_context(
     events: list[MonitorEvent],
-    initial_path_hooks: tuple[ImportObjectRef, ...],
-    current_path_hooks: tuple[ImportObjectRef, ...] | None,
+    initial_path_hooks: tuple[ObjectRef, ...],
+    current_path_hooks: tuple[ObjectRef, ...] | None,
     initial_importer_cache: tuple[ImporterCacheEntry, ...],
     current_importer_cache: tuple[ImporterCacheEntry, ...] | None,
 ) -> _StructuralContext:
@@ -2505,7 +2505,7 @@ def _cache_signatures(
     return {entry.path: _cache_finder_signature(entry.finder) for entry in entries}
 
 
-def _import_object_signatures(references: tuple[ImportObjectRef, ...]) -> tuple[tuple[int, str], ...]:
+def _import_object_signatures(references: tuple[ObjectRef, ...]) -> tuple[tuple[int, str], ...]:
     """Reduce safe object references to comparable identity/type tuples."""
     return tuple((reference.object_id, reference.type_name) for reference in references)
 
@@ -2529,7 +2529,7 @@ def _changed_cache_paths(
     return bool(changed), tuple(changed)
 
 
-def _cache_finder_signature(finder: ImportObjectRef | None) -> tuple[int | None, str | None]:
+def _cache_finder_signature(finder: ObjectRef | None) -> tuple[int | None, str | None]:
     """Describe a cached finder identity while preserving negative entries."""
     if finder is None:
         return None, None
@@ -3172,7 +3172,7 @@ def _json_route_comparison(comparison: RouteComparison) -> RouteComparisonJSON:
     }
 
 
-def _json_import_object(reference: ImportObjectRef) -> ImportObjectJSON:
+def _json_import_object(reference: ObjectRef) -> ImportObjectJSON:
     """Serialize safe import-object identity metadata."""
     return {
         "name": reference.name,
@@ -3181,8 +3181,8 @@ def _json_import_object(reference: ImportObjectRef) -> ImportObjectJSON:
     }
 
 
-def _json_spec_value(value: str | ImportObjectRef | None) -> SpecValueJSON:
-    if isinstance(value, ImportObjectRef):
+def _json_spec_value(value: str | ObjectRef | None) -> SpecValueJSON:
+    if isinstance(value, ObjectRef):
         result: ImportObjectValueJSON = {"kind": "object", **_json_import_object(value)}
         return result
     return value
@@ -3207,9 +3207,9 @@ def _json_spec_summary(summary: SpecSummary) -> SpecSummaryJSON:
 
 def _loader_inventory_groups(
     inventory: LoaderInventory,
-) -> tuple[tuple[ImportObjectRef | None, tuple[ModuleMetadata, ...]], ...]:
+) -> tuple[tuple[ObjectRef | None, tuple[ModuleMetadata, ...]], ...]:
     """Group available module records by effective loader identity."""
-    groups: dict[int | None, tuple[ImportObjectRef | None, list[ModuleMetadata]]] = {}
+    groups: dict[int | None, tuple[ObjectRef | None, list[ModuleMetadata]]] = {}
     for entry in inventory.entries:
         if entry.inspection != "available":
             continue

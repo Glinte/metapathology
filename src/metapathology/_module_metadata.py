@@ -2,7 +2,7 @@
 
 import types
 
-from metapathology._records import ImportObjectRef, ModuleCacheState, SpecSummary, type_name
+from metapathology._records import ModuleCacheState, ObjectRef, SpecSummary, type_name
 from metapathology._spec import summarize_spec
 
 TYPE_CHECKING = False
@@ -37,14 +37,14 @@ class ModuleMetadata:
         self,
         *,
         name: str,
-        module: ImportObjectRef,
+        module: ObjectRef,
         inspection: str,
         reason: str | None,
         spec_present: bool,
         spec_is_none: bool,
         spec_summary: SpecSummary | None,
         module_loader_available: bool,
-        module_loader: ImportObjectRef | None,
+        module_loader: ObjectRef | None,
         loader_source: str,
         loader_agreement: bool | None,
     ) -> None:
@@ -61,15 +61,15 @@ class ModuleMetadata:
         self.loader_agreement = loader_agreement
 
     @property
-    def loader(self) -> ImportObjectRef | None:
+    def loader(self) -> ObjectRef | None:
         """Effective loader used to group this module."""
         spec_loader = None if self.spec_summary is None else self.spec_summary.loader
         return spec_loader if spec_loader is not None else self.module_loader
 
 
-def object_ref(value: object) -> ImportObjectRef:
+def object_ref(value: object) -> ObjectRef:
     """Return import-safe identity metadata for an arbitrary object."""
-    return ImportObjectRef(id(value), type_name(value))
+    return ObjectRef(id(value), type_name(value))
 
 
 def module_cache_state(cache: object, name: str) -> ModuleCacheState:

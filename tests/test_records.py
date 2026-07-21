@@ -2,7 +2,7 @@
 
 import pytest
 
-from metapathology import ImportAuditStart, ImporterCacheEntry, ImporterCacheReplacement, ImportObjectRef, InternalError
+from metapathology import ImportAuditStart, ImporterCacheEntry, ImporterCacheReplacement, InternalError, ObjectRef
 
 
 def test_record_fields_are_read_only_and_slotted() -> None:
@@ -24,17 +24,17 @@ def test_records_keep_repr_without_generated_equality_or_pattern_matching() -> N
     assert not hasattr(type(first), "__match_args__")
 
 
-def test_import_object_reference_is_plain_read_only_identity_data() -> None:
-    reference = ImportObjectRef(object_id=42, type_name="function", name="path_hook_for_FileFinder")
+def test_object_reference_is_plain_read_only_identity_data() -> None:
+    reference = ObjectRef(object_id=42, type_name="function", name="path_hook_for_FileFinder")
 
-    assert repr(reference) == ("ImportObjectRef(object_id=42, type_name='function', name='path_hook_for_FileFinder')")
+    assert repr(reference) == ("ObjectRef(object_id=42, type_name='function', name='path_hook_for_FileFinder')")
     assert not hasattr(reference, "__dict__")
     with pytest.raises(AttributeError, match="read-only"):
         setattr(reference, "name", "changed")
 
 
 def test_importer_cache_values_distinguish_negative_entries_and_replacements() -> None:
-    finder = ImportObjectRef(object_id=42, type_name="FileFinder")
+    finder = ObjectRef(object_id=42, type_name="FileFinder")
     entry = ImporterCacheEntry(path="/example", finder=None)
     replacement = ImporterCacheReplacement(path="/example", before=finder, after=None)
 

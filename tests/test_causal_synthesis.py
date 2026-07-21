@@ -1,4 +1,4 @@
-"""T15 deterministic joins from atomic findings to import effects."""
+"""Causal synthesis: deterministic joins from atomic findings to import effects."""
 
 import subprocess
 from collections.abc import Callable

@@ -11,7 +11,7 @@ _EXPECTED_PUBLIC_API = frozenset(
         "DeepDiagnosticCall",
         "DeepImportEvent",
         "FindSpecCall",
-        "ImportObjectRef",
+        "ObjectRef",
         "ImporterCacheDiff",
         "ImporterCacheEntry",
         "ImporterCacheReplacement",

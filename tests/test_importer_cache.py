@@ -6,20 +6,20 @@ from collections.abc import Callable
 from hypothesis import given
 from hypothesis import strategies as st
 
-from metapathology import ImportObjectRef
+from metapathology import ObjectRef
 from metapathology._monitor import _diff_importer_cache
 
 RunPython = Callable[..., "subprocess.CompletedProcess[str]"]
 
 
-def _snapshot(values: dict[str, int | None]) -> dict[str, ImportObjectRef | None]:
+def _snapshot(values: dict[str, int | None]) -> dict[str, ObjectRef | None]:
     return {
-        path: None if object_id is None else ImportObjectRef(object_id=object_id, type_name="Finder")
+        path: None if object_id is None else ObjectRef(object_id=object_id, type_name="Finder")
         for path, object_id in values.items()
     }
 
 
-def _plain(snapshot: dict[str, ImportObjectRef | None]) -> dict[str, int | None]:
+def _plain(snapshot: dict[str, ObjectRef | None]) -> dict[str, int | None]:
     return {path: None if finder is None else finder.object_id for path, finder in snapshot.items()}
 
 

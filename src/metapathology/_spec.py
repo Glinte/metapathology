@@ -2,20 +2,20 @@
 
 from importlib.machinery import ModuleSpec
 
-from metapathology._records import ImportObjectRef, SpecSummary, type_name
+from metapathology._records import ObjectRef, SpecSummary, type_name
 
 
-def _object_ref(value: object) -> ImportObjectRef:
-    return ImportObjectRef(id(value), type_name(value))
+def _object_ref(value: object) -> ObjectRef:
+    return ObjectRef(id(value), type_name(value))
 
 
-def _safe_value(value: object) -> str | ImportObjectRef | None:
+def _safe_value(value: object) -> str | ObjectRef | None:
     if value is None or type(value) is str:
         return value
     return _object_ref(value)
 
 
-def _safe_location(value: object) -> str | ImportObjectRef:
+def _safe_location(value: object) -> str | ObjectRef:
     if type(value) is str:
         return value
     return _object_ref(value)
@@ -70,7 +70,7 @@ def summarize_spec(
             cached = None
             unavailable.append("cached:missing")
 
-    copied_locations: tuple[str | ImportObjectRef, ...] | None = None
+    copied_locations: tuple[str | ObjectRef, ...] | None = None
     locations_state = "not_applicable"
     is_package: bool | None
     if locations is missing:

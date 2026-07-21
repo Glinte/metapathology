@@ -110,7 +110,7 @@ competing monitors is not supported because import state is process-global.
 - `enabled: bool` — whether observation is currently active.
 - `initial_meta_path: tuple[str, ...]` — finder display names at installation.
 - `path_hooks_enabled: bool` — whether path-hook observation is currently active.
-- `initial_path_hooks: tuple[ImportObjectRef, ...]` — identities and safe
+- `initial_path_hooks: tuple[ObjectRef, ...]` — identities and safe
   type/name metadata captured when path-hook monitoring was enabled.
 - `importer_cache_enabled: bool` — whether passive importer-cache observation
   is currently active.
@@ -167,9 +167,9 @@ constant-size identities/fingerprints from enabled path-hook and importer-cache
 monitoring. It does not record an import outcome; success and failure remain
 unknown without separate evidence.
 
-### `ImportObjectRef`
+### `ObjectRef`
 
-Carries an import object's numeric identity, safe type name, and optional
+Carries an observed object's numeric identity, safe type name, and optional
 callable name. It never retains or stringifies the foreign object.
 
 ### `ModuleCacheState`
@@ -200,7 +200,7 @@ import.
 
 ### `ImporterCacheEntry` and `ImporterCacheReplacement`
 
-An entry stores a path and either an `ImportObjectRef` or `None`; `None`
+An entry stores a path and either an `ObjectRef` or `None`; `None`
 explicitly represents a negative cache entry. A replacement stores the path
 and its before/after cached values.
 
@@ -223,7 +223,7 @@ detection time rather than the unknowable assignment moment.
 
 ### `PathHooksMutation`
 
-Records the operation, added and removed `ImportObjectRef` values, resulting
+Records the operation, added and removed `ObjectRef` values, resulting
 hook order, thread, and mutation stack. Monitoring never calls the hooks.
 
 ### `PathHooksReassignment`

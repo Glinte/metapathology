@@ -1,4 +1,4 @@
-"""T11 semantic spec summaries and namespace comparisons."""
+"""Semantic spec summaries and namespace comparisons."""
 
 import subprocess
 import threading
@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterator
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 
-from metapathology import ImportObjectRef, SpecSummary
+from metapathology import ObjectRef, SpecSummary
 from metapathology._report_data import _compare_specs, _post_hoc_spec_summary
 from metapathology._spec import summarize_spec
 
@@ -46,7 +46,7 @@ def test_cached_path_is_captured_only_from_an_exact_string_origin() -> None:
     hostile = summarize_spec(hostile_spec, iterate_foreign_locations=False)[0]
 
     assert type(summary.cached) is str
-    assert isinstance(hostile.origin, ImportObjectRef)
+    assert isinstance(hostile.origin, ObjectRef)
     assert hostile.cached is None
 
 

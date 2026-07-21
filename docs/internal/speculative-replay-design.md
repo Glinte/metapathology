@@ -41,7 +41,7 @@ speculative mechanism:
 | --- | --- | --- |
 | A custom meta-path finder claims before `PathFinder` | Captured claim route plus an independent standard-path probe and neutral route comparison | None that justifies calling arbitrary later meta-path finders |
 | A redirecting finder truncates a namespace | Captured and standard namespace routes plus exact descendant-outcome correlation | None for the scikit-build-core#1482 shape |
-| A standard finder makes a later custom finder unreachable | T16 captured or inferred standard resolution and ordering | No safe basis for claiming the later finder would win |
+| A standard finder makes a later custom finder unreachable | Captured or inferred standard resolution attribution and ordering | No safe basis for claiming the later finder would win |
 | A path hook creates a finder that displaces an earlier cached finder | Hook/cache timeline and deep path-entry calls | The report cannot yet link the accepting hook to its returned finder or ask the displaced finder about the failed name |
 
 The last row is the valuable target. It corresponds to the mechanics in

@@ -86,8 +86,8 @@ def type_name(obj: object) -> str:
     return type.__getattribute__(cls, "__name__")
 
 
-class ImportObjectRef(_Record):
-    """Plain identity metadata for an object participating in import resolution."""
+class ObjectRef(_Record):
+    """Plain identity metadata for an observed foreign object."""
 
     __slots__ = ("_name", "_object_id", "_type_name")
     _fields = ("object_id", "type_name", "name")
@@ -189,9 +189,9 @@ class ImporterCacheEntry(_Record):
     __slots__ = ("_finder", "_path")
     _fields = ("path", "finder")
     path = _ReadOnlyField[str]("_path")
-    finder = _ReadOnlyField[ImportObjectRef | None]("_finder")
+    finder = _ReadOnlyField[ObjectRef | None]("_finder")
 
-    def __init__(self, path: str, finder: ImportObjectRef | None) -> None:
+    def __init__(self, path: str, finder: ObjectRef | None) -> None:
         self._path = path
         self._finder = finder
 
@@ -202,14 +202,14 @@ class ImporterCacheReplacement(_Record):
     __slots__ = ("_after", "_before", "_path")
     _fields = ("path", "before", "after")
     path = _ReadOnlyField[str]("_path")
-    before = _ReadOnlyField[ImportObjectRef | None]("_before")
-    after = _ReadOnlyField[ImportObjectRef | None]("_after")
+    before = _ReadOnlyField[ObjectRef | None]("_before")
+    after = _ReadOnlyField[ObjectRef | None]("_after")
 
     def __init__(
         self,
         path: str,
-        before: ImportObjectRef | None,
-        after: ImportObjectRef | None,
+        before: ObjectRef | None,
+        after: ObjectRef | None,
     ) -> None:
         self._path = path
         self._before = before
@@ -447,9 +447,9 @@ class PathHooksMutation(_Record):
     _fields = ("seq", "op", "added", "removed", "contents_after", "thread_name", "stack")
     seq = _ReadOnlyField[int]("_seq")
     op = _ReadOnlyField[str]("_op")
-    added = _ReadOnlyField[tuple[ImportObjectRef, ...]]("_added")
-    removed = _ReadOnlyField[tuple[ImportObjectRef, ...]]("_removed")
-    contents_after = _ReadOnlyField[tuple[ImportObjectRef, ...]]("_contents_after")
+    added = _ReadOnlyField[tuple[ObjectRef, ...]]("_added")
+    removed = _ReadOnlyField[tuple[ObjectRef, ...]]("_removed")
+    contents_after = _ReadOnlyField[tuple[ObjectRef, ...]]("_contents_after")
     thread_name = _ReadOnlyField[str]("_thread_name")
     if TYPE_CHECKING:
         stack = _ReadOnlyField[StackSummary]("_stack")
@@ -460,9 +460,9 @@ class PathHooksMutation(_Record):
         self,
         seq: int,
         op: str,
-        added: tuple[ImportObjectRef, ...],
-        removed: tuple[ImportObjectRef, ...],
-        contents_after: tuple[ImportObjectRef, ...],
+        added: tuple[ObjectRef, ...],
+        removed: tuple[ObjectRef, ...],
+        contents_after: tuple[ObjectRef, ...],
         thread_name: str,
         stack: "StackSummary",
     ) -> None:
@@ -482,8 +482,8 @@ class PathHooksReassignment(_Record):
     _fields = ("seq", "during_import", "old_contents", "new_contents", "thread_name", "stack")
     seq = _ReadOnlyField[int]("_seq")
     during_import = _ReadOnlyField[str]("_during_import")
-    old_contents = _ReadOnlyField[tuple[ImportObjectRef, ...]]("_old_contents")
-    new_contents = _ReadOnlyField[tuple[ImportObjectRef, ...]]("_new_contents")
+    old_contents = _ReadOnlyField[tuple[ObjectRef, ...]]("_old_contents")
+    new_contents = _ReadOnlyField[tuple[ObjectRef, ...]]("_new_contents")
     thread_name = _ReadOnlyField[str]("_thread_name")
     if TYPE_CHECKING:
         stack = _ReadOnlyField[StackSummary]("_stack")
@@ -494,8 +494,8 @@ class PathHooksReassignment(_Record):
         self,
         seq: int,
         during_import: str,
-        old_contents: tuple[ImportObjectRef, ...],
-        new_contents: tuple[ImportObjectRef, ...],
+        old_contents: tuple[ObjectRef, ...],
+        new_contents: tuple[ObjectRef, ...],
         thread_name: str,
         stack: "StackSummary",
     ) -> None:
@@ -599,25 +599,25 @@ class SpecSummary(_Record):
         "locations_state",
         "unavailable_fields",
     )
-    spec = _ReadOnlyField[ImportObjectRef]("_spec")
-    loader = _ReadOnlyField[ImportObjectRef | None]("_loader")
-    origin = _ReadOnlyField[str | ImportObjectRef | None]("_origin")
-    cached = _ReadOnlyField[str | ImportObjectRef | None]("_cached")
+    spec = _ReadOnlyField[ObjectRef]("_spec")
+    loader = _ReadOnlyField[ObjectRef | None]("_loader")
+    origin = _ReadOnlyField[str | ObjectRef | None]("_origin")
+    cached = _ReadOnlyField[str | ObjectRef | None]("_cached")
     is_package = _ReadOnlyField[bool | None]("_is_package")
     is_namespace = _ReadOnlyField[bool | None]("_is_namespace")
-    submodule_search_locations = _ReadOnlyField[tuple[str | ImportObjectRef, ...] | None]("_submodule_search_locations")
+    submodule_search_locations = _ReadOnlyField[tuple[str | ObjectRef, ...] | None]("_submodule_search_locations")
     locations_state = _ReadOnlyField[str]("_locations_state")
     unavailable_fields = _ReadOnlyField[tuple[str, ...]]("_unavailable_fields")
 
     def __init__(
         self,
-        spec: ImportObjectRef,
-        loader: ImportObjectRef | None,
-        origin: str | ImportObjectRef | None,
-        cached: str | ImportObjectRef | None,
+        spec: ObjectRef,
+        loader: ObjectRef | None,
+        origin: str | ObjectRef | None,
+        cached: str | ObjectRef | None,
         is_package: bool | None,
         is_namespace: bool | None,
-        submodule_search_locations: tuple[str | ImportObjectRef, ...] | None,
+        submodule_search_locations: tuple[str | ObjectRef, ...] | None,
         locations_state: str,
         unavailable_fields: tuple[str, ...] = (),
     ) -> None:

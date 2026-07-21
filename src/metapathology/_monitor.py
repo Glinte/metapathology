@@ -31,12 +31,12 @@ from metapathology._records import (
     ImporterCacheDiff,
     ImporterCacheEntry,
     ImporterCacheReplacement,
-    ImportObjectRef,
     InternalError,
     MetaPathMutation,
     MetaPathReassignment,
     ModuleCacheState,
     MonitorEvent,
+    ObjectRef,
     PathHooksMutation,
     PathHooksReassignment,
     SpecSummary,
@@ -242,7 +242,7 @@ def _capture_stack(frame: "FrameType") -> traceback.StackSummary:
     return traceback.StackSummary.extract(traceback.walk_stack(frame), limit=_STACK_CAPTURE_LIMIT, lookup_lines=False)
 
 
-def _import_object_ref(obj: object) -> ImportObjectRef:
+def _object_ref(obj: object) -> ObjectRef:
     """Reduce an import object to safe identity metadata without foreign dispatch."""
     name: str | None = None
     if isinstance(obj, (types.FunctionType, types.BuiltinFunctionType, types.MethodType)):
@@ -253,10 +253,10 @@ def _import_object_ref(obj: object) -> ImportObjectRef:
         else:
             if isinstance(raw_name, str):
                 name = raw_name
-    return ImportObjectRef(object_id=id(obj), type_name=type_name(obj), name=name)
+    return ObjectRef(object_id=id(obj), type_name=type_name(obj), name=name)
 
 
-def _cache_values_match(left: ImportObjectRef | None, right: ImportObjectRef | None) -> bool:
+def _cache_values_match(left: ObjectRef | None, right: ObjectRef | None) -> bool:
     """Compare captured cache values without relying on record identity equality."""
     if left is None or right is None:
         return left is right
@@ -264,8 +264,8 @@ def _cache_values_match(left: ImportObjectRef | None, right: ImportObjectRef | N
 
 
 def _diff_importer_cache(
-    before: dict[str, ImportObjectRef | None],
-    after: dict[str, ImportObjectRef | None],
+    before: dict[str, ObjectRef | None],
+    after: dict[str, ObjectRef | None],
 ) -> tuple[
     tuple[ImporterCacheEntry, ...],
     tuple[ImporterCacheEntry, ...],
@@ -284,7 +284,7 @@ def _diff_importer_cache(
     return added, removed, replaced
 
 
-def _cache_entries(snapshot: dict[str, ImportObjectRef | None]) -> tuple[ImporterCacheEntry, ...]:
+def _cache_entries(snapshot: dict[str, ObjectRef | None]) -> tuple[ImporterCacheEntry, ...]:
     """Project a cache snapshot into deterministic public entry records."""
     return tuple(ImporterCacheEntry(path, snapshot[path]) for path in sorted(snapshot))
 
@@ -309,7 +309,7 @@ def _audit_resolution_name(args: tuple[object, ...]) -> str | None:
 
 
 def _snapshot_importer_cache() -> tuple[
-    dict[str, ImportObjectRef | None],
+    dict[str, ObjectRef | None],
     int,
     dict[int, object],
     tuple[int, int],
@@ -317,7 +317,7 @@ def _snapshot_importer_cache() -> tuple[
     """Copy string-keyed cache state once without stringifying foreign objects."""
     cache = sys.path_importer_cache
     raw_items = list(cache.items())
-    entries: dict[str, ImportObjectRef | None] = {}
+    entries: dict[str, ObjectRef | None] = {}
     finders: dict[int, object] = {}
     non_string_keys = 0
     for path, finder in raw_items:
@@ -329,7 +329,7 @@ def _snapshot_importer_cache() -> tuple[
         if finder is None:
             entries[path] = None
             continue
-        reference = _import_object_ref(finder)
+        reference = _object_ref(finder)
         entries[path] = reference
         finders[reference.object_id] = finder
     return entries, non_string_keys, finders, (id(cache), len(cache))
@@ -382,23 +382,24 @@ class Monitor:
         # The exact list object we last put into sys.meta_path. The audit hook
         # compares by identity: a mismatch means someone reassigned sys.meta_path.
         self._instrumented: _InstrumentedMetaPath | None = None
-        # T1 is independently enableable. Observed hooks remain strongly
+        # Path-hooks monitoring is independently enableable. Observed hooks remain strongly
         # referenced while active so recorded ids cannot be reused mid-capture.
         self._path_hooks_enabled = False
         self._instrumented_path_hooks: _InstrumentedPathHooks | None = None
-        self._initial_path_hooks: tuple[ImportObjectRef, ...] = ()
+        self._initial_path_hooks: tuple[ObjectRef, ...] = ()
         self._observed_path_hooks: dict[int, object] = {}
         # Opt-in because replacing sys.path has a wider compatibility surface
         # than observing the import-specific lists enabled by default.
         self._sys_path_enabled = False
         self._instrumented_sys_path: _InstrumentedSysPath | None = None
-        # T2 retains one install snapshot and one rolling comparison snapshot.
+        # Importer-cache diffing retains one install snapshot and one rolling
+        # comparison snapshot.
         # Full observations are coalesced when one is already in progress;
         # diff events themselves remain exhaustive and unbounded.
         self._importer_cache_enabled = False
         self._initial_importer_cache: tuple[ImporterCacheEntry, ...] = ()
         self._initial_importer_cache_non_string_keys = 0
-        self._latest_importer_cache: dict[str, ImportObjectRef | None] | None = None
+        self._latest_importer_cache: dict[str, ObjectRef | None] | None = None
         self._latest_importer_cache_non_string_keys: int | None = None
         self._importer_cache_fingerprint: tuple[int, int] | None = None
         self._importer_cache_dirty = False
@@ -418,7 +419,7 @@ class Monitor:
         self._baseline_modules: frozenset[str] = frozenset()
         # Finder display names at install time, for the report header.
         self._initial_meta_path: tuple[str, ...] = ()
-        # T12 observations are exhaustive over distinct finder identities and
+        # Finder-contract observations are exhaustive over distinct finder identities and
         # retain the finder through the existing patched/skipped maps.
         self._finder_contracts: dict[int, FinderContract] = {}
         self._deep_path_hooks = False
@@ -453,7 +454,7 @@ class Monitor:
         return self._enabled and self._path_hooks_enabled
 
     @property
-    def initial_path_hooks(self) -> tuple[ImportObjectRef, ...]:
+    def initial_path_hooks(self) -> tuple[ObjectRef, ...]:
         """Safe hook identities captured when path-hook monitoring was enabled."""
         return self._initial_path_hooks
 
@@ -493,12 +494,12 @@ class Monitor:
 
     @property
     def initial_importer_cache(self) -> tuple[ImporterCacheEntry, ...]:
-        """String-keyed importer-cache entries captured when T2 was enabled."""
+        """String-keyed importer-cache entries captured when importer-cache diffing was enabled."""
         return self._initial_importer_cache
 
-    def _current_path_hook_refs(self) -> tuple[ImportObjectRef, ...]:
+    def _current_path_hook_refs(self) -> tuple[ObjectRef, ...]:
         """Copy current path-hook identities for report capture."""
-        return tuple(_import_object_ref(self._original_path_hook(hook)) for hook in list(sys.path_hooks))
+        return tuple(_object_ref(self._original_path_hook(hook)) for hook in list(sys.path_hooks))
 
     def _original_path_hook(self, hook: object) -> object:
         """Normalize one deep wrapper to the foreign hook it delegates to."""
@@ -796,9 +797,9 @@ class Monitor:
         self._report_color = validated_color
 
     def _enable_path_hooks(self) -> None:
-        """Install the T1 list around the current ``sys.path_hooks`` contents."""
+        """Install the instrumented list around the current ``sys.path_hooks`` contents."""
         contents = list(sys.path_hooks)
-        initial = tuple(_import_object_ref(hook) for hook in contents)
+        initial = tuple(_object_ref(hook) for hook in contents)
         instrumented = _InstrumentedPathHooks(contents, self)
         with self._record_lock:
             self._observed_path_hooks.update((reference.object_id, hook) for reference, hook in zip(initial, contents))
@@ -919,7 +920,7 @@ class Monitor:
             )
 
     def _enable_importer_cache(self) -> None:
-        """Capture the T2 baseline without replacing the interpreter cache."""
+        """Capture the importer-cache baseline without replacing the interpreter cache."""
         self._importer_cache_enabled = True
         self._observe_importer_cache("install", initial=True)
 
@@ -1341,7 +1342,7 @@ class Monitor:
         path_hooks_id: int | None,
         cache_fingerprint: tuple[int, int] | None,
     ) -> None:
-        """Append one plain-data audit record and update T2's cheap fingerprint."""
+        """Append one plain-data audit record and update the cheap importer-cache fingerprint."""
         thread_name = threading.current_thread().name
         importer_cache_id = None if cache_fingerprint is None else cache_fingerprint[0]
         importer_cache_size = None if cache_fingerprint is None else cache_fingerprint[1]
@@ -1371,7 +1372,7 @@ class Monitor:
             self._local.pending_import_attempt = (attempt_id, fullname)
 
     def _check_importer_cache_fingerprint(self) -> None:
-        """Mark T2 dirty using only dictionary identity and length."""
+        """Mark the importer-cache snapshot dirty using only dictionary identity and length."""
         if not self._importer_cache_enabled:
             return
         cache = sys.path_importer_cache
@@ -1455,7 +1456,7 @@ class Monitor:
                 detection to the import that was in flight.
         """
         meta_data: tuple[tuple[str, ...], tuple[str, ...]] | None = None
-        path_hooks_data: tuple[tuple[ImportObjectRef, ...], tuple[ImportObjectRef, ...]] | None = None
+        path_hooks_data: tuple[tuple[ObjectRef, ...], tuple[ObjectRef, ...]] | None = None
         sys_path_data: tuple[tuple[str, ...], tuple[str, ...]] | None = None
         with self._reinstall_lock:
             if not self._enabled:
@@ -1482,8 +1483,8 @@ class Monitor:
             ):
                 old_hooks = tuple(expected_path_hooks)
                 new_hooks = tuple(current_path_hooks)
-                old_hook_contents = tuple(_import_object_ref(self._original_path_hook(hook)) for hook in old_hooks)
-                new_hook_contents = tuple(_import_object_ref(self._original_path_hook(hook)) for hook in new_hooks)
+                old_hook_contents = tuple(_object_ref(self._original_path_hook(hook)) for hook in old_hooks)
+                new_hook_contents = tuple(_object_ref(self._original_path_hook(hook)) for hook in new_hooks)
                 path_replacement = _InstrumentedPathHooks(new_hooks, self)
                 self._instrumented_path_hooks = path_replacement
                 sys.path_hooks = path_replacement
@@ -1931,8 +1932,8 @@ class Monitor:
         try:
             if not self._enabled or not self._path_hooks_enabled or mutated is not self._instrumented_path_hooks:
                 return
-            added_refs = tuple(_import_object_ref(self._original_path_hook(hook)) for hook in added)
-            removed_refs = tuple(_import_object_ref(self._original_path_hook(hook)) for hook in removed)
+            added_refs = tuple(_object_ref(self._original_path_hook(hook)) for hook in added)
+            removed_refs = tuple(_object_ref(self._original_path_hook(hook)) for hook in removed)
             if self._deep_path_hooks:
                 for added_hook in added:
                     if id(added_hook) in self._deep_hook_wrappers:
@@ -1942,7 +1943,7 @@ class Monitor:
                     for index, current in enumerate(mutated):
                         if current is added_hook:
                             list.__setitem__(mutated, index, wrapper)
-            contents_after = tuple(_import_object_ref(self._original_path_hook(hook)) for hook in list(mutated))
+            contents_after = tuple(_object_ref(self._original_path_hook(hook)) for hook in list(mutated))
             observed_hooks = (*added, *removed, *mutated)
             thread_name = threading.current_thread().name
             stack = _capture_stack(frame)
@@ -1972,7 +1973,7 @@ class Monitor:
             self._local.active = False
 
     def _on_path_hooks_before_mutation(self, mutated: "_InstrumentedPathHooks") -> None:
-        """Observe T2 immediately before a live path-hook list operation."""
+        """Observe the importer cache immediately before a live path-hook list operation."""
         if self._local.active:
             return
         self._local.active = True
