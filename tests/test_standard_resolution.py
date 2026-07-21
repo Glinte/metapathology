@@ -15,12 +15,8 @@ from importlib.machinery import (
 from pathlib import Path
 from typing import cast
 
-from metapathology._report_data import (
-    ImportAttempt,
-    StandardResolution,
-    _repeated_load_failure_findings,
-    _standard_spec_classification,
-)
+from metapathology._report_analysis import _repeated_load_failure_findings, _standard_spec_classification
+from metapathology._report_model import ImportAttempt, StandardResolution
 from metapathology._spec import summarize_spec
 
 RunPython = Callable[..., subprocess.CompletedProcess[str]]

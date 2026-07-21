@@ -4,13 +4,14 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-from metapathology._report_data import CausalExplanation, _append_ambiguous_explanations
+from metapathology._report_analysis import _append_ambiguous_explanations
+from metapathology._report_model import CausalExplanation
 from metapathology._report_text import _primary_explanations
 
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from metapathology._report_data import EffectStatus, ExplanationKind
+    from metapathology._report_model import EffectStatus, ExplanationKind
 
 RunPython = Callable[..., subprocess.CompletedProcess[str]]
 

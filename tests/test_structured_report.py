@@ -129,7 +129,7 @@ def test_explicit_file_write_uses_exact_path(run_python: RunPython, tmp_path: Pa
 def test_failure_report_has_the_same_top_level_contract(run_python: RunPython) -> None:
     proc = run_python(
         "import metapathology\n"
-        "from metapathology._report_data import failed_json_document\n"
+        "from metapathology._report_json import failed_json_document\n"
         "monitor = metapathology.install(report_at_exit=False)\n"
         "complete = __import__('json').loads(metapathology.render_report(format='json'))\n"
         "failed = failed_json_document('BrokenReport')\n"
@@ -258,7 +258,7 @@ def test_explicit_file_failure_is_recorded_and_raised(run_python: RunPython, tmp
 
 def test_report_document_uses_hand_written_slots(run_python: RunPython) -> None:
     proc = run_python(
-        "from metapathology._report_data import LoaderInventory, ReportDocument, ReportSummary\n"
+        "from metapathology._report_model import LoaderInventory, ReportDocument, ReportSummary\n"
         "assert '__dataclass_fields__' not in ReportDocument.__dict__\n"
         "assert '__slots__' in ReportDocument.__dict__\n"
         "document = ReportDocument(\n"

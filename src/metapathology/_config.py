@@ -7,7 +7,7 @@ state. It deliberately does not import the monitor or reporting pipeline.
 
 import os
 
-from metapathology._records import _Record
+from metapathology._record import _Record
 
 TYPE_CHECKING = False
 

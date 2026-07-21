@@ -4,35 +4,21 @@ Records hold only primitive data (type names, ids, precomputed strings)
 extracted at capture time. Foreign objects are never repr()'d while an import
 may be in flight; all formatting happens at report time in ``_report``.
 
-Each record is declared as a small class of field annotations. ``_RecordMeta``
-derives ``__slots__``, the public ``_fields`` order, and a read-only ``__init__``
-from those annotations, so the field list is stated once. Records are frozen
-(read-only after construction) and intentionally identity-compared: two records
-with equal fields are distinct captured events, so no ``__eq__`` is generated.
-
-The field vocabularies (``MutationOp`` etc.) and ``dataclass_transform`` are
-imported only under ``TYPE_CHECKING``; annotations that reference them use
-forward-reference strings so the module needs no runtime ``typing`` import.
+The field vocabularies (``MutationOp`` etc.) are imported only under
+``TYPE_CHECKING``; annotations that reference them use forward-reference
+strings so the module needs no runtime ``typing`` import.
 """
 
 import types
+
+from metapathology._record import _Record
 
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from traceback import StackSummary
-    from typing import ClassVar, Literal
+    from typing import Literal
     from typing import cast as _cast
-
-    # ``dataclass_transform`` lives in ``typing`` only from 3.11; import it from
-    # ``typing_extensions`` (checker-only, never imported at runtime) so the
-    # 3.10 type-check target still resolves it.
-    from typing_extensions import dataclass_transform
-
-    # ``annotationlib`` (3.14+) is unavailable at the 3.10 check target; the
-    # runtime branch below binds it. None here keeps its usage sites dead code
-    # for the checker.
-    _annotationlib = None
 
     # Closed vocabularies for enum-like record fields. Free-form captured
     # strings (type names, module names, paths, thread names) stay ``str``.
@@ -74,101 +60,6 @@ else:
 
     def _cast(_type: object, value: object) -> object:
         return value
-
-    def dataclass_transform(**_kwargs: object):
-        """Runtime no-op standing in for ``typing.dataclass_transform``."""
-
-        def decorate(cls: object) -> object:
-            return cls
-
-        return decorate
-
-    try:
-        # Python 3.14+ (PEP 649): class namespaces expose a lazy
-        # ``__annotate_func__`` instead of an eager ``__annotations__`` dict.
-        import annotationlib as _annotationlib
-    except ImportError:  # Python < 3.14
-        _annotationlib = None
-
-
-_MISSING = object()
-
-
-def _field_names(namespace: "dict[str, object]") -> "tuple[str, ...]":
-    """Return the public field names annotated in a class namespace, in order.
-
-    Reads the eager ``__annotations__`` dict on Python < 3.14, or the lazy
-    ``__annotate__`` function on 3.14+. ``FORWARDREF`` format keeps
-    ``TYPE_CHECKING``-only field types (e.g. ``MutationOp``) from being
-    evaluated; only the annotation keys are needed here.
-    """
-    annotations = namespace.get("__annotations__")
-    if not isinstance(annotations, dict) and _annotationlib is not None:
-        annotate = namespace.get("__annotate_func__")
-        if annotate is not None:
-            annotations = _annotationlib.call_annotate_function(annotate, _annotationlib.Format.FORWARDREF)
-    if not isinstance(annotations, dict):
-        return ()
-    return tuple(name for name in annotations if isinstance(name, str) and not name.startswith("_"))
-
-
-def _make_init(cls_name: str, fields: "tuple[str, ...]", defaults: "dict[str, object]"):
-    """Build a read-only ``__init__`` that assigns fields positionally or by keyword."""
-
-    def __init__(self: object, *args: object, **kwargs: object) -> None:
-        if len(args) > len(fields):
-            raise TypeError(f"{cls_name}() takes at most {len(fields)} positional arguments")
-        values: dict[str, object] = dict(zip(fields, args))
-        for key, value in kwargs.items():
-            if key not in fields:
-                raise TypeError(f"{cls_name}() got an unexpected keyword argument {key!r}")
-            if key in values:
-                raise TypeError(f"{cls_name}() got multiple values for argument {key!r}")
-            values[key] = value
-        for name in fields:
-            if name not in values:
-                if name in defaults:
-                    values[name] = defaults[name]
-                else:
-                    raise TypeError(f"{cls_name}() missing required argument {name!r}")
-            object.__setattr__(self, name, values[name])
-
-    return __init__
-
-
-@dataclass_transform(frozen_default=True, eq_default=False)
-class _RecordMeta(type):
-    """Derive slots, field order, and a frozen ``__init__`` from field annotations."""
-
-    def __new__(mcs, name: str, bases: "tuple[type, ...]", namespace: "dict[str, object]") -> type:
-        fields = _field_names(namespace)
-        if fields:
-            defaults = {n: namespace.pop(n) for n in fields if n in namespace}
-            namespace["__slots__"] = fields
-            namespace["_fields"] = fields
-            namespace["__init__"] = _make_init(name, fields, defaults)
-        return super().__new__(mcs, name, bases, namespace)
-
-
-class _Record(metaclass=_RecordMeta):
-    """Frozen, slotted base with a shared repr and read-only enforcement."""
-
-    __slots__ = ()
-    _fields: "ClassVar[tuple[str, ...]]" = ()
-
-    if not TYPE_CHECKING:
-        # Runtime read-only enforcement. Hidden from the checker, which already
-        # treats records as frozen (via ``dataclass_transform``) and forbids
-        # overriding ``__setattr__``/``__delattr__`` on a frozen dataclass.
-        def __setattr__(self, name: str, value: object) -> None:
-            raise AttributeError(f"{type(self).__name__!r} attribute {name!r} is read-only")
-
-        def __delattr__(self, name: str) -> None:
-            raise AttributeError(f"{type(self).__name__!r} attribute {name!r} is read-only")
-
-    def __repr__(self) -> str:
-        fields = ", ".join(f"{name}={getattr(self, name)!r}" for name in self._fields)
-        return f"{type(self).__name__}({fields})"
 
 
 def type_name(obj: object) -> str:

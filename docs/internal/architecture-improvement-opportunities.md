@@ -59,12 +59,16 @@ Live interpreter inspection should remain a separately labelled report-time
 phase. This makes the distinction between cutoff evidence and later live
 evidence explicit in both code and tests.
 
+Status: complete. `Monitor._report_state()` now returns one immutable
+`MonitorSnapshot` containing the event cutoff and every monitor-owned report
+input. `_report_capture.py` consumes that snapshot and performs separately
+identified live interpreter reads.
+
 ## 4. Split the report pipeline by stage
 
-`_report_data.py` currently owns report-domain records, live capture and
+The former `_report_data.py` owned report-domain records, live capture and
 probing, deterministic analysis, and stable JSON serialization. Separate
-those responsibilities gradually while retaining compatibility imports during
-the migration:
+those responsibilities by pipeline stage:
 
 - `_report_model.py`: report documents, attempts, findings, routes, and
   explanations;
@@ -77,6 +81,9 @@ Start with JSON projection because it is a leaf stage: it consumes an existing
 `ReportDocument` and does not inspect or mutate import state. Leave
 `_report_text.py` intact until its own change pressure justifies subdivision.
 
+Status: complete. The mixed module has been removed; model, capture, analysis,
+JSON projection, and text projection now have explicit one-way dependencies.
+
 ## 5. Give immutable record infrastructure one owner
 
 Capture events and report-domain records share private immutable-record
@@ -87,6 +94,11 @@ the capture-event module.
 
 Preserve the public event-record API and its immutable, slotted, identity-based
 semantics throughout any migration.
+
+Status: complete. `_record.py` is the neutral owner of the immutable record
+metaclass and base. Configuration, monitor snapshots, capture events, and
+report-domain models now depend on that boundary rather than importing record
+machinery from the capture-event module.
 
 ## 6. Separate configuration resolution from lifecycle mutation
 
@@ -110,7 +122,8 @@ items 1 and 2 rather than configuration parsing.
 1. Consolidate installation configuration without changing the public API.
 2. Establish the immutable record boundary while completing the current record
    migration.
-3. Extract JSON projection from `_report_data.py`.
-4. Add `MonitorSnapshot`, then separate capture from deterministic analysis.
-5. Implement owned leases for profilers and other global resources.
-6. Rework installation around a two-phase lifecycle transition.
+3. Split model, capture, analysis, and JSON projection into explicit stages.
+4. Add the immutable `MonitorSnapshot` cutoff contract.
+5. Give shared immutable-record machinery a neutral owner.
+6. Implement owned leases for profilers and other global resources.
+7. Rework installation around a two-phase lifecycle transition.

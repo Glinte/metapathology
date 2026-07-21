@@ -22,6 +22,7 @@ from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 from metapathology import _report
 from metapathology._config import normalize_report_destination, resolve_install_request
 from metapathology._module_metadata import module_cache_state, safe_module_name, safe_spec_loader, safe_spec_name
+from metapathology._record import _Record
 from metapathology._records import (
     DeepDiagnosticCall,
     DeepImportEvent,
@@ -232,6 +233,28 @@ class _TargetOutcomeState:
         self.exception_type_name = exception_type_name
         self.missing_module = missing_module
         self.exit_code = exit_code
+
+
+class MonitorSnapshot(_Record):
+    """Immutable monitor-owned state copied at one event-sequence cutoff."""
+
+    cutoff_seq: int
+    events: tuple[MonitorEvent, ...]
+    skipped_finders: tuple[tuple[object, str], ...]
+    finder_contracts: tuple[FinderContract, ...]
+    importer_cache: _ImporterCacheReportState
+    early_site_bootstrap: _EarlySiteBootstrapState | None
+    frozen_bootstrap: _FrozenBootstrapState | None
+    enabled: bool
+    baseline_modules: frozenset[str]
+    initial_meta_path: tuple[str, ...]
+    path_hooks_enabled: bool
+    initial_path_hooks: tuple[ObjectRef, ...]
+    sys_path_enabled: bool
+    deep_diagnostics: tuple[str, ...]
+    deep_import_outcomes_status: "DeepImportOutcomesStatus"
+    standard_finder_status: "StandardFinderStatus"
+    target_outcome: _TargetOutcomeState | None
 
 
 class _ThreadState(threading.local):
@@ -566,17 +589,7 @@ class Monitor:
         with self._record_lock:
             return [(type_name(finder), reason) for finder, reason in self._skipped.values()]
 
-    def _report_state(
-        self,
-    ) -> tuple[
-        int,
-        list[MonitorEvent],
-        list[tuple[object, str]],
-        list[FinderContract],
-        _ImporterCacheReportState,
-        _EarlySiteBootstrapState | None,
-        _FrozenBootstrapState | None,
-    ]:
+    def _report_state(self) -> MonitorSnapshot:
         """Copy chronological evidence and skipped finders at one sequence cutoff."""
         self._observe_importer_cache("report")
         with self._record_lock:
@@ -590,14 +603,24 @@ class Monitor:
                 observations=self._importer_cache_observations,
                 coalesced=self._importer_cache_coalesced,
             )
-            return (
-                self._seq,
-                list(self._events),
-                list(self._skipped.values()),
-                list(self._finder_contracts.values()),
-                cache_state,
-                self._early_site_bootstrap,
-                self._frozen_bootstrap,
+            return MonitorSnapshot(
+                cutoff_seq=self._seq,
+                events=tuple(self._events),
+                skipped_finders=tuple(self._skipped.values()),
+                finder_contracts=tuple(self._finder_contracts.values()),
+                importer_cache=cache_state,
+                early_site_bootstrap=self._early_site_bootstrap,
+                frozen_bootstrap=self._frozen_bootstrap,
+                enabled=self._enabled,
+                baseline_modules=self._baseline_modules,
+                initial_meta_path=self._initial_meta_path,
+                path_hooks_enabled=self._enabled and self._path_hooks_enabled,
+                initial_path_hooks=self._initial_path_hooks,
+                sys_path_enabled=self._enabled and self._sys_path_enabled,
+                deep_diagnostics=self.deep_diagnostics,
+                deep_import_outcomes_status=self._deep_import_outcomes_status,
+                standard_finder_status=self._standard_finder_status,
+                target_outcome=self._target_outcome,
             )
 
     def _set_early_site_bootstrap(

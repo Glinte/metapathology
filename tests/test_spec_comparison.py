@@ -8,7 +8,7 @@ from importlib.machinery import ModuleSpec
 from pathlib import Path
 
 from metapathology import ObjectRef, SpecSummary
-from metapathology._report_data import _compare_specs, _post_hoc_spec_summary
+from metapathology._report_analysis import _compare_specs, _post_hoc_spec_summary
 from metapathology._spec import summarize_spec
 
 RunPython = Callable[..., "subprocess.CompletedProcess[str]"]

@@ -1023,6 +1023,35 @@ def test_uninstall_concurrent_with_mutation_leaves_no_wrapper(run_python: RunPyt
     assert "OK" in proc.stdout
 
 
+MONITOR_SNAPSHOT = """
+import metapathology
+from metapathology._monitor import MonitorSnapshot
+
+monitor = metapathology.install(report_at_exit=False)
+import colorsys
+snapshot = monitor._report_state()
+assert isinstance(snapshot, MonitorSnapshot)
+assert snapshot.enabled
+assert snapshot.events
+assert max(event.seq for event in snapshot.events) <= snapshot.cutoff_seq
+assert snapshot.baseline_modules == monitor.baseline_modules
+try:
+    snapshot.cutoff_seq = 0
+except AttributeError as exc:
+    assert "read-only" in str(exc)
+else:
+    raise AssertionError("monitor snapshots must be immutable")
+metapathology.uninstall()
+print("OK")
+"""
+
+
+def test_report_state_is_one_named_immutable_snapshot(run_python: RunPython) -> None:
+    proc = run_python(MONITOR_SNAPSHOT)
+    assert proc.returncode == 0, proc.stderr
+    assert "OK" in proc.stdout
+
+
 # Characterization, not a bug: recovery from a reassignment can only
 # copy-and-swap, because a plain list cannot be instrumented in place. The
 # reassigner's own list object therefore goes stale once detection replaces it.

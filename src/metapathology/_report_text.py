@@ -23,7 +23,8 @@ from metapathology._records import (
     SysPathMutation,
     SysPathReassignment,
 )
-from metapathology._report_data import (
+from metapathology._report_analysis import unresolved_attempts
+from metapathology._report_model import (
     CausalExplanation,
     Finding,
     ReportDocument,
@@ -31,7 +32,6 @@ from metapathology._report_data import (
     RouteComparison,
     StandardResolution,
     StructuralComparison,
-    unresolved_attempts,
 )
 
 TYPE_CHECKING = False

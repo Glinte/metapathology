@@ -1,8 +1,8 @@
 """Report rendering and output boundaries.
 
-All live-state capture and resolution-route analysis happens once in
-``_report_data``. The renderers only project that document, while this module
-contains the I/O behavior shared by explicit, CLI, and atexit reporting.
+Live-state capture and resolution-route analysis happen once before rendering.
+The renderers only project that document, while this module contains the I/O
+behavior shared by explicit, CLI, and atexit reporting.
 """
 
 import json
@@ -14,7 +14,8 @@ from contextlib import suppress
 from metapathology._config import validate_report_color as validate_color
 from metapathology._config import validate_report_format as validate_format
 from metapathology._records import type_name
-from metapathology._report_data import capture_document, failed_json_document, json_document
+from metapathology._report_capture import capture_document
+from metapathology._report_json import failed_json_document, json_document
 from metapathology._report_text import render_failure_lines, render_lines
 
 # Supported type checkers treat this conventional name as true without making
