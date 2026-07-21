@@ -1,5 +1,6 @@
 """Opt-in deep import diagnostics and their reversible shadows."""
 
+import builtins
 import functools
 import importlib._bootstrap as _importlib_bootstrap
 import sys
@@ -9,24 +10,32 @@ from importlib.machinery import PathFinder
 
 from metapathology._module_metadata import module_cache_state, safe_module_name, safe_spec_loader, safe_spec_name
 from metapathology._monitor_model import _MISSING, _OwnedAttribute, _OwnedValue
-from metapathology._records import DeepDiagnosticCall, DeepImportEvent, ModuleCacheState, StandardFinderCall, type_name
+from metapathology._records import (
+    DeepDiagnosticCall,
+    DeepImportEvent,
+    ImportCall,
+    ModuleCacheState,
+    StandardFinderCall,
+    type_name,
+)
 from metapathology._spec import summarize_spec
 
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from types import FrameType
+    from collections.abc import Callable, Sequence
+    from types import FrameType, ModuleType
     from typing import cast as _cast
 
     from _typeshed.importlib import PathEntryFinderProtocol
 
     from metapathology._monitor import Monitor
-    from metapathology._monitor_model import DeepImportOutcomesStatus, StandardFinderStatus
+    from metapathology._monitor_model import DeepImportCallsStatus, DeepImportOutcomesStatus, StandardFinderStatus
     from metapathology._records import DeepBoundary, DeepOutcome
 
     _PathHook = Callable[[str], PathEntryFinderProtocol]
     _ProfileFunction = Callable[[FrameType, str, object], object]
+    _Import = Callable[..., ModuleType]
 else:
 
     def _cast(_type: object, value: object) -> object:
@@ -52,6 +61,9 @@ class _DeepDiagnostics:
         self._deep_loaders = False
         self._deep_import_outcomes = False
         self._deep_import_outcomes_status: DeepImportOutcomesStatus = "disabled"
+        self._deep_import_calls = False
+        self._deep_import_calls_status: DeepImportCallsStatus = "disabled"
+        self._import_wrapper_lease: _OwnedValue | None = None
         self._standard_finder_status: StandardFinderStatus = "disabled"
         self._deep_import_code: types.CodeType | None = None
         self._path_finder_code: types.CodeType | None = None
@@ -111,8 +123,16 @@ class _DeepDiagnostics:
         return self._deep_import_outcomes
 
     @property
+    def import_calls_enabled(self) -> bool:
+        return self._deep_import_calls
+
+    @property
     def deep_import_outcomes_status(self) -> "DeepImportOutcomesStatus":
         return self._deep_import_outcomes_status
+
+    @property
+    def deep_import_calls_status(self) -> "DeepImportCallsStatus":
+        return self._deep_import_calls_status
 
     @property
     def standard_finder_status(self) -> "StandardFinderStatus":
@@ -130,6 +150,8 @@ class _DeepDiagnostics:
             enabled.append("loaders")
         if self._deep_import_outcomes:
             enabled.append("import_outcomes")
+        if self._deep_import_calls:
+            enabled.append("import_calls")
         return tuple(enabled)
 
     def enable_path_entry_finders(self) -> None:
@@ -266,6 +288,99 @@ class _DeepDiagnostics:
                     thread_name,
                 )
             )
+
+    def enable_import_calls(self) -> None:
+        """Wrap ``builtins.__import__`` to observe every import, including cache hits.
+
+        A plain function swap: chain-safe against other tools that also wrap
+        ``__import__`` (we delegate to whatever is current and restore it only
+        while our wrapper is still installed). ``importlib.import_module`` and
+        lower-level importlib entry points bypass ``__import__`` and remain
+        unobserved by this mechanism.
+        """
+        previous = builtins.__import__
+        wrapper = self._make_import_wrapper(previous)
+        self._deep_import_calls = True
+        self._deep_import_calls_status = "active_all_threads_including_cache_hits"
+        self._import_wrapper_lease = _OwnedValue(previous, wrapper)
+        builtins.__import__ = wrapper
+
+    def _make_import_wrapper(self, original: "_Import") -> "_Import":
+        """Build the delegating ``__import__`` recorder bound to ``original``."""
+
+        @functools.wraps(original, assigned=(), updated=())
+        def wrapped_import(
+            name: str,
+            globals: "dict[str, object] | None" = None,
+            locals: "dict[str, object] | None" = None,
+            fromlist: "Sequence[str]" = (),
+            level: int = 0,
+        ) -> "ModuleType":
+            if not self._enabled or not self._deep_import_calls or self._local.report_analysis:
+                return original(name, globals, locals, fromlist, level)
+            # Reduce every argument to constant-size plain data before delegating;
+            # never stringify foreign objects, and never import in this body.
+            importing_module = None
+            if type(globals) is dict:
+                candidate = dict.get(globals, "__name__", None)
+                if type(candidate) is str:
+                    importing_module = candidate
+            from_names = tuple(item for item in fromlist if type(item) is str) if fromlist else ()
+            module_name = name if type(name) is str else ""
+            import_level = level if type(level) is int else 0
+            # A cache hit leaves no other trace; capture the pre-call state so the
+            # report can distinguish it from a fresh resolution.
+            state_before = (
+                module_cache_state(sys.modules, module_name)
+                if import_level == 0 and module_name
+                else ModuleCacheState("unavailable")
+            )
+            try:
+                result = original(name, globals, locals, fromlist, level)
+            except BaseException as exc:
+                self._record_import_call(
+                    module_name, from_names, import_level, importing_module, state_before, "raised", type(exc).__name__
+                )
+                raise
+            self._record_import_call(
+                module_name, from_names, import_level, importing_module, state_before, "returned", None
+            )
+            return result
+
+        return wrapped_import
+
+    def _record_import_call(
+        self,
+        name: str,
+        fromlist: tuple[str, ...],
+        level: int,
+        importing_module: str | None,
+        state_before: ModuleCacheState,
+        outcome: "DeepOutcome",
+        exception_type_name: str | None,
+    ) -> None:
+        """Append one primitive-only ``__import__`` record."""
+        thread_name = threading.current_thread().name
+        try:
+            with self._record_lock:
+                thread_id = self._thread_id_locked()
+                self._seq += 1
+                self._events.append(
+                    ImportCall(
+                        self._seq,
+                        name,
+                        fromlist,
+                        level,
+                        importing_module,
+                        state_before,
+                        outcome,
+                        exception_type_name,
+                        thread_id,
+                        thread_name,
+                    )
+                )
+        except Exception as exc:
+            self._record_internal_error("deep_import_calls", exc)
 
     def enable_path_hooks(self) -> None:
         """Replace current path hooks with wrappers only after explicit opt-in."""
@@ -544,6 +659,15 @@ class _DeepDiagnostics:
             self._path_finder_code = None
             self._deep_import_outcomes_status = "inactive_after_uninstall"
             self._standard_finder_status = "inactive_after_uninstall"
+        if self._deep_import_calls:
+            import_lease = self._import_wrapper_lease
+            # Chain-safe restore: only unwind if our wrapper is still current, so
+            # a tool that wrapped __import__ after us keeps its wrapper intact.
+            if import_lease is not None and builtins.__import__ is import_lease.installed:
+                builtins.__import__ = _cast("_Import", import_lease.previous)
+            self._import_wrapper_lease = None
+            self._deep_import_calls = False
+            self._deep_import_calls_status = "inactive_after_uninstall"
         for patch in list(self._deep_finder_patches.values()):
             self._restore_owned_attribute(patch)
         for patches in list(self._deep_loader_patches.values()):

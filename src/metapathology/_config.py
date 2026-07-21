@@ -30,6 +30,7 @@ DEEP_PATH_HOOKS_ENV = "METAPATHOLOGY_DEEP_PATH_HOOKS"
 DEEP_PATH_ENTRY_FINDERS_ENV = "METAPATHOLOGY_DEEP_PATH_ENTRY_FINDERS"
 DEEP_LOADERS_ENV = "METAPATHOLOGY_DEEP_LOADERS"
 DEEP_IMPORT_OUTCOMES_ENV = "METAPATHOLOGY_DEEP_IMPORT_OUTCOMES"
+DEEP_IMPORT_CALLS_ENV = "METAPATHOLOGY_DEEP_IMPORT_CALLS"
 
 _TRUE_ENV_VALUES = frozenset(("1", "true", "yes", "on"))
 _FALSE_ENV_VALUES = frozenset(("0", "false", "no", "off"))
@@ -51,6 +52,7 @@ class InstallRequest(_Record):
     deep_path_entry_finders: bool
     deep_loaders: bool
     deep_import_outcomes: bool
+    deep_import_calls: bool
     issues: tuple[str, ...]
 
 
@@ -79,6 +81,7 @@ def resolve_install_request(
     deep_path_entry_finders: bool | None,
     deep_loaders: bool | None,
     deep_import_outcomes: bool | None,
+    deep_import_calls: bool | None,
     use_environment: bool,
     configure_report: bool,
     current_report_destination: str | None,
@@ -110,6 +113,12 @@ def resolve_install_request(
         deep_enabled,
         issues,
     )
+    resolved_deep_import_calls = _resolve_bool(
+        deep_import_calls,
+        DEEP_IMPORT_CALLS_ENV,
+        deep_enabled,
+        issues,
+    )
     destination, format, color = _resolve_report_options(
         destination=report_destination,
         destination_explicit=report_destination_explicit,
@@ -134,6 +143,7 @@ def resolve_install_request(
         deep_path_entry_finders=resolved_deep_path_entry_finders,
         deep_loaders=resolved_deep_loaders,
         deep_import_outcomes=resolved_deep_import_outcomes,
+        deep_import_calls=resolved_deep_import_calls,
         issues=tuple(issues),
     )
 

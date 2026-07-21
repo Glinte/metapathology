@@ -258,13 +258,17 @@ class EventJSON(EventBaseJSON, total=False):
     finder_id: str
     finder_type_name: str
     found: bool
+    fromlist: list[str]
     fullname: str | None
     importer_cache: ObjectSizeJSON | None
+    importing_module: str | None
+    level: int
     loader_type_name: str | None
     message: str | None
     meta_path: MetaPathStateJSON
     module_state_after: ModuleStateJSON | None
     module_state_before: ModuleStateJSON | None
+    name: str
     new_contents: list[str] | list[ImportObjectJSON]
     non_string_keys_after: int
     non_string_keys_before: int

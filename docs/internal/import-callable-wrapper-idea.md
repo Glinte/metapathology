@@ -1,7 +1,10 @@
 # Idea: observe cache-hit imports by wrapping `builtins.__import__`
 
-Status: candidate deep mechanism, not scheduled. Recorded 2026-07-19 after
-discussing (and rejecting) a `sys.modules` wrapper.
+Status: **implemented** (2026-07-21) as the `deep_import_calls` mechanism
+(`--deep-import-calls` / `METAPATHOLOGY_DEEP_IMPORT_CALLS`), part of the `--deep`
+umbrella. Recorded 2026-07-19 after discussing (and rejecting) a `sys.modules`
+wrapper. See `_DeepDiagnostics.enable_import_calls` and the `ImportCall` record;
+this note is kept for the design rationale below.
 
 ## Problem
 

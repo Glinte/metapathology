@@ -52,6 +52,7 @@ class _Arguments(argparse.Namespace):
         self.deep_path_entry_finders: bool | None = None
         self.deep_loaders: bool | None = None
         self.deep_import_outcomes: bool | None = None
+        self.deep_import_calls: bool | None = None
         self.is_module = False
         self.target: str | None = None
         self.target_args: list[str] = []
@@ -118,6 +119,11 @@ def _make_parser() -> _ArgumentParser:
         action=argparse.BooleanOptionalAction,
         help="capture exact CPython import invocation outcomes",
     )
+    deep.add_argument(
+        "--deep-import-calls",
+        action=argparse.BooleanOptionalAction,
+        help="capture builtins.__import__ calls, including sys.modules cache hits",
+    )
     parser.add_argument("-m", dest="is_module", action="store_true", help="run TARGET as a module")
     parser.add_argument(
         "target",
@@ -176,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
             deep_path_entry_finders=parsed.deep_path_entry_finders,
             deep_loaders=parsed.deep_loaders,
             deep_import_outcomes=parsed.deep_import_outcomes,
+            deep_import_calls=parsed.deep_import_calls,
         )
     return _run(
         parsed.target,
@@ -192,6 +199,7 @@ def main(argv: list[str] | None = None) -> int:
         deep_path_entry_finders=parsed.deep_path_entry_finders,
         deep_loaders=parsed.deep_loaders,
         deep_import_outcomes=parsed.deep_import_outcomes,
+        deep_import_calls=parsed.deep_import_calls,
     )
 
 
@@ -211,6 +219,7 @@ def _run(
     deep_path_entry_finders: bool | None,
     deep_loaders: bool | None,
     deep_import_outcomes: bool | None,
+    deep_import_calls: bool | None,
 ) -> int:
     """Install the monitor, run the target via runpy, and always write the report.
 
@@ -232,6 +241,7 @@ def _run(
         deep_path_entry_finders: Capture path-entry finder calls.
         deep_loaders: Capture modern loader creation and execution.
         deep_import_outcomes: Capture exact CPython import invocation outcomes.
+        deep_import_calls: Capture ``builtins.__import__`` calls, including cache hits.
 
     Returns:
         The exit code a direct invocation of the target would produce.
@@ -275,6 +285,7 @@ def _run(
         deep_path_entry_finders=deep_path_entry_finders,
         deep_loaders=deep_loaders,
         deep_import_outcomes=deep_import_outcomes,
+        deep_import_calls=deep_import_calls,
     )
     exit_code = 0
     try:

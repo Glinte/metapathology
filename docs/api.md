@@ -18,7 +18,7 @@ fail-open startup files described in the [frozen application guide](frozen.md)
 over calling this function directly. Direct calls propagate invalid integration
 and installation errors to the application.
 
-### `install(*, report_at_exit=True, report_destination=None, report_format=None, report_color=None, monitor_path_hooks=None, monitor_importer_cache=None, monitor_sys_path=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None) -> Monitor`
+### `install(*, report_at_exit=True, report_destination=None, report_format=None, report_color=None, monitor_path_hooks=None, monitor_importer_cache=None, monitor_sys_path=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None, deep_import_calls=None) -> Monitor`
 
 Installs the process-wide monitor and returns it. Repeated calls return and
 enable the same monitor. Only activity after installation can be observed.
@@ -43,10 +43,14 @@ import-boundary reassignment detection for `sys.path`; it defaults to false
 unless `deep=True` and can also be set with
 `METAPATHOLOGY_MONITOR_SYS_PATH`.
 
-`deep=True` enables all four delegated deep mechanisms and `sys.path`
+`deep=True` enables all five delegated deep mechanisms and `sys.path`
 monitoring. Each `deep_*` argument can
 override the umbrella independently for delegated path hooks, mutable
-path-entry finders, mutable loaders, or exact import outcomes. Path-hook
+path-entry finders, mutable loaders, exact import outcomes, or
+`builtins.__import__` calls. `deep_import_calls` wraps `__import__` to observe
+every import statement, including `sys.modules` cache hits that no other
+mechanism sees; the swap is chain-safe against other tools that also wrap
+`__import__`, and `importlib.import_module()` bypasses it. Path-hook
 wrapping changes callable identity; deep mechanisms put monitor code inline
 with imports and should be reserved for controlled diagnostic runs.
 
@@ -66,7 +70,7 @@ not replace the target's exit status.
 
 [atexit]: https://docs.python.org/3/library/atexit.html
 
-### `monitoring(*, monitor_path_hooks=None, monitor_importer_cache=None, monitor_sys_path=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None) -> ContextManager[Monitor]`
+### `monitoring(*, monitor_path_hooks=None, monitor_importer_cache=None, monitor_sys_path=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None, deep_import_calls=None) -> ContextManager[Monitor]`
 
 Defines a bounded monitoring region and yields the process-wide monitor. The
 monitor is installed on entry and, if the region began from an inactive state,

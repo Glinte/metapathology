@@ -156,6 +156,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         frozen_bootstrap=frozen_bootstrap,
         deep_diagnostics=snapshot.deep_diagnostics,
         deep_import_outcomes_status=snapshot.deep_import_outcomes_status,
+        deep_import_calls_status=snapshot.deep_import_calls_status,
         skipped_finders=skipped_finders,
         standard_resolutions=standard_resolutions,
         standard_finder_status=snapshot.standard_finder_status,

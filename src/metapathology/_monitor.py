@@ -68,7 +68,7 @@ if TYPE_CHECKING:
     from _typeshed.importlib import PathEntryFinderProtocol
 
     from metapathology._config import InstallRequest
-    from metapathology._monitor_model import DeepImportOutcomesStatus, StandardFinderStatus
+    from metapathology._monitor_model import DeepImportCallsStatus, DeepImportOutcomesStatus, StandardFinderStatus
     from metapathology._records import MutationOp, SearchPathKind
 
     _FindSpec = Callable[[str, Sequence[str] | None, ModuleType | None], ModuleSpec | None]
@@ -343,6 +343,11 @@ class Monitor:
         return self._deep.deep_import_outcomes_status
 
     @property
+    def deep_import_calls_status(self) -> "DeepImportCallsStatus":
+        """Activation state of ``builtins.__import__`` call observation."""
+        return self._deep.deep_import_calls_status
+
+    @property
     def standard_finder_status(self) -> "StandardFinderStatus":
         """Availability of exact aggregate standard-finder evidence."""
         return self._deep.standard_finder_status
@@ -416,6 +421,7 @@ class Monitor:
                 sys_path_enabled=self._enabled and self._sys_path_enabled,
                 deep_diagnostics=self.deep_diagnostics,
                 deep_import_outcomes_status=self._deep.deep_import_outcomes_status,
+                deep_import_calls_status=self._deep.deep_import_calls_status,
                 standard_finder_status=self._deep.standard_finder_status,
                 target_outcome=self._target_outcome,
             )
@@ -468,6 +474,7 @@ class Monitor:
         deep_path_entry_finders: bool | None = None,
         deep_loaders: bool | None = None,
         deep_import_outcomes: bool | None = None,
+        deep_import_calls: bool | None = None,
     ) -> None:
         """Instrument ``sys.meta_path`` and register the import audit hook (idempotent).
 
@@ -498,6 +505,8 @@ class Monitor:
             deep_path_entry_finders: Shadow mutable path-entry finder calls.
             deep_loaders: Shadow mutable loader lifecycle methods.
             deep_import_outcomes: Profile CPython's complete import boundary.
+            deep_import_calls: Wrap ``builtins.__import__`` to observe every
+                import statement, including ``sys.modules`` cache hits.
         """
         # os.fspath() may execute foreign code. Reduce it before taking the
         # lifecycle lock; the resolver receives plain values only.
@@ -523,6 +532,7 @@ class Monitor:
                 deep_path_entry_finders=deep_path_entry_finders,
                 deep_loaders=deep_loaders,
                 deep_import_outcomes=deep_import_outcomes,
+                deep_import_calls=deep_import_calls,
                 use_environment=not was_enabled,
                 configure_report=not was_enabled or report_configuration_explicit,
                 current_report_destination=self._report_destination,
@@ -595,6 +605,8 @@ class Monitor:
             self._deep.enable_path_hooks()
         if request.deep_import_outcomes and not self._deep.import_outcomes_enabled:
             self._deep.enable_import_outcomes()
+        if request.deep_import_calls and not self._deep.import_calls_enabled:
+            self._deep.enable_import_calls()
         if request.report_at_exit and not self._report_at_exit:
             self._report_at_exit = True
             atexit.register(self._atexit_callback)
@@ -1420,6 +1432,7 @@ def install(
     deep_path_entry_finders: bool | None = None,
     deep_loaders: bool | None = None,
     deep_import_outcomes: bool | None = None,
+    deep_import_calls: bool | None = None,
 ) -> Monitor:
     """Install the import-machinery monitor (idempotent) and return it.
 
@@ -1446,6 +1459,8 @@ def install(
         deep_path_entry_finders: Shadow path-entry finder calls as they appear.
         deep_loaders: Shadow modern loader creation and execution reached through captured finders.
         deep_import_outcomes: Observe exact CPython import invocation outcomes.
+        deep_import_calls: Wrap ``builtins.__import__`` to observe every import
+            statement, including ``sys.modules`` cache hits.
     """
     global _monitor_singleton
     with _singleton_lock:
@@ -1465,6 +1480,7 @@ def install(
         deep_path_entry_finders=deep_path_entry_finders,
         deep_loaders=deep_loaders,
         deep_import_outcomes=deep_import_outcomes,
+        deep_import_calls=deep_import_calls,
     )
     return monitor
 
@@ -1480,6 +1496,7 @@ def monitoring(
     deep_path_entry_finders: bool | None = None,
     deep_loaders: bool | None = None,
     deep_import_outcomes: bool | None = None,
+    deep_import_calls: bool | None = None,
 ) -> "Iterator[Monitor]":
     """Observe imports only while the context-managed region is active.
 
@@ -1500,6 +1517,8 @@ def monitoring(
         deep_path_entry_finders: Shadow path-entry finder calls as they appear.
         deep_loaders: Shadow modern loader lifecycle methods.
         deep_import_outcomes: Observe exact CPython import invocation outcomes.
+        deep_import_calls: Wrap ``builtins.__import__`` to observe every import
+            statement, including ``sys.modules`` cache hits.
 
     Yields:
         The process-wide monitor collecting events for the region.
@@ -1533,6 +1552,7 @@ def monitoring(
             deep_path_entry_finders=deep_path_entry_finders,
             deep_loaders=deep_loaders,
             deep_import_outcomes=deep_import_outcomes,
+            deep_import_calls=deep_import_calls,
         )
     except BaseException:
         if first_region:

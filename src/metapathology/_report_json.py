@@ -16,6 +16,7 @@ from metapathology._records import (
     FinderContract,
     FindSpecCall,
     ImportAuditStart,
+    ImportCall,
     ImporterCacheDiff,
     ImporterCacheEntry,
     ImporterCacheReplacement,
@@ -89,6 +90,7 @@ if TYPE_CHECKING:
         "calls",
         "deep_calls",
         "deep_import_events",
+        "import_calls",
         "importer_cache_diffs",
         "mutations",
         "path_hook_mutations",
@@ -102,7 +104,7 @@ if TYPE_CHECKING:
 
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 1
-_SCHEMA_MINOR = 1
+_SCHEMA_MINOR = 2
 
 
 def _json_events(
@@ -114,6 +116,7 @@ def _json_events(
         "calls": 0,
         "deep_calls": 0,
         "deep_import_events": 0,
+        "import_calls": 0,
         "importer_cache_diffs": 0,
         "mutations": 0,
         "path_hook_mutations": 0,
@@ -135,6 +138,8 @@ def _json_events(
             counts["deep_calls"] += 1
         elif isinstance(event, DeepImportEvent):
             counts["deep_import_events"] += 1
+        elif isinstance(event, ImportCall):
+            counts["import_calls"] += 1
         elif isinstance(event, StandardFinderCall):
             counts["standard_finder_calls"] += 1
         elif isinstance(event, MetaPathMutation):
@@ -182,6 +187,12 @@ def json_document(document: ReportDocument) -> ReportJSON:
             "import_outcomes" in document.deep_diagnostics,
             event_counts["deep_import_events"],
             document.deep_import_outcomes_status,
+        ),
+        _mechanism(
+            "deep_import_calls",
+            "import_calls" in document.deep_diagnostics,
+            event_counts["import_calls"],
+            document.deep_import_calls_status,
         ),
         _mechanism(
             "standard_finder_aggregate",
@@ -469,6 +480,22 @@ def _json_event(event: MonitorEvent) -> EventJSON:
                 "evidence": "exact_import_boundary",
                 "fullname": event.fullname,
                 "kind": "deep_import_event",
+                "outcome": event.outcome,
+                "thread_id": event.thread_id,
+                "thread_name": event.thread_name,
+            }
+        )
+    elif isinstance(event, ImportCall):
+        result.update(
+            {
+                "evidence": "import_call_wrapper",
+                "exception_type_name": event.exception_type_name,
+                "fromlist": list(event.fromlist),
+                "importing_module": event.importing_module,
+                "kind": "import_call",
+                "level": event.level,
+                "module_state_before": _json_module_state(event.module_state_before),
+                "name": event.name,
                 "outcome": event.outcome,
                 "thread_id": event.thread_id,
                 "thread_name": event.thread_name,

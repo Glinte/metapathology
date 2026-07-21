@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from typing import Literal
 
     from metapathology._monitor_model import (
+        DeepImportCallsStatus,
         DeepImportOutcomesStatus,
         StandardFinderStatus,
         TargetOutcomeKind,
@@ -300,6 +301,7 @@ class ReportDocument(_Record):
     frozen_bootstrap: FrozenBootstrap | None
     deep_diagnostics: tuple[str, ...]
     deep_import_outcomes_status: "DeepImportOutcomesStatus"
+    deep_import_calls_status: "DeepImportCallsStatus"
     skipped_finders: tuple[SkippedFinder, ...]
     standard_resolutions: tuple[StandardResolution, ...]
     standard_finder_status: "StandardFinderStatus"

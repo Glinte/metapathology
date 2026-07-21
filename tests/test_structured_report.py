@@ -61,7 +61,7 @@ import observed_mod
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 1, "minor": 1, "name": "metapathology.report"}
+assert document["schema"] == {"major": 1, "minor": 2, "name": "metapathology.report"}
 assert document["report_status"] == "complete"
 assert isinstance(document["resolution_routes"], list)
 assert isinstance(document["route_comparisons"], list)
@@ -302,6 +302,7 @@ def test_report_document_uses_hand_written_slots(run_python: RunPython) -> None:
         "    standard_finder_status='disabled', findings=(), finder_contracts=(),\n"
         "    early_site_bootstrap=None, frozen_bootstrap=None,\n"
         "    deep_diagnostics=(), deep_import_outcomes_status='disabled',\n"
+        "    deep_import_calls_status='disabled',\n"
         "    report_errors=(),\n"
         "    summary=ReportSummary(actionable=0, warning=0, informational=0,\n"
         "                          unresolved_import_count=0, top_finding_id=None, top_explanation_id=None),\n"

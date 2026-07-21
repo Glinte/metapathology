@@ -374,6 +374,45 @@ class DeepImportEvent(_Record):
     thread_name: str
 
 
+class ImportCall(_Record):
+    """One observed ``builtins.__import__`` call, including cache hits.
+
+    Unlike every other record, this one is captured even when the import is a
+    ``sys.modules`` cache hit: the ``import`` audit event does not fire and no
+    finder is called, so this is the only evidence that the code ran an import
+    statement at all. There is no ``attempt_id`` because a cache hit has no
+    corresponding resolution start to link to.
+
+    Attributes:
+        seq: Position in the monitor's single event log (shared counter, see
+            :class:`MetaPathMutation`).
+        name: The module name passed to ``__import__`` (the first argument);
+            empty for ``from . import x``-style relative imports.
+        fromlist: Names in the import's ``fromlist`` that were plain strings.
+        level: Relative-import level (0 for an absolute import).
+        importing_module: ``__name__`` read from the caller's globals, i.e. the
+            module that ran the import, or None when it could not be read.
+        module_state_before: Whether ``name`` was already in ``sys.modules``
+            when the call began; an ``"object"`` state on an absolute import is
+            the signature of a cache hit.
+        outcome: ``"returned"`` or ``"raised"``.
+        exception_type_name: Type name of the exception if the call raised.
+        thread_id: Monitor-assigned per-thread identity.
+        thread_name: Name of the thread that ran the import.
+    """
+
+    seq: int
+    name: str
+    fromlist: tuple[str, ...]
+    level: int
+    importing_module: str | None
+    module_state_before: ModuleCacheState
+    outcome: "DeepOutcome"
+    exception_type_name: str | None
+    thread_id: int
+    thread_name: str
+
+
 class StandardFinderCall(_Record):
     """A captured aggregate call to a shared standard finder."""
 
@@ -414,6 +453,7 @@ MonitorEvent = (
     | DeepImportEvent
     | FindSpecCall
     | ImportAuditStart
+    | ImportCall
     | ImporterCacheDiff
     | InternalError
     | MetaPathMutation

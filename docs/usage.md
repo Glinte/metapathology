@@ -128,17 +128,18 @@ treat them as potentially sensitive.
 ### Deep diagnostics
 
 Deep diagnostics record what the default mode cannot: path hook calls, path
-entry finder calls, loader `create_module`/`exec_module` calls, and exact
-import outcomes. They are off by default because they place monitor code
-inline with foreign imports, and wrapping a path hook changes its callable
-identity. Use them in a controlled reproduction after the default evidence
-proves insufficient; the report warns whenever any are active.
+entry finder calls, loader `create_module`/`exec_module` calls, exact import
+outcomes, and `builtins.__import__` calls (including cache hits). They are off
+by default because they place monitor code inline with foreign imports, and
+wrapping a path hook changes its callable identity. Use them in a controlled
+reproduction after the default evidence proves insufficient; the report warns
+whenever any are active.
 
-`--deep` enables all four delegated boundaries plus `sys.path` mutation
+`--deep` enables all five delegated boundaries plus `sys.path` mutation
 monitoring. Individual switches (`--deep-path-hooks`,
-`--deep-path-entry-finders`, `--deep-loaders`, `--deep-import-outcomes`, each
-with a `--no-` form, and matching `METAPATHOLOGY_DEEP_*` variables) override
-it per mechanism.
+`--deep-path-entry-finders`, `--deep-loaders`, `--deep-import-outcomes`,
+`--deep-import-calls`, each with a `--no-` form, and matching
+`METAPATHOLOGY_DEEP_*` variables) override it per mechanism.
 
 Notes on individual mechanisms:
 
@@ -151,6 +152,15 @@ Notes on individual mechanisms:
   another profiler is already installed. It covers the installing thread and
   threads created later through `threading`; the report states the achieved
   coverage.
+- `--deep-import-calls` wraps `builtins.__import__` to record every `import`
+  statement, including the `sys.modules` cache hits that leave no other trace
+  (no `import` audit event fires and no finder is called). Each record carries
+  the imported name, `fromlist`, relative-import level, and the importing
+  module, so it answers "which code imported X, and when" even for modules that
+  were already loaded. `importlib.import_module()` and lower-level importlib
+  entry points bypass `__import__` and are not observed by this mechanism. The
+  swap is chain-safe: if another tool already wrapped `__import__`, metapathology
+  delegates to it and restores it untouched on uninstall.
 
 ## Observe later `.pth` files
 

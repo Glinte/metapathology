@@ -197,6 +197,12 @@
         "found": {
           "type": "boolean"
         },
+        "fromlist": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "fullname": {
           "anyOf": [
             {
@@ -220,8 +226,21 @@
             }
           ]
         },
+        "importing_module": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "kind": {
           "type": "string"
+        },
+        "level": {
+          "type": "integer"
         },
         "loader_type_name": {
           "anyOf": [
@@ -265,6 +284,9 @@
               "type": "null"
             }
           ]
+        },
+        "name": {
+          "type": "string"
         },
         "new_contents": {
           "anyOf": [
@@ -1797,7 +1819,7 @@
           "const": 1
         },
         "minor": {
-          "const": 1
+          "const": 2
         },
         "name": {
           "const": "metapathology.report"

@@ -9,6 +9,7 @@ from metapathology._records import (
     FinderContract,
     FindSpecCall,
     ImportAuditStart,
+    ImportCall,
     ImporterCacheDiff,
     ImporterCacheEntry,
     InternalError,
@@ -684,6 +685,8 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
         lines.append(f"deep diagnostics enabled: {', '.join(document.deep_diagnostics)}")
     if document.deep_import_outcomes_status != "disabled":
         lines.append(f"import outcome observation: {_humanize(document.deep_import_outcomes_status)}")
+    if document.deep_import_calls_status != "disabled":
+        lines.append(f"import call observation: {_humanize(document.deep_import_calls_status)}")
     if document.standard_finder_status != "disabled":
         lines.append(f"PathFinder result capture: {_humanize(document.standard_finder_status)}")
     bootstrap = document.early_site_bootstrap
@@ -1241,12 +1244,33 @@ def _audit_deviation_lines(
     return lines
 
 
+def _import_call_line(event: ImportCall, context: _RenderContext) -> str:
+    """Render one ``builtins.__import__`` call, flagging cache hits."""
+    target = ("." * event.level) + event.name if event.level else event.name
+    spec = f"__import__({target!r}"
+    if event.fromlist:
+        spec += f", fromlist={list(event.fromlist)!r}"
+    spec += ")"
+    by = "" if event.importing_module is None else f" by {event.importing_module!r}"
+    if event.exception_type_name is not None:
+        outcome = f"raised {event.exception_type_name}"
+    elif event.module_state_before.state == "object":
+        # The module was already loaded before the call, so __import__ returned
+        # it straight from sys.modules without any finder or audit event.
+        outcome = context.warning("cache hit")
+    else:
+        outcome = "returned"
+    return f"#{event.seq} {spec}{by}: {outcome}{context.thread_suffix(event.thread_name)}"
+
+
 def _timeline_line(event: MonitorEvent, context: _RenderContext) -> str:
     """Render one compact line using only data captured in the event record."""
     if isinstance(event, DeepDiagnosticCall):
         return _deep_call_line(event, context)
     if isinstance(event, DeepImportEvent):
         return f"#{event.seq} import of {event.fullname!r}: {event.outcome}{context.thread_suffix(event.thread_name)}"
+    if isinstance(event, ImportCall):
+        return _import_call_line(event, context)
     if isinstance(event, ImportAuditStart):
         # Stable snapshot context lives in the timeline preamble; deviations
         # are appended by _timeline_lines as continuation lines.

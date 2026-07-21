@@ -437,7 +437,7 @@ def test_deep_umbrella_enables_every_mechanism(tmp_path: Path) -> None:
     proc = run_cli("--deep", str(script), cwd=tmp_path)
 
     assert proc.returncode == 0, proc.stderr
-    assert "('path_hooks', 'path_entry_finders', 'loaders', 'import_outcomes') True" in proc.stdout
+    assert "('path_hooks', 'path_entry_finders', 'loaders', 'import_outcomes', 'import_calls') True" in proc.stdout
 
 
 def test_capture_environment_and_explicit_cli_values_have_consistent_precedence(tmp_path: Path) -> None:
@@ -467,7 +467,7 @@ def test_capture_environment_and_explicit_cli_values_have_consistent_precedence(
     )
 
     assert proc.returncode == 0, proc.stderr
-    assert "True False ('path_hooks', 'path_entry_finders')" in proc.stdout
+    assert "True False ('path_hooks', 'path_entry_finders', 'import_calls')" in proc.stdout
 
 
 def test_invalid_capture_environment_value_falls_back_and_is_reported(tmp_path: Path) -> None:

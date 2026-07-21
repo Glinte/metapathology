@@ -24,6 +24,7 @@ def _resolve(
     deep_path_entry_finders: bool | None = None,
     deep_loaders: bool | None = None,
     deep_import_outcomes: bool | None = None,
+    deep_import_calls: bool | None = None,
     use_environment: bool = True,
     configure_report: bool = True,
     current_report_destination: str | None = None,
@@ -44,6 +45,7 @@ def _resolve(
         deep_path_entry_finders=deep_path_entry_finders,
         deep_loaders=deep_loaders,
         deep_import_outcomes=deep_import_outcomes,
+        deep_import_calls=deep_import_calls,
         use_environment=use_environment,
         configure_report=configure_report,
         current_report_destination=current_report_destination,
@@ -75,6 +77,7 @@ def test_deep_defaults_and_explicit_overrides_are_resolved_together() -> None:
     assert request.deep_path_entry_finders is True
     assert request.deep_loaders is False
     assert request.deep_import_outcomes is True
+    assert request.deep_import_calls is True
 
 
 def test_environment_precedence_and_invalid_values_are_plain_issues(monkeypatch: pytest.MonkeyPatch) -> None:

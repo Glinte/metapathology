@@ -23,6 +23,11 @@ if TYPE_CHECKING:
         "active_current_and_future_threading_threads_cache_hits_not_observed",
         "inactive_after_uninstall",
     ]
+    DeepImportCallsStatus = Literal[
+        "disabled",
+        "active_all_threads_including_cache_hits",
+        "inactive_after_uninstall",
+    ]
 
 
 _MISSING = object()
@@ -100,5 +105,6 @@ class MonitorSnapshot(_Record):
     sys_path_enabled: bool
     deep_diagnostics: tuple[str, ...]
     deep_import_outcomes_status: "DeepImportOutcomesStatus"
+    deep_import_calls_status: "DeepImportCallsStatus"
     standard_finder_status: "StandardFinderStatus"
     target_outcome: _TargetOutcomeState | None
