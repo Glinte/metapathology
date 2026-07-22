@@ -6,7 +6,12 @@ from typing import Literal, cast
 
 import pytest
 
-from metapathology._config import InstallRequest, normalize_report_destination, resolve_install_request
+from metapathology._config import (
+    InstallRequest,
+    monitoring_request,
+    normalize_report_destination,
+    resolve_install_request,
+)
 
 
 def _resolve(
@@ -69,6 +74,10 @@ def test_defaults_resolve_to_one_immutable_request() -> None:
     assert request.issues == ()
     with pytest.raises(AttributeError):
         setattr(request, "monitor_sys_path", True)
+
+    monitoring = monitoring_request(request)
+    assert monitoring.monitor_path_hooks is True
+    assert not hasattr(monitoring, "report_format")
 
 
 def test_deep_defaults_and_explicit_overrides_are_resolved_together() -> None:

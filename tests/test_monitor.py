@@ -42,6 +42,10 @@ import metapathology
 
 before = list(sys.meta_path)
 monitor = metapathology.install(report_at_exit=False)
+assert not hasattr(monitor, "install")
+assert not hasattr(monitor, "uninstall")
+assert not hasattr(monitor, "_report_format")
+assert not hasattr(monitor, "_report_destination")
 assert type(sys.meta_path) is not list
 assert isinstance(sys.meta_path, list)  # real list subclass: isinstance scans keep working
 assert list(sys.meta_path) == before
@@ -175,6 +179,7 @@ def test_overlapping_monitoring_regions_uninstall_after_last_exit(run_python: Ru
 def test_install_warns_once_when_starting_on_unsupported_implementation(run_python: RunPython) -> None:
     proc = run_python(
         "import warnings\n"
+        "import metapathology\n"
         "import metapathology._monitor as monitor_module\n"
         "monitor_module._IMPLEMENTATION_NAME = 'pypy'\n"
         "monitor_module._UNSUPPORTED_IMPLEMENTATION_WARNING = (\n"
@@ -182,9 +187,9 @@ def test_install_warns_once_when_starting_on_unsupported_implementation(run_pyth
         ")\n"
         "with warnings.catch_warnings(record=True) as caught:\n"
         "    warnings.simplefilter('always')\n"
-        "    monitor = monitor_module.install(report_at_exit=False)\n"
-        "    assert monitor_module.install(report_at_exit=False) is monitor\n"
-        "monitor_module.uninstall()\n"
+        "    monitor = metapathology.install(report_at_exit=False)\n"
+        "    assert metapathology.install(report_at_exit=False) is monitor\n"
+        "metapathology.uninstall()\n"
         "assert len(caught) == 1, caught\n"
         "warning = caught[0]\n"
         "assert warning.category is RuntimeWarning, warning.category\n"
@@ -1277,7 +1282,7 @@ from metapathology._monitor_model import MonitorSnapshot
 
 monitor = metapathology.install(report_at_exit=False)
 import colorsys
-snapshot = monitor._report_state()
+snapshot = monitor._snapshot()
 assert isinstance(snapshot, MonitorSnapshot)
 assert snapshot.enabled
 assert snapshot.events
@@ -1294,7 +1299,7 @@ print("OK")
 """
 
 
-def test_report_state_is_one_named_immutable_snapshot(run_python: RunPython) -> None:
+def test_monitor_snapshot_is_one_named_immutable_cutoff(run_python: RunPython) -> None:
     proc = run_python(MONITOR_SNAPSHOT)
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout

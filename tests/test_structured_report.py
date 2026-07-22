@@ -168,6 +168,28 @@ def test_failure_report_has_the_same_top_level_contract(run_python: RunPython) -
     assert proc.stdout.strip() == "OK"
 
 
+def test_one_captured_artifact_can_be_exported_in_multiple_formats(run_python: RunPython) -> None:
+    proc = run_python(
+        "import json\n"
+        "import metapathology\n"
+        "from metapathology import _report\n"
+        "from metapathology._runtime import _capture_report\n"
+        "monitor = metapathology.install(report_at_exit=False)\n"
+        "import colorsys\n"
+        "artifact = _capture_report(monitor)\n"
+        "cutoff = artifact.capture.cutoff_seq\n"
+        "import fractions\n"
+        "text = _report.render_report(artifact, format='text')\n"
+        "document = json.loads(_report.render_report(artifact, format='json'))\n"
+        "assert document['capture']['cutoff_seq'] == cutoff\n"
+        "assert not any(item['fullname'] == 'fractions' for item in document['import_attempts'])\n"
+        "assert 'metapathology report' in text\n"
+        "print('OK')\n"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "OK"
+
+
 def test_bundled_json_schema_matches_report_version(run_python: RunPython) -> None:
     proc = run_python(
         "import importlib.resources, json\n"
