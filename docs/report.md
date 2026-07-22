@@ -366,10 +366,11 @@ installed).
 
 ## JSON report
 
-`render_report(format="json")`, `write_report(..., format="json")`, and
-`--report file.json` produce a machine-readable document built from the same
-data as the text report, but complete: nothing is collapsed, capped, or
-relativized.
+`render_report(format="json")`, `write_report(..., format="json")`,
+`--report file.json`, and `--report-json PATH` produce a machine-readable
+document built from the same data as the text report, but complete: nothing
+is collapsed, capped, or relativized. Repeatable automatic-report flags render
+all requested formats from one captured document.
 
 The schema is versioned and stable:
 

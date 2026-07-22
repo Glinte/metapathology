@@ -13,13 +13,15 @@ from metapathology._config import (
     normalize_report_destination,
     resolve_install_request,
 )
+from metapathology._config import (
+    ReportTarget as _ReportTarget,
+)
 from metapathology._monitor import Monitor
-from metapathology._record import _Record
 
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
     from os import PathLike
     from typing import Literal, TextIO
 
@@ -30,32 +32,24 @@ if TYPE_CHECKING:
     _ReportFormat = Literal["text", "json"]
 
 
-class _ReportTarget(_Record):
-    """One output projection; future callers may apply several to one artifact."""
-
-    destination: str | None
-    format: "_ReportFormat"
-    color: "_ColorMode"
-
-
 class _AutomaticReporting:
-    """Own the single automatic output target and its atexit callback."""
+    """Own automatic output targets and their atexit callback."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._target = _ReportTarget(None, "text", "auto")
+        self._targets: tuple[_ReportTarget, ...] = (_ReportTarget(None, "text", "auto"),)
         self._registered = False
         self._callback = self._write_at_exit
 
-    def target(self) -> _ReportTarget:
-        """Return one coherent copy of the configured target."""
+    def targets(self) -> tuple[_ReportTarget, ...]:
+        """Return one coherent copy of the configured targets."""
         with self._lock:
-            return self._target
+            return self._targets
 
     def configure(self, request: InstallRequest) -> None:
         """Apply resolved output policy after monitoring activation succeeds."""
         with self._lock:
-            self._target = _ReportTarget(request.report_destination, request.report_format, request.report_color)
+            self._targets = request.report_targets or (_ReportTarget(None, "text", "auto"),)
             register = request.report_at_exit and not self._registered
             if register:
                 self._registered = True
@@ -72,11 +66,22 @@ class _AutomaticReporting:
 
     def write_configured(self) -> None:
         """Write the configured target, adding the current PID to file paths."""
-        target = self.target()
-        destination = target.destination
-        if destination is not None:
-            destination = _pid_destination(destination, os.getpid())
-        _write_report(_require_monitor(), destination, format=target.format, color=target.color)
+        targets = self.targets()
+        monitor = _require_monitor()
+        artifact = _capture_report(monitor)
+        first_error: Exception | None = None
+        for target in targets:
+            destination = target.destination
+            if destination is not None:
+                destination = _pid_destination(destination, os.getpid())
+            try:
+                _report.write_report(artifact, destination, format=target.format, color=target.color)
+            except Exception as exc:
+                monitor._record_internal_error("report_write", exc)
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
 
     def _write_at_exit(self) -> None:
         """Write automatically without disturbing interpreter shutdown."""
@@ -105,8 +110,9 @@ _PREEXISTING_MONITOR_WARNING = (
 def install(
     *,
     report_at_exit: bool = True,
-    report_destination: "str | PathLike[str] | None" = None,
-    report_format: "Literal['text', 'json'] | None" = None,
+    report_destination: "str | PathLike[str] | Sequence[str | PathLike[str]] | None" = None,
+    report_text: "str | PathLike[str] | Sequence[str | PathLike[str]] | None" = None,
+    report_json: "str | PathLike[str] | Sequence[str | PathLike[str]] | None" = None,
     report_color: "Literal['auto', 'always', 'never'] | None" = None,
     monitor_path_hooks: bool | None = None,
     monitor_importer_cache: bool | None = None,
@@ -121,18 +127,20 @@ def install(
 ) -> Monitor:
     """Install the process-wide monitor and configure automatic reporting."""
     normalized_destination = normalize_report_destination(report_destination)
+    normalized_text = normalize_report_destination(report_text)
+    normalized_json = normalize_report_destination(report_json)
     report_configuration_explicit = (
-        report_destination is not None or report_format is not None or report_color is not None
+        report_destination is not None or report_text is not None or report_json is not None or report_color is not None
     )
     _begin_runtime_transition()
     try:
         monitor = _get_or_create_monitor()
-        current_target = _automatic_reporting.target()
+        current_targets = _automatic_reporting.targets()
         request = resolve_install_request(
             report_at_exit=report_at_exit,
             report_destination=normalized_destination,
-            report_destination_explicit=report_destination is not None,
-            report_format=report_format,
+            report_text=normalized_text,
+            report_json=normalized_json,
             report_color=report_color,
             monitor_path_hooks=monitor_path_hooks,
             monitor_importer_cache=monitor_importer_cache,
@@ -146,9 +154,7 @@ def install(
             speculative_replay=speculative_replay,
             use_environment=not monitor.enabled,
             configure_report=not monitor.enabled or report_configuration_explicit,
-            current_report_destination=current_target.destination,
-            current_report_format=current_target.format,
-            current_report_color=current_target.color,
+            current_report_targets=current_targets,
         )
         monitor._install(monitoring_request(request))
         _automatic_reporting.configure(request)

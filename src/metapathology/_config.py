@@ -12,6 +12,7 @@ from metapathology._record import _Record
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from os import PathLike
     from typing import Literal
 
@@ -20,7 +21,6 @@ if TYPE_CHECKING:
 
 
 REPORT_DESTINATION_ENV = "METAPATHOLOGY_REPORT"
-REPORT_FORMAT_ENV = "METAPATHOLOGY_REPORT_FORMAT"
 REPORT_COLOR_ENV = "METAPATHOLOGY_COLOR"
 MONITOR_PATH_HOOKS_ENV = "METAPATHOLOGY_MONITOR_PATH_HOOKS"
 MONITOR_IMPORTER_CACHE_ENV = "METAPATHOLOGY_MONITOR_IMPORTER_CACHE"
@@ -36,16 +36,23 @@ SPECULATIVE_REPLAY_ENV = "METAPATHOLOGY_SPECULATIVE_REPLAY"
 _TRUE_ENV_VALUES = frozenset(("1", "true", "yes", "on"))
 _FALSE_ENV_VALUES = frozenset(("0", "false", "no", "off"))
 _REPORT_FORMATS = frozenset(("json", "text"))
+_REPORT_FORMAT_BY_EXTENSION = {".json": "json", ".text": "text", ".txt": "text"}
 _COLOR_MODES = frozenset(("always", "auto", "never"))
+
+
+class ReportTarget(_Record):
+    """One validated automatic-report projection."""
+
+    destination: str | None
+    format: "_ReportFormat"
+    color: "_ColorMode"
 
 
 class InstallRequest(_Record):
     """Fully resolved configuration consumed by one monitor installation."""
 
     report_at_exit: bool
-    report_destination: str | None
-    report_format: "_ReportFormat"
-    report_color: "_ColorMode"
+    report_targets: tuple[ReportTarget, ...]
     monitor_path_hooks: bool
     monitor_importer_cache: bool
     monitor_sys_path: bool
@@ -89,22 +96,42 @@ def monitoring_request(request: InstallRequest) -> MonitoringRequest:
     )
 
 
-def normalize_report_destination(destination: "str | PathLike[str] | None") -> str | None:
-    """Reduce an explicit destination before any lifecycle lock is acquired."""
+def normalize_report_destination(
+    destination: "str | bytes | PathLike[str] | Sequence[str | bytes | PathLike[str]] | None",
+) -> list[str]:
+    """Reduce explicit destinations before any lifecycle lock is acquired."""
     if destination is None:
-        return None
-    path = os.fspath(destination)
-    if not isinstance(path, str):
-        raise TypeError("report destinations must resolve to str, not bytes")
-    return path
+        return []
+    destinations = (destination,) if isinstance(destination, (str, bytes, os.PathLike)) else destination
+    normalized: list[str] = []
+    for item in destinations:
+        path = os.fspath(item)
+        if not isinstance(path, str):
+            raise TypeError("report destinations must resolve to str, not bytes")
+        normalized.append(path)
+    return normalized
+
+
+def infer_report_format(destination: str) -> "_ReportFormat":
+    """Infer a report format from a destination or raise with forced-flag guidance."""
+    if destination == "-":
+        return "text"
+    extension = os.path.splitext(destination)[1].lower()
+    try:
+        return _REPORT_FORMAT_BY_EXTENSION[extension]  # type: ignore[return-value]
+    except KeyError:
+        raise ValueError(
+            f"cannot infer report format from destination {destination!r}; "
+            "use --report-text or --report-json to force the format"
+        ) from None
 
 
 def resolve_install_request(
     *,
     report_at_exit: bool,
-    report_destination: str | None,
-    report_destination_explicit: bool,
-    report_format: "_ReportFormat | str | None",
+    report_destination: list[str],
+    report_text: list[str],
+    report_json: list[str],
     report_color: "_ColorMode | str | None",
     monitor_path_hooks: bool | None,
     monitor_importer_cache: bool | None,
@@ -118,9 +145,7 @@ def resolve_install_request(
     speculative_replay: bool | None,
     use_environment: bool,
     configure_report: bool,
-    current_report_destination: str | None,
-    current_report_format: "_ReportFormat",
-    current_report_color: "_ColorMode",
+    current_report_targets: tuple[ReportTarget, ...],
 ) -> InstallRequest:
     """Resolve one complete request without mutating monitor or import state."""
     issues: list[str] = []
@@ -161,23 +186,19 @@ def resolve_install_request(
         False,
         issues,
     )
-    destination, format, color = _resolve_report_options(
-        destination=report_destination,
-        destination_explicit=report_destination_explicit,
-        format=report_format,
+    targets = _resolve_report_targets(
+        destinations=report_destination,
+        text_destinations=report_text,
+        json_destinations=report_json,
         color=report_color,
         use_environment=use_environment,
         configure=configure_report,
-        current_destination=current_report_destination,
-        current_format=current_report_format,
-        current_color=current_report_color,
+        current_targets=current_report_targets,
         issues=issues,
     )
     return InstallRequest(
         report_at_exit=report_at_exit,
-        report_destination=destination,
-        report_format=format,
-        report_color=color,
+        report_targets=targets,
         monitor_path_hooks=resolved_path_hooks,
         monitor_importer_cache=resolved_importer_cache,
         monitor_sys_path=resolved_sys_path,
@@ -228,56 +249,94 @@ def _resolve_bool(
     return default
 
 
-def _resolve_report_options(
+def _resolve_report_targets(
     *,
-    destination: str | None,
-    destination_explicit: bool,
-    format: "_ReportFormat | str | None",
+    destinations: list[str],
+    text_destinations: list[str],
+    json_destinations: list[str],
     color: "_ColorMode | str | None",
     use_environment: bool,
     configure: bool,
-    current_destination: str | None,
-    current_format: "_ReportFormat",
-    current_color: "_ColorMode",
+    current_targets: tuple[ReportTarget, ...],
     issues: list[str],
-) -> "tuple[str | None, _ReportFormat, _ColorMode]":
+) -> tuple[ReportTarget, ...]:
     """Resolve automatic report settings while preserving repeat-install semantics."""
     if not configure:
-        return current_destination, current_format, current_color
-    if destination_explicit:
-        resolved_destination = destination
+        return current_targets
+
+    validated_color = _resolve_report_color(color, use_environment, current_targets, issues)
+
+    explicit_destinations = bool(destinations or text_destinations or json_destinations)
+    inferred_destinations = destinations
+    from_environment = False
+    if not explicit_destinations and use_environment:
+        raw_destinations = os.environ.get(REPORT_DESTINATION_ENV)
+        if raw_destinations:
+            inferred_destinations = [item for item in raw_destinations.split(os.pathsep) if item]
+            from_environment = True
+
+    resolved: list[ReportTarget] = []
+    if explicit_destinations or inferred_destinations:
+        for destination in inferred_destinations:
+            try:
+                format = infer_report_format(destination)
+            except ValueError:
+                if not from_environment:
+                    raise
+                format = "text"
+                issue = f"environment_configuration.{REPORT_DESTINATION_ENV}"
+                if issue not in issues:
+                    issues.append(issue)
+            resolved.append(ReportTarget(_stderr_destination(destination), format, validated_color))
+        resolved.extend(
+            ReportTarget(_stderr_destination(destination), "text", validated_color) for destination in text_destinations
+        )
+        resolved.extend(
+            ReportTarget(_stderr_destination(destination), "json", validated_color) for destination in json_destinations
+        )
     elif use_environment:
-        resolved_destination = os.environ.get(REPORT_DESTINATION_ENV) or None
+        resolved.append(ReportTarget(None, "text", validated_color))
     else:
-        resolved_destination = current_destination
+        resolved.extend(ReportTarget(target.destination, target.format, validated_color) for target in current_targets)
 
-    resolved_format: str | None = format
-    format_from_environment = False
-    if resolved_format is None and use_environment:
-        resolved_format = os.environ.get(REPORT_FORMAT_ENV) or None
-        format_from_environment = resolved_format is not None
-    if resolved_format is None:
-        resolved_format = "json" if resolved_destination is not None else "text"
-    try:
-        validated_format = validate_report_format(resolved_format)
-    except ValueError:
-        if not format_from_environment:
-            raise
-        validated_format = "json" if resolved_destination is not None else "text"
-        issues.append("report_configuration")
+    return _deduplicate_report_targets(resolved)
 
+
+def _resolve_report_color(
+    color: "_ColorMode | str | None",
+    use_environment: bool,
+    current_targets: tuple[ReportTarget, ...],
+    issues: list[str],
+) -> "_ColorMode":
+    """Resolve one color mode, degrading only an ambient invalid value."""
     resolved_color: str | None = color
     color_from_environment = False
     if resolved_color is None and use_environment:
         resolved_color = os.environ.get(REPORT_COLOR_ENV) or None
         color_from_environment = resolved_color is not None
     if resolved_color is None:
-        resolved_color = "auto" if use_environment else current_color
+        resolved_color = "auto" if use_environment or not current_targets else current_targets[0].color
     try:
-        validated_color = validate_report_color(resolved_color)
+        return validate_report_color(resolved_color)
     except ValueError:
         if not color_from_environment:
             raise
-        validated_color = "auto"
         issues.append(f"environment_configuration.{REPORT_COLOR_ENV}")
-    return resolved_destination, validated_format, validated_color
+        return "auto"
+
+
+def _deduplicate_report_targets(targets: list[ReportTarget]) -> tuple[ReportTarget, ...]:
+    """Preserve target order while removing identical output projections."""
+    deduplicated: list[ReportTarget] = []
+    seen: set[tuple[str | None, str, str]] = set()
+    for target in targets:
+        key = (target.destination, target.format, target.color)
+        if key not in seen:
+            seen.add(key)
+            deduplicated.append(target)
+    return tuple(deduplicated)
+
+
+def _stderr_destination(destination: str) -> str | None:
+    """Normalize the public stderr sentinel to the report writer representation."""
+    return None if destination == "-" else destination

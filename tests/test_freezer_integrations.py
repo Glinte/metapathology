@@ -39,7 +39,6 @@ def _run(command: list[str], *, cwd: Path, timeout: int = _SUBPROCESS_TIMEOUT) -
 def _assert_frozen_run(executable: Path, build: Path, integration: str) -> None:
     environment = dict(os.environ)
     environment["METAPATHOLOGY_REPORT"] = str(build / "diagnostic.txt")
-    environment["METAPATHOLOGY_REPORT_FORMAT"] = "text"
     process = subprocess.run(
         [str(executable)],
         capture_output=True,

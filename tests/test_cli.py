@@ -142,7 +142,7 @@ def test_cli_can_disable_importer_cache_monitoring_without_consuming_target_opti
     assert "sys.path_importer_cache off" in proc.stderr
 
 
-def test_invalid_report_format_fails_before_running_target(tmp_path: Path) -> None:
+def test_removed_report_format_flag_fails_before_running_target(tmp_path: Path) -> None:
     marker = tmp_path / "target-ran"
     script = tmp_path / "prog.py"
     script.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
@@ -150,7 +150,7 @@ def test_invalid_report_format_fails_before_running_target(tmp_path: Path) -> No
     proc = run_cli("--report-format", "yaml", str(script), cwd=tmp_path)
 
     assert proc.returncode == 2
-    assert "invalid choice" in proc.stderr
+    assert "unrecognized arguments: --report-format" in proc.stderr
     assert not marker.exists()
 
 
@@ -259,16 +259,12 @@ def test_text_report_files_are_plain_in_auto_and_colored_when_forced(tmp_path: P
     automatic = run_cli(
         "--report",
         str(automatic_path),
-        "--report-format",
-        "text",
         str(script),
         cwd=tmp_path,
     )
     forced = run_cli(
         "--report",
         str(forced_path),
-        "--report-format",
-        "text",
         "--color",
         "always",
         str(script),
@@ -385,8 +381,6 @@ def test_text_file_report_and_target_option_passthrough(tmp_path: Path) -> None:
     proc = run_cli(
         "--report",
         str(destination),
-        "--report-format",
-        "text",
         str(script),
         "--report",
         "target-value",
@@ -416,7 +410,6 @@ def test_environment_configures_automatic_report(tmp_path: Path) -> None:
     destination = tmp_path / "environment-{pid}.txt"
     env = dict(os.environ)
     env["METAPATHOLOGY_REPORT"] = str(destination)
-    env["METAPATHOLOGY_REPORT_FORMAT"] = "text"
 
     proc = run_cli(str(script), cwd=tmp_path, env=env)
 
@@ -424,6 +417,73 @@ def test_environment_configures_automatic_report(tmp_path: Path) -> None:
     reports = list(tmp_path.glob("environment-*.txt"))
     assert len(reports) == 1
     assert "== metapathology report ==" in reports[0].read_text(encoding="utf-8")
+
+
+def test_cli_writes_multiple_inferred_report_formats(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("import json\nprint('target ran')\n")
+    text_path = tmp_path / "diagnostic.txt"
+    json_path = tmp_path / "diagnostic.json"
+
+    proc = run_cli(
+        "--report",
+        str(text_path),
+        "--report",
+        str(json_path),
+        str(script),
+        cwd=tmp_path,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    text_report = next(tmp_path.glob("diagnostic.*.txt")).read_text(encoding="utf-8")
+    json_report = json.loads(next(tmp_path.glob("diagnostic.*.json")).read_text(encoding="utf-8"))
+    assert "== metapathology report ==" in text_report
+    assert json_report["process"]["pid"] > 0
+
+
+def test_forced_stderr_text_and_json_file_are_both_written(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("print('target ran')\n")
+    destination = tmp_path / "machine.anything"
+
+    proc = run_cli(
+        "--report-text",
+        "-",
+        "--report-json",
+        str(destination),
+        str(script),
+        cwd=tmp_path,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "== metapathology report ==" in proc.stderr
+    report = next(tmp_path.glob("machine.*.anything"))
+    assert json.loads(report.read_text(encoding="utf-8"))["process"]["pid"] > 0
+
+
+def test_unknown_inferred_report_extension_fails_before_running_target(tmp_path: Path) -> None:
+    marker = tmp_path / "target-ran"
+    script = tmp_path / "prog.py"
+    script.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
+
+    proc = run_cli("--report", "out.log", str(script), cwd=tmp_path)
+
+    assert proc.returncode == 2
+    assert "use --report-text or --report-json" in proc.stderr
+    assert not marker.exists()
+
+
+def test_environment_writes_multiple_inferred_reports(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("print('target ran')\n")
+    env = dict(os.environ)
+    env["METAPATHOLOGY_REPORT"] = os.pathsep.join((str(tmp_path / "env.txt"), str(tmp_path / "env.json")))
+
+    proc = run_cli(str(script), cwd=tmp_path, env=env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert len(list(tmp_path.glob("env.*.txt"))) == 1
+    assert len(list(tmp_path.glob("env.*.json"))) == 1
 
 
 def test_deep_umbrella_enables_every_mechanism(tmp_path: Path) -> None:

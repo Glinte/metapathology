@@ -76,7 +76,8 @@ the target is passed to the target.
 
 ```console
 python -m metapathology --report diagnostics.json path/to/script.py
-python -m metapathology --report diagnostics.txt --report-format text -m package.module
+python -m metapathology --report diagnostics.txt --report diagnostics.json -m package.module
+python -m metapathology --report-text - --report-json diagnostics.data path/to/script.py
 python -m metapathology --color always path/to/script.py
 python -m metapathology --no-path-hook-monitoring path/to/script.py
 python -m metapathology --no-importer-cache-monitoring path/to/script.py
@@ -84,9 +85,11 @@ python -m metapathology --sys-path-monitoring path/to/script.py
 python -m metapathology --deep path/to/script.py
 ```
 
-- `--report PATH` writes the report to a file instead of standard error.
-  Files default to JSON; pass `--report-format text` for text. The file is
-  written atomically and the parent directory must exist.
+- `--report PATH` infers JSON from `.json` and text from `.txt` or `.text`.
+  Use `--report-text PATH` or `--report-json PATH` to force a format for any
+  other filename. All three options are repeatable, and `-` means standard
+  error. With no report option, one text report is written to standard error.
+  Files are written atomically and their parent directories must exist.
 - Report filenames automatically include the process ID so concurrent
   workers do not overwrite each other: `diagnostics.json` becomes
   `diagnostics.1234.json`. Put `{pid}` in the path to control its position.
@@ -108,14 +111,20 @@ pass CLI flags (frozen apps, the startup bootstrap below). Explicit CLI or
 API values win over the environment; the environment wins over defaults.
 
 ```console
-METAPATHOLOGY_REPORT=diagnostics-{pid}.json
-METAPATHOLOGY_REPORT_FORMAT=json          # or: text
+METAPATHOLOGY_REPORT=diagnostics-{pid}.txt;diagnostics-{pid}.json
 METAPATHOLOGY_COLOR=auto                  # or: always, never
 METAPATHOLOGY_MONITOR_PATH_HOOKS=true
 METAPATHOLOGY_MONITOR_IMPORTER_CACHE=true
 METAPATHOLOGY_MONITOR_SYS_PATH=false
 METAPATHOLOGY_DEEP=false
 ```
+
+`METAPATHOLOGY_REPORT` accepts an `os.pathsep`-separated destination list
+(`;` on Windows and `:` on POSIX), using the same extension inference as
+`--report`. An unrecognized environment destination falls back to text and is
+recorded as a configuration issue so ambient configuration cannot break the
+host program. Explicit CLI and API destinations with unknown extensions are
+errors; use a format-specific option or argument for those paths.
 
 Boolean variables accept `1/0`, `true/false`, `yes/no`, and `on/off`. These
 variables configure a monitor that something installs; they never cause

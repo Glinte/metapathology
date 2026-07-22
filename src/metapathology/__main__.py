@@ -16,7 +16,6 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     from typing import Literal, NoReturn
 
-_REPORT_FORMATS = ("text", "json")
 _COLOR_MODES = ("auto", "always", "never")
 _DOCUMENTATION_URL = "https://glinte.github.io/metapathology/usage/"
 _MODULE_PROG = "python -m metapathology"
@@ -42,8 +41,9 @@ class _Arguments(argparse.Namespace):
 
     def __init__(self) -> None:
         super().__init__()
-        self.report_destination: str | None = None
-        self.report_format: Literal["text", "json"] | None = None
+        self.report_destination: list[str] = []
+        self.report_text: list[str] = []
+        self.report_json: list[str] = []
         self.report_color: Literal["auto", "always", "never"] | None = None
         self.monitor_path_hooks: bool | None = None
         self.monitor_importer_cache: bool | None = None
@@ -66,7 +66,8 @@ class _Arguments(argparse.Namespace):
             tuple(self.target_args),
             self.is_module,
             self.report_destination,
-            self.report_format,
+            self.report_text,
+            self.report_json,
             self.report_color,
             self.monitor_path_hooks,
             self.monitor_importer_cache,
@@ -87,8 +88,9 @@ class _Invocation(_Record):
     target: str | None
     target_args: tuple[str, ...]
     is_module: bool
-    report_destination: str | None
-    report_format: "Literal['text', 'json'] | None"
+    report_destination: list[str]
+    report_text: list[str]
+    report_json: list[str]
     report_color: "Literal['auto', 'always', 'never'] | None"
     monitor_path_hooks: bool | None
     monitor_importer_cache: bool | None
@@ -115,11 +117,27 @@ def _make_parser() -> _ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--report", dest="report_destination", metavar="PATH", help="write an automatic report file")
     parser.add_argument(
-        "--report-format",
-        choices=_REPORT_FORMATS,
-        help="select text or JSON output; defaults to text on stderr and JSON for files",
+        "--report",
+        dest="report_destination",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="write a report with format inferred from PATH (repeatable)",
+    )
+    parser.add_argument(
+        "--report-text",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="write a text report to PATH (repeatable; - means stderr)",
+    )
+    parser.add_argument(
+        "--report-json",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="write a JSON report to PATH (repeatable; - means stderr)",
     )
     parser.add_argument(
         "--color",
@@ -256,22 +274,27 @@ def _run(invocation: _Invocation) -> int:
 
             readline.parse_and_bind("tab: complete")  # pyrefly: ignore[missing-attribute]
 
-    monitor = metapathology.install(
-        report_at_exit=False,
-        report_destination=invocation.report_destination,
-        report_format=invocation.report_format,
-        report_color=invocation.report_color,
-        monitor_path_hooks=invocation.monitor_path_hooks,
-        monitor_importer_cache=invocation.monitor_importer_cache,
-        monitor_sys_path=invocation.monitor_sys_path,
-        deep=invocation.deep,
-        deep_path_hooks=invocation.deep_path_hooks,
-        deep_path_entry_finders=invocation.deep_path_entry_finders,
-        deep_loaders=invocation.deep_loaders,
-        deep_import_outcomes=invocation.deep_import_outcomes,
-        deep_import_calls=invocation.deep_import_calls,
-        speculative_replay=invocation.speculative_replay,
-    )
+    try:
+        monitor = metapathology.install(
+            report_at_exit=False,
+            report_destination=invocation.report_destination,
+            report_text=invocation.report_text,
+            report_json=invocation.report_json,
+            report_color=invocation.report_color,
+            monitor_path_hooks=invocation.monitor_path_hooks,
+            monitor_importer_cache=invocation.monitor_importer_cache,
+            monitor_sys_path=invocation.monitor_sys_path,
+            deep=invocation.deep,
+            deep_path_hooks=invocation.deep_path_hooks,
+            deep_path_entry_finders=invocation.deep_path_entry_finders,
+            deep_loaders=invocation.deep_loaders,
+            deep_import_outcomes=invocation.deep_import_outcomes,
+            deep_import_calls=invocation.deep_import_calls,
+            speculative_replay=invocation.speculative_replay,
+        )
+    except ValueError as exc:
+        _PARSER._print_error(str(exc))
+        return 2
     exit_code = 0
     try:
         if target is None:

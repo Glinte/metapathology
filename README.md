@@ -58,7 +58,9 @@ $ python -m metapathology                      # monitored interactive interpret
 ```
 
 Your program runs normally; the report is printed to standard error when it
-exits. Use `--report diagnostic.json` to write a JSON file instead. Prefer
+exits. Use repeatable `--report` paths to export inferred formats from the
+same capture, for example `--report diagnostic.txt --report diagnostic.json`.
+Prefer
 `python -m metapathology` over the `metapathology` command so the tool runs in
 the same interpreter and virtual environment as your program.
 

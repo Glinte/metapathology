@@ -134,7 +134,6 @@ def test_early_bootstrap_observes_later_pth_and_inherited_child(tmp_path: Path) 
     process_environment = dict(os.environ)
     process_environment["METAPATHOLOGY_EARLY_BOOTSTRAP"] = "1"
     process_environment["METAPATHOLOGY_REPORT"] = str(report_path)
-    process_environment["METAPATHOLOGY_REPORT_FORMAT"] = "json"
     parent = subprocess.run(
         [
             str(target_python),

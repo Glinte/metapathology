@@ -70,7 +70,6 @@ def test_generated_activation_records_provenance_and_environment_configuration(t
     report = tmp_path / "frozen.json"
     environment = dict(os.environ)
     environment["METAPATHOLOGY_REPORT"] = str(report)
-    environment["METAPATHOLOGY_REPORT_FORMAT"] = "json"
     process = subprocess.run(
         [sys.executable, str(bootstrap)],
         capture_output=True,

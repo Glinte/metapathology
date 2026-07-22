@@ -10,7 +10,6 @@ configuration variables. A useful starting point is:
 
 ```text
 METAPATHOLOGY_REPORT=diagnostic.txt
-METAPATHOLOGY_REPORT_FORMAT=text
 METAPATHOLOGY_DEEP=1
 ```
 

@@ -18,16 +18,19 @@ fail-open startup files described in the [frozen application guide](frozen.md)
 over calling this function directly. Direct calls propagate invalid integration
 and installation errors to the application.
 
-### `install(*, report_at_exit=True, report_destination=None, report_format=None, report_color=None, monitor_path_hooks=None, monitor_importer_cache=None, monitor_sys_path=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None, deep_import_calls=None, speculative_replay=None) -> Monitor`
+### `install(*, report_at_exit=True, report_destination=None, report_text=None, report_json=None, report_color=None, monitor_path_hooks=None, monitor_importer_cache=None, monitor_sys_path=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None, deep_import_calls=None, speculative_replay=None) -> Monitor`
 
 Installs the process-wide monitor and returns it. Repeated calls return and
 enable the same monitor. Only activity after installation can be observed.
 When `report_at_exit` is true, a report is registered using Python's
-[`atexit` mechanism][atexit]. `report_destination` selects an automatic file;
-otherwise `METAPATHOLOGY_REPORT` is consulted before defaulting to standard
-error. `report_format` accepts `"text"` or `"json"`; API values override
-`METAPATHOLOGY_REPORT_FORMAT`, and files default to JSON while standard error
-defaults to text.
+[`atexit` mechanism][atexit]. `report_destination`, `report_text`, and
+`report_json` each accept one path or a list of paths. `report_destination`
+infers JSON from `.json`, text from `.txt` or `.text`, and text for the `-`
+standard-error sentinel; other extensions require the format-specific
+arguments. When no API destination is supplied, `METAPATHOLOGY_REPORT` is
+consulted as an `os.pathsep`-separated destination list before defaulting to
+one text report on standard error. All targets share one captured report
+artifact.
 `report_color` accepts `"auto"`, `"always"`, or `"never"` for automatic text
 reports. API values override `METAPATHOLOGY_COLOR`; the default `"auto"` colors
 TTY destinations unless `NO_COLOR` is nonempty or `TERM=dumb`. JSON never
