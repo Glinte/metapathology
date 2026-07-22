@@ -339,7 +339,7 @@ wheels = [
 
 [[package]]
 name = "metapathology"
-version = "0.4.5"
+version = "0.5.0"
 source = { editable = "." }
 
 [package.dev-dependencies]
