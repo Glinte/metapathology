@@ -256,11 +256,11 @@ finding = next(item for item in document["findings"] if item["kind"] == "repeate
 assert finding["module"] == "deep_identity_ext"
 assert finding["evidence"]["level"] == "captured"
 assert set(finding["evidence"]["event_refs"]) == {"event:" + str(events[0].seq), "event:" + str(events[1].seq)}
-assert finding["deep_call"]["event_ref"] == "event:" + str(events[1].seq)
-assert finding["module_state_baseline"]["object_id"] == hex(id(first))
-assert finding["deep_call"]["module_state_before"]["object_id"] == hex(id(second))
-assert finding["deep_call"]["module_state_after"]["object_id"] == hex(id(second))
-assert finding["deep_call"]["target_state"]["object_id"] == hex(id(second))
+assert finding["data"]["deep_call"]["event_ref"] == "event:" + str(events[1].seq)
+assert finding["data"]["module_state_baseline"]["object_id"] == hex(id(first))
+assert finding["data"]["deep_call"]["module_state_before"]["object_id"] == hex(id(second))
+assert finding["data"]["deep_call"]["module_state_after"]["object_id"] == hex(id(second))
+assert finding["data"]["deep_call"]["target_state"]["object_id"] == hex(id(second))
 explanation = next(item for item in document["explanations"] if item["kind"] == "repeated_loader_execution")
 assert explanation["confidence"] == "captured"
 assert explanation["cause_finding_ref"] == finding["id"]

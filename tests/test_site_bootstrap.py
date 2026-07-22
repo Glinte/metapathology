@@ -167,7 +167,7 @@ def test_early_bootstrap_observes_later_pth_and_inherited_child(tmp_path: Path) 
             reference["name"]
             for snapshot in document["snapshots"]
             if snapshot["kind"] == "path_hooks" and snapshot["phase"] == "install"
-            for reference in snapshot["entries"]
+            for reference in snapshot["data"]["entries"]
         }
         assert "earlier_hook" in initial_names
         cache_events = [event["data"] for event in document["timeline"] if event["kind"] == "importer_cache_diff"]

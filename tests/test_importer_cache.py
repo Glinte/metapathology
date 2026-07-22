@@ -127,8 +127,8 @@ def test_report_observes_negative_entries_and_ignores_non_string_keys(run_python
         "    snapshot for snapshot in document['snapshots']\n"
         "    if snapshot['id'] == 'snapshot:importer-cache:report'\n"
         ")\n"
-        "assert report_snapshot['non_string_keys'] >= 1\n"
-        "assert any(item['path'] == path and item['finder'] is None for item in report_snapshot['entries'])\n"
+        "assert report_snapshot['data']['non_string_keys'] >= 1\n"
+        "assert any(item['path'] == path and item['finder'] is None for item in report_snapshot['data']['entries'])\n"
         "print('OK')\n"
     )
     assert proc.returncode == 0, proc.stderr
@@ -178,7 +178,7 @@ def test_real_missing_path_creates_a_negative_cache_entry(run_python: RunPython)
         ")\n"
         "assert any(\n"
         "    entry['path'] == missing_path and entry['finder'] is None\n"
-        "    for entry in snapshot['entries']\n"
+        "    for entry in snapshot['data']['entries']\n"
         ")\n"
         "print('OK')\n"
     )

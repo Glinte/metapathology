@@ -1,5 +1,19 @@
 {
   "$defs": {
+    "BareEvidenceJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "enum": [
+            "bare"
+          ]
+        }
+      },
+      "required": [
+        "detail"
+      ],
+      "type": "object"
+    },
     "CaptureInfo": {
       "additionalProperties": false,
       "properties": {
@@ -60,6 +74,92 @@
         }
       },
       "required": [],
+      "type": "object"
+    },
+    "ClaimEvidenceJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "claim": {
+          "$ref": "#/$defs/FindingClaimJSON"
+        },
+        "detail": {
+          "enum": [
+            "claim"
+          ]
+        }
+      },
+      "required": [
+        "claim",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "ContractEvidenceJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "enum": [
+            "contract"
+          ]
+        },
+        "finder_contract_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "detail",
+        "finder_contract_ref"
+      ],
+      "type": "object"
+    },
+    "CorrelationEvidenceJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_refs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "detail": {
+          "enum": [
+            "correlation"
+          ]
+        }
+      },
+      "required": [
+        "attempt_refs",
+        "detail"
+      ],
+      "type": "object"
+    },
+    "DeepCallEvidenceJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "deep_call": {
+          "$ref": "#/$defs/FindingDeepCallJSON"
+        },
+        "detail": {
+          "enum": [
+            "deep_call"
+          ]
+        },
+        "module_state_baseline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleStateJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "deep_call",
+        "detail",
+        "module_state_baseline"
+      ],
       "type": "object"
     },
     "DeepDiagnosticCallDataJSON": {
@@ -893,23 +993,30 @@
     "FindingJSON": {
       "additionalProperties": false,
       "properties": {
-        "attempt_refs": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "claim": {
-          "$ref": "#/$defs/FindingClaimJSON"
-        },
-        "deep_call": {
-          "$ref": "#/$defs/FindingDeepCallJSON"
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BareEvidenceJSON"
+            },
+            {
+              "$ref": "#/$defs/CorrelationEvidenceJSON"
+            },
+            {
+              "$ref": "#/$defs/ContractEvidenceJSON"
+            },
+            {
+              "$ref": "#/$defs/ClaimEvidenceJSON"
+            },
+            {
+              "$ref": "#/$defs/RouteEvidenceJSON"
+            },
+            {
+              "$ref": "#/$defs/DeepCallEvidenceJSON"
+            }
+          ]
         },
         "evidence": {
           "$ref": "#/$defs/FindingEvidenceJSON"
-        },
-        "finder_contract_ref": {
-          "type": "string"
         },
         "id": {
           "type": "string"
@@ -931,25 +1038,6 @@
         "module": {
           "type": "string"
         },
-        "module_state_baseline": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModuleStateJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "route_comparison_ref": {
-          "type": "string"
-        },
-        "route_refs": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "severity": {
           "enum": [
             "actionable",
@@ -963,19 +1051,16 @@
           },
           "type": "array"
         },
-        "structural_comparison": {
-          "$ref": "#/$defs/StructuralComparisonJSON"
-        },
         "subject": {
           "$ref": "#/$defs/FindingSubjectJSON"
         }
       },
       "required": [
+        "data",
         "evidence",
         "id",
         "kind",
         "module",
-        "module_state_baseline",
         "severity",
         "signals",
         "subject"
@@ -1455,6 +1540,39 @@
       ],
       "type": "object"
     },
+    "ImporterCacheSnapshotDataJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ImporterCacheEntryJSON"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "non_string_keys": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "entries",
+        "non_string_keys"
+      ],
+      "type": "object"
+    },
     "InternalErrorDataJSON": {
       "additionalProperties": false,
       "properties": {
@@ -1665,6 +1783,28 @@
         "removed",
         "stack",
         "thread_name"
+      ],
+      "type": "object"
+    },
+    "MetaPathSnapshotDataJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "entries"
       ],
       "type": "object"
     },
@@ -1957,6 +2097,28 @@
         "old_contents",
         "stack",
         "thread_name"
+      ],
+      "type": "object"
+    },
+    "PathHooksSnapshotDataJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ImportObjectJSON"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "entries"
       ],
       "type": "object"
     },
@@ -2364,6 +2526,39 @@
       ],
       "type": "object"
     },
+    "RouteEvidenceJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "claim": {
+          "$ref": "#/$defs/FindingClaimJSON"
+        },
+        "detail": {
+          "enum": [
+            "route"
+          ]
+        },
+        "route_comparison_ref": {
+          "type": "string"
+        },
+        "route_refs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "structural_comparison": {
+          "$ref": "#/$defs/StructuralComparisonJSON"
+        }
+      },
+      "required": [
+        "claim",
+        "detail",
+        "route_comparison_ref",
+        "route_refs",
+        "structural_comparison"
+      ],
+      "type": "object"
+    },
     "SchemaVersion": {
       "additionalProperties": false,
       "properties": {
@@ -2427,28 +2622,16 @@
     "SnapshotJSON": {
       "additionalProperties": false,
       "properties": {
-        "entries": {
+        "data": {
           "anyOf": [
             {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
+              "$ref": "#/$defs/MetaPathSnapshotDataJSON"
             },
             {
-              "items": {
-                "$ref": "#/$defs/ImportObjectJSON"
-              },
-              "type": "array"
+              "$ref": "#/$defs/PathHooksSnapshotDataJSON"
             },
             {
-              "items": {
-                "$ref": "#/$defs/ImporterCacheEntryJSON"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
+              "$ref": "#/$defs/ImporterCacheSnapshotDataJSON"
             }
           ]
         },
@@ -2462,16 +2645,6 @@
             "importer_cache"
           ]
         },
-        "non_string_keys": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "phase": {
           "enum": [
             "install",
@@ -2480,7 +2653,7 @@
         }
       },
       "required": [
-        "entries",
+        "data",
         "id",
         "kind",
         "phase"

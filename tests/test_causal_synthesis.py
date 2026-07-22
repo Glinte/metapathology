@@ -82,7 +82,7 @@ if sys.argv[3] == "deep":
     finding = next(item for item in document["findings"] if item["kind"] == "namespace_truncation")
     assert finding["severity"] == "actionable"
     assert "meta_path_short_circuit" in finding["signals"]
-    assert finding["route_comparison_ref"] == comparison["id"]
+    assert finding["data"]["route_comparison_ref"] == comparison["id"]
     explanation = document["explanations"][0]
     assert explanation["kind"] == "namespace_truncation_failure"
     assert explanation["subject"] == "synthesis_ns.child"

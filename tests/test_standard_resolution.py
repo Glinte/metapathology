@@ -275,7 +275,7 @@ def test_deep_report_correlates_repeated_failure_at_same_origin(run_python: RunP
         "failed_attempts = [item for item in document['import_attempts'] "
         "if item['fullname'] == 'repeated_source' and item['progress'] == 'failed']\n"
         "assert len(failed_attempts) == 2\n"
-        "assert {item['id'] for item in failed_attempts} < set(finding['attempt_refs'])\n"
+        "assert {item['id'] for item in failed_attempts} < set(finding['data']['attempt_refs'])\n"
         "assert {ref for attempt in failed_attempts for ref in attempt['evidence_event_refs']} "
         "<= set(explanation['event_refs'])\n"
         "text = metapathology.render_report()\n"

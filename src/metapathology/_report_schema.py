@@ -227,15 +227,33 @@ class CaptureInfo(TypedDict, total=False):
     modules_since_install: list[str] | None
 
 
-class SnapshotBaseJSON(TypedDict):
-    entries: list[str] | list[ImportObjectJSON] | list[ImporterCacheEntryJSON] | None
+# Snapshots share one envelope `{id, kind, phase, data}`; `kind` selects the
+# per-kind payload. `entries` differs in element type per kind and
+# `non_string_keys` exists only on the importer-cache kind, so nesting under
+# `data` lets the schema follow the discriminant instead of an untagged union.
+
+
+class MetaPathSnapshotDataJSON(TypedDict):
+    entries: list[str] | None
+
+
+class PathHooksSnapshotDataJSON(TypedDict):
+    entries: list[ImportObjectJSON] | None
+
+
+class ImporterCacheSnapshotDataJSON(TypedDict):
+    entries: list[ImporterCacheEntryJSON] | None
+    non_string_keys: int | None
+
+
+SnapshotDataJSON = MetaPathSnapshotDataJSON | PathHooksSnapshotDataJSON | ImporterCacheSnapshotDataJSON
+
+
+class SnapshotJSON(TypedDict):
+    data: SnapshotDataJSON
     id: str
     kind: SnapshotKind
     phase: SnapshotPhase
-
-
-class SnapshotJSON(SnapshotBaseJSON, total=False):
-    non_string_keys: int | None
 
 
 class ProtocolJSON(TypedDict):
@@ -582,25 +600,64 @@ class FindingDeepCallJSON(TypedDict):
     target_state: ModuleStateJSON | None
 
 
-class FindingBaseJSON(TypedDict):
+# Findings share one envelope plus a `detail`-tagged `data` payload. Every
+# `Finding.kind` maps to exactly one evidence family (see `_report_model`), so
+# `data.detail` selects which variant-specific members are present instead of a
+# flat `total=False` grab-bag on the finding itself.
+
+
+class BareEvidenceJSON(TypedDict):
+    detail: Literal["bare"]
+
+
+class CorrelationEvidenceJSON(TypedDict):
+    detail: Literal["correlation"]
+    attempt_refs: list[str]
+
+
+class ContractEvidenceJSON(TypedDict):
+    detail: Literal["contract"]
+    finder_contract_ref: str
+
+
+class ClaimEvidenceJSON(TypedDict):
+    detail: Literal["claim"]
+    claim: FindingClaimJSON
+
+
+class RouteEvidenceJSON(TypedDict):
+    detail: Literal["route"]
+    claim: FindingClaimJSON
+    route_refs: list[str]
+    route_comparison_ref: str
+    structural_comparison: StructuralComparisonJSON
+
+
+class DeepCallEvidenceJSON(TypedDict):
+    detail: Literal["deep_call"]
+    deep_call: FindingDeepCallJSON
+    module_state_baseline: ModuleStateJSON | None
+
+
+FindingEvidenceDataJSON = (
+    BareEvidenceJSON
+    | CorrelationEvidenceJSON
+    | ContractEvidenceJSON
+    | ClaimEvidenceJSON
+    | RouteEvidenceJSON
+    | DeepCallEvidenceJSON
+)
+
+
+class FindingJSON(TypedDict):
+    data: FindingEvidenceDataJSON
     evidence: FindingEvidenceJSON
     id: str
     kind: FindingKind
     module: str
-    module_state_baseline: ModuleStateJSON | None
     severity: FindingSeverity
     signals: list[str]
     subject: FindingSubjectJSON
-
-
-class FindingJSON(FindingBaseJSON, total=False):
-    attempt_refs: list[str]
-    finder_contract_ref: str
-    claim: FindingClaimJSON
-    deep_call: FindingDeepCallJSON
-    route_refs: list[str]
-    route_comparison_ref: str
-    structural_comparison: StructuralComparisonJSON
 
 
 class ExplanationJSON(TypedDict):
