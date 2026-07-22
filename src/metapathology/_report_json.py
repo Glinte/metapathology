@@ -87,7 +87,9 @@ from metapathology._report_schema import (
     InternalErrorDataJSON,
     LoaderGroupJSON,
     LoaderInventoryInfo,
+    MechanismCompleteness,
     MechanismJSON,
+    MechanismName,
     MetaPathMutationDataJSON,
     ModuleMetadataJSON,
     ModuleStateJSON,
@@ -353,7 +355,7 @@ def _build_json_document(document: ReportDocument) -> ReportJSON:
     }
 
 
-def _mechanism(name: str, enabled: bool, retained: int, completeness: str) -> MechanismJSON:
+def _mechanism(name: MechanismName, enabled: bool, retained: int, completeness: MechanismCompleteness) -> MechanismJSON:
     """Describe a lifetime-growing producer without implying perfect observation."""
     return {
         "capacity": None,

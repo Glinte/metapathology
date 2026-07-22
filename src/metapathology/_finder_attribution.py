@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from typing import Protocol
     from typing import cast as _cast
 
-    from metapathology._records import SearchPathKind
+    from metapathology._records import FinderContractObservation, SearchPathKind
 
     _FindSpec = Callable[[str, Sequence[str] | None, ModuleType | None], ModuleSpec | None]
 
@@ -113,7 +113,12 @@ class _FinderAttribution:
         self._commit_shadow(finder_id, finder, original, previous, wrapper, monitor)
 
     def observe_contract(
-        self, finder: object, position: int, observation: str, seq: int | None, monitor: "_FinderAttributionHost"
+        self,
+        finder: object,
+        position: int,
+        observation: "FinderContractObservation",
+        seq: int | None,
+        monitor: "_FinderAttributionHost",
     ) -> None:
         """Inventory raw finder protocols without invoking attribute lookup."""
         finder_id = id(finder)

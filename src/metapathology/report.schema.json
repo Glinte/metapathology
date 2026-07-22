@@ -225,7 +225,16 @@
           "type": "string"
         },
         "outcome": {
-          "type": "string"
+          "enum": [
+            "started",
+            "loaded",
+            "failed",
+            "found",
+            "not_found",
+            "returned",
+            "raised",
+            "unobserved_reentrant"
+          ]
         },
         "path": {
           "anyOf": [
@@ -297,7 +306,16 @@
           "type": "string"
         },
         "outcome": {
-          "type": "string"
+          "enum": [
+            "started",
+            "loaded",
+            "failed",
+            "found",
+            "not_found",
+            "returned",
+            "raised",
+            "unobserved_reentrant"
+          ]
         },
         "thread_id": {
           "type": "integer"
@@ -762,7 +780,13 @@
       "additionalProperties": false,
       "properties": {
         "category": {
-          "type": "string"
+          "enum": [
+            "indeterminate",
+            "legacy_only",
+            "modern",
+            "modern_and_legacy",
+            "protocol_less"
+          ]
         },
         "find_module": {
           "$ref": "#/$defs/ProtocolJSON"
@@ -780,7 +804,11 @@
           "type": "string"
         },
         "observation": {
-          "type": "string"
+          "enum": [
+            "install",
+            "reassignment",
+            "mutation"
+          ]
         },
         "observation_event_ref": {
           "anyOf": [
@@ -911,7 +939,16 @@
           ]
         },
         "outcome": {
-          "type": "string"
+          "enum": [
+            "started",
+            "loaded",
+            "failed",
+            "found",
+            "not_found",
+            "returned",
+            "raised",
+            "unobserved_reentrant"
+          ]
         },
         "target_state": {
           "anyOf": [
@@ -1314,7 +1351,16 @@
           "type": "string"
         },
         "outcome": {
-          "type": "string"
+          "enum": [
+            "started",
+            "loaded",
+            "failed",
+            "found",
+            "not_found",
+            "returned",
+            "raised",
+            "unobserved_reentrant"
+          ]
         },
         "thread_id": {
           "type": "integer"
@@ -1688,7 +1734,25 @@
           "type": "integer"
         },
         "completeness": {
-          "type": "string"
+          "enum": [
+            "best_effort",
+            "import_boundaries",
+            "resolution_starts",
+            "instrumented_finders",
+            "first_observation_per_identity",
+            "delegated_boundaries",
+            "reported_custom_winners",
+            "passive_boundaries",
+            "disabled",
+            "unavailable_existing_profiler",
+            "active_path_finder_aggregate",
+            "unsupported_path_finder_boundary",
+            "inactive_after_uninstall",
+            "refused_existing_profiler",
+            "unsupported_boundary",
+            "active_current_and_future_threading_threads_cache_hits_not_observed",
+            "active_all_threads_including_cache_hits"
+          ]
         },
         "dropped": {
           "type": "integer"
@@ -1697,7 +1761,24 @@
           "type": "boolean"
         },
         "name": {
-          "type": "string"
+          "enum": [
+            "meta_path_mutations",
+            "meta_path_reassignments",
+            "import_audit_starts",
+            "finder_attribution",
+            "finder_contracts",
+            "deep_diagnostics",
+            "deep_import_outcomes",
+            "deep_import_calls",
+            "standard_finder_aggregate",
+            "resolution_route_analysis",
+            "path_hooks_mutations",
+            "path_hooks_reassignments",
+            "sys_path_mutations",
+            "sys_path_reassignments",
+            "importer_cache_snapshots",
+            "importer_cache_diffs"
+          ]
         },
         "observations": {
           "type": "integer"
@@ -1831,7 +1912,10 @@
       "additionalProperties": false,
       "properties": {
         "inspection": {
-          "type": "string"
+          "enum": [
+            "available",
+            "unavailable"
+          ]
         },
         "loader_agreement": {
           "anyOf": [
@@ -1844,7 +1928,11 @@
           ]
         },
         "loader_source": {
-          "type": "string"
+          "enum": [
+            "spec",
+            "module",
+            "none"
+          ]
         },
         "module": {
           "$ref": "#/$defs/ImportObjectJSON"
@@ -2827,7 +2915,14 @@
           "type": "string"
         },
         "outcome": {
-          "type": "string"
+          "enum": [
+            "returned_spec",
+            "returned_none",
+            "raised",
+            "declined_target_unavailable",
+            "finder_unavailable",
+            "unsupported_finder"
+          ]
         },
         "path": {
           "type": "string"

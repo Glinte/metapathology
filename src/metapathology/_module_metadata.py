@@ -9,7 +9,11 @@ TYPE_CHECKING = False
 _MISSING = object()
 
 if TYPE_CHECKING:
+    from typing import Literal
     from typing import cast as _cast
+
+    ModuleInspection = Literal["available", "unavailable"]
+    ModuleLoaderSource = Literal["spec", "module", "none"]
 else:
 
     def _cast(_type: object, value: object) -> object:
@@ -33,19 +37,22 @@ class ModuleMetadata:
         "spec_summary",
     )
 
+    inspection: "ModuleInspection"
+    loader_source: "ModuleLoaderSource"
+
     def __init__(
         self,
         *,
         name: str,
         module: ObjectRef,
-        inspection: str,
+        inspection: "ModuleInspection",
         reason: str | None,
         spec_present: bool,
         spec_is_none: bool,
         spec_summary: SpecSummary | None,
         module_loader_available: bool,
         module_loader: ObjectRef | None,
-        loader_source: str,
+        loader_source: "ModuleLoaderSource",
         loader_agreement: bool | None,
     ) -> None:
         self.name = name

@@ -56,6 +56,7 @@ if TYPE_CHECKING:
         "unobserved_reentrant",
     ]
     SearchPathKind = Literal["sys_path", "parent_path"]
+    FinderContractObservation = Literal["install", "reassignment", "mutation"]
     SpeculativeReplayOutcome = Literal[
         "returned_spec",
         "returned_none",
@@ -124,7 +125,7 @@ class FinderContract(_Record):
     finder_id: int
     finder_type_name: str
     position: int
-    observation: str
+    observation: "FinderContractObservation"
     observation_seq: int | None
     find_spec: FinderProtocol
     find_module: FinderProtocol

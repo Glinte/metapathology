@@ -112,6 +112,78 @@ ExplanationKind = Literal[
     "standard_path_probe",
     "standard_winner_precedence",
 ]
+FindingDetail = Literal["bare", "correlation", "contract", "claim", "route", "deep_call"]
+
+# Closed vocabularies for fields that were previously open ``str``. Mirrors the
+# internal producers (``_report_json`` mechanism builders, ``_report_analysis``
+# finder-contract category, ``_finder_attribution`` observation, and
+# ``_module_metadata``); keep in lockstep (asserted by ``test_schema_vocabulary``).
+MechanismName = Literal[
+    "meta_path_mutations",
+    "meta_path_reassignments",
+    "import_audit_starts",
+    "finder_attribution",
+    "finder_contracts",
+    "deep_diagnostics",
+    "deep_import_outcomes",
+    "deep_import_calls",
+    "standard_finder_aggregate",
+    "resolution_route_analysis",
+    "path_hooks_mutations",
+    "path_hooks_reassignments",
+    "sys_path_mutations",
+    "sys_path_reassignments",
+    "importer_cache_snapshots",
+    "importer_cache_diffs",
+]
+# Static completeness labels plus the three per-mechanism status vocabularies
+# (StandardFinderStatus, DeepImportOutcomesStatus, DeepImportCallsStatus in
+# ``_monitor_model``), flattened and de-duplicated.
+MechanismCompleteness = Literal[
+    "best_effort",
+    "import_boundaries",
+    "resolution_starts",
+    "instrumented_finders",
+    "first_observation_per_identity",
+    "delegated_boundaries",
+    "reported_custom_winners",
+    "passive_boundaries",
+    "disabled",
+    "unavailable_existing_profiler",
+    "active_path_finder_aggregate",
+    "unsupported_path_finder_boundary",
+    "inactive_after_uninstall",
+    "refused_existing_profiler",
+    "unsupported_boundary",
+    "active_current_and_future_threading_threads_cache_hits_not_observed",
+    "active_all_threads_including_cache_hits",
+]
+FinderContractCategory = Literal["indeterminate", "legacy_only", "modern", "modern_and_legacy", "protocol_less"]
+FinderContractObservation = Literal["install", "reassignment", "mutation"]
+ModuleInspection = Literal["available", "unavailable"]
+ModuleLoaderSource = Literal["spec", "module", "none"]
+# Effective ``outcome`` vocabularies for deep-diagnostic and speculative-replay
+# payloads. Mirrors ``DeepOutcome`` and ``SpeculativeReplayOutcome`` in
+# ``_records``. ``FindingEvidenceJSON.outcome`` stays ``str``: it embeds the
+# raising exception type (``raised:<type>``) and is not a closed vocabulary.
+DeepOutcome = Literal[
+    "started",
+    "loaded",
+    "failed",
+    "found",
+    "not_found",
+    "returned",
+    "raised",
+    "unobserved_reentrant",
+]
+SpeculativeReplayOutcome = Literal[
+    "returned_spec",
+    "returned_none",
+    "raised",
+    "declined_target_unavailable",
+    "finder_unavailable",
+    "unsupported_finder",
+]
 
 
 class SchemaVersion(TypedDict):
@@ -178,10 +250,10 @@ class FrameJSON(TypedDict):
 
 class MechanismBaseJSON(TypedDict):
     capacity: int | None
-    completeness: str
+    completeness: MechanismCompleteness
     dropped: int
     enabled: bool
-    name: str
+    name: MechanismName
     overflow_policy: OverflowPolicy
     retained: int
     shutdown: Shutdown
@@ -263,13 +335,13 @@ class ProtocolJSON(TypedDict):
 
 
 class FinderContractJSON(TypedDict):
-    category: str
+    category: FinderContractCategory
     id: str
     finder_id: str
     finder_type_name: str
     find_module: ProtocolJSON
     find_spec: ProtocolJSON
-    observation: str
+    observation: FinderContractObservation
     observation_event_ref: str | None
     position: int
 
@@ -396,7 +468,7 @@ class DeepDiagnosticCallDataJSON(TypedDict):
     module_state_before: ModuleStateJSON | None
     object_id: str
     object_type_name: str
-    outcome: str
+    outcome: DeepOutcome
     path: str | None
     returned_finder: ImportObjectJSON | None
     target_state: ModuleStateJSON | None
@@ -408,7 +480,7 @@ class DeepImportEventDataJSON(TypedDict):
     attempt_ref: str
     evidence: Literal["exact_import_boundary"]
     fullname: str
-    outcome: str
+    outcome: DeepOutcome
     thread_id: int
     thread_name: str
 
@@ -421,7 +493,7 @@ class ImportCallDataJSON(TypedDict):
     level: int
     module_state_before: ModuleStateJSON | None
     name: str
-    outcome: str
+    outcome: DeepOutcome
     thread_id: int
     thread_name: str
 
@@ -538,9 +610,9 @@ class EventJSON(TypedDict):
 
 
 class ModuleMetadataJSON(TypedDict):
-    inspection: str
+    inspection: ModuleInspection
     loader_agreement: bool | None
-    loader_source: str
+    loader_source: ModuleLoaderSource
     module: ImportObjectJSON
     module_loader: ImportObjectJSON | None
     module_loader_available: bool
@@ -596,7 +668,7 @@ class FindingDeepCallJSON(TypedDict):
     event_ref: str
     module_state_after: ModuleStateJSON | None
     module_state_before: ModuleStateJSON | None
-    outcome: str
+    outcome: DeepOutcome
     target_state: ModuleStateJSON | None
 
 
@@ -724,7 +796,7 @@ class SpeculativeReplayJSON(TypedDict):
     displaced_finder: ImportObjectJSON
     exception_type_name: str | None
     fullname: str
-    outcome: str
+    outcome: SpeculativeReplayOutcome
     path: str
     spec: SpecSummaryJSON | None
     state_phase: StatePhase
