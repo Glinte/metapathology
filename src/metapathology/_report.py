@@ -9,7 +9,7 @@ import json
 import os
 import sys
 import tempfile
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 
 from metapathology._config import validate_report_color as validate_color
 from metapathology._config import validate_report_format as validate_format
@@ -17,15 +17,16 @@ from metapathology._record import _Record
 from metapathology._records import type_name
 from metapathology._report_capture import capture_document
 from metapathology._report_json import failed_json_document, json_document
-from metapathology._report_text import render_failure_lines, render_lines
+from metapathology._report_text import iter_report_lines, render_failure_lines, render_lines
 
 # Supported type checkers treat this conventional name as true without making
 # report generation import typing solely for annotations.
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from os import PathLike
-    from typing import Literal, TextIO
+    from typing import IO, Literal, TextIO
 
     from metapathology._monitor_model import MonitorSnapshot
     from metapathology._report_model import ReportDocument
@@ -69,6 +70,16 @@ def write_report(
     report_format = validate_format(format)
     color_mode = validate_color(color)
     use_color = report_format == "text" and _color_enabled(destination, color_mode)
+    # Text file output streams line-by-line into the atomic temp file so the
+    # whole report is never resident at once; stderr and streams keep the
+    # buffered fallback guarantee (a partial write there could not be undone).
+    if (
+        report_format == "text"
+        and not isinstance(artifact, ReportFailure)
+        and isinstance(destination, (str, os.PathLike))
+    ):
+        _write_text_file(destination, artifact, color=use_color)
+        return
     rendered = render_report(artifact, format=report_format, color=use_color)
     if destination is None:
         sys.stderr.write(rendered)
@@ -134,8 +145,13 @@ def _color_enabled(destination: "TextIO | str | PathLike[str] | None", mode: "_C
         return False
 
 
-def _write_atomic(path: "str | PathLike[str]", rendered: str) -> None:
-    """Write through a same-directory temporary file, then atomically replace."""
+@contextmanager
+def _atomic_writer(path: "str | PathLike[str]") -> "Iterator[IO[str]]":
+    """Yield a same-directory temp file, then atomically replace ``path`` on clean exit.
+
+    If the body raises, the temp file is discarded and ``path`` is left
+    untouched, so no partial content ever reaches the destination.
+    """
     raw_path = os.fspath(path)
     if not isinstance(raw_path, str):
         raise TypeError("report paths must resolve to str, not bytes")
@@ -152,10 +168,32 @@ def _write_atomic(path: "str | PathLike[str]", rendered: str) -> None:
             delete=False,
         ) as temporary:
             temporary_path = temporary.name
-            temporary.write(rendered)
+            yield temporary
         os.replace(temporary_path, absolute)
         temporary_path = None
     finally:
         if temporary_path is not None:
             with suppress(OSError):
                 os.unlink(temporary_path)
+
+
+def _write_atomic(path: "str | PathLike[str]", rendered: str) -> None:
+    """Write through a same-directory temporary file, then atomically replace."""
+    with _atomic_writer(path) as temporary:
+        temporary.write(rendered)
+
+
+def _write_text_file(path: "str | PathLike[str]", document: "ReportDocument", *, color: bool) -> None:
+    """Stream a text report into the atomic temp file, one line at a time.
+
+    A mid-render failure rewinds the temp file and writes the failure report
+    instead; because nothing has reached ``path`` yet, the fallback is intact.
+    """
+    with _atomic_writer(path) as temporary:
+        try:
+            for line in iter_report_lines(document, color=color):
+                temporary.write(line + "\n")
+        except Exception as exc:
+            temporary.seek(0)
+            temporary.truncate()
+            temporary.write(_render_failure(type_name(exc), "text", color))
