@@ -8,6 +8,7 @@ from metapathology._module_metadata import ModuleMetadata, inspect_module
 from metapathology._records import ObjectRef, SpeculativeReplay, type_name
 from metapathology._report_analysis import (
     _causal_explanations,
+    _IdAllocator,
     _import_attempts,
     _namespace_displacement_findings,
     _repeated_load_failure_findings,
@@ -64,6 +65,7 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         )
         for finder, reason in snapshot.skipped_finders
     )
+    finding_ids = _IdAllocator("finding")
     with monitor._report_analysis():
         findings, resolution_routes, route_comparisons = _suspicious_findings(
             snapshot.baseline_modules,
@@ -77,25 +79,21 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
             finder_contracts,
             attempts,
             report_errors,
+            finding_ids,
+            _IdAllocator("route"),
+            _IdAllocator("comparison"),
         )
     findings = (
         *findings,
-        *_namespace_displacement_findings(
-            attempts,
-            standard_resolutions,
-            events,
-            len(findings),
-        ),
+        *_namespace_displacement_findings(attempts, standard_resolutions, events, finding_ids),
     )
     findings = (
         *findings,
-        *_repeated_load_failure_findings(
-            attempts,
-            standard_resolutions,
-            len(findings),
-        ),
+        *_repeated_load_failure_findings(attempts, standard_resolutions, finding_ids),
     )
-    explanations = _causal_explanations(findings, attempts, standard_resolutions, route_comparisons, events)
+    explanations = _causal_explanations(
+        findings, attempts, standard_resolutions, route_comparisons, _IdAllocator("explanation"), events
+    )
     speculative_replays: tuple[SpeculativeReplay, ...] = ()
     speculative_replays_omitted = 0
     if snapshot.speculative_replay_enabled:

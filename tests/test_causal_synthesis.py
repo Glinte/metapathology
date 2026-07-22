@@ -4,7 +4,7 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-from metapathology._report_analysis import _append_ambiguous_explanations
+from metapathology._report_analysis import _append_ambiguous_explanations, _IdAllocator
 from metapathology._report_model import CausalExplanation
 from metapathology._report_text import _primary_explanations
 
@@ -37,7 +37,8 @@ def test_equal_conflicting_explanations_remain_explicit_alternatives() -> None:
         (
             _explanation("explanation:1", "finder", "regular_module_selected"),
             _explanation("explanation:2", "path", "descendant_failed"),
-        )
+        ),
+        _IdAllocator("explanation"),
     )
 
     ambiguity = explanations[-1]

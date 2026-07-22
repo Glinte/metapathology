@@ -64,6 +64,26 @@ _MODULE_FILE_SUFFIXES = (".py", ".pyc", ".pyd", ".so")
 _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 
 
+class _IdAllocator:
+    """Hand out ``prefix:N`` document ids in creation order.
+
+    One allocator per element kind (finding, explanation, route, comparison)
+    replaces the fragile ``offset + len(...) + 1`` arithmetic threaded through
+    the analysis producers. ``next_id`` is called only when an element is
+    actually created, so the numbering stays gap-free and stable.
+    """
+
+    __slots__ = ("_count", "_prefix")
+
+    def __init__(self, prefix: str) -> None:
+        self._prefix = prefix
+        self._count = 0
+
+    def next_id(self) -> str:
+        self._count += 1
+        return f"{self._prefix}:{self._count}"
+
+
 class _StructuralContext:
     """One report's primitive-only index for per-finding comparisons."""
 
@@ -305,6 +325,9 @@ def _suspicious_findings(
     finder_contracts: list[FinderContract],
     attempts: tuple[ImportAttempt, ...],
     report_errors: list[ReportError],
+    finding_ids: _IdAllocator,
+    route_ids: _IdAllocator,
+    comparison_ids: _IdAllocator,
 ) -> tuple[tuple[Finding, ...], tuple[ResolutionRoute, ...], tuple[RouteComparison, ...]]:
     """Build neutral resolution routes, then promote only corroborated effects."""
     winners = {event.fullname: event for event in events if isinstance(event, FindSpecCall) and event.found}
@@ -316,14 +339,14 @@ def _suspicious_findings(
         current_importer_cache,
     )
     meta_short_circuit_seqs = _meta_short_circuit_claim_seqs(events)
-    findings = _finder_contract_findings(finder_contracts)
-    findings.extend(_finder_side_effect_findings(events, len(findings)))
-    findings.extend(_module_replacement_findings(events, len(findings)))
+    findings = _finder_contract_findings(finder_contracts, finding_ids)
+    findings.extend(_finder_side_effect_findings(events, finding_ids))
+    findings.extend(_module_replacement_findings(events, finding_ids))
     routes: list[ResolutionRoute] = []
     comparisons: list[RouteComparison] = []
     if module_items is None:
-        findings.extend(_path_hook_shadow_findings(events, len(findings)))
-        findings.extend(_failed_after_mutation_findings(events, len(findings)))
+        findings.extend(_path_hook_shadow_findings(events, finding_ids))
+        findings.extend(_failed_after_mutation_findings(events, finding_ids))
         return tuple(findings), (), ()
     metadata_by_name = {entry.name: entry for entry in module_metadata}
     for name, module in module_items:
@@ -335,8 +358,8 @@ def _suspicious_findings(
                 name,
                 module,
                 winner,
-                len(routes) + 1,
-                len(comparisons) + 1,
+                route_ids,
+                comparison_ids,
                 structural_context,
                 winner.seq in meta_short_circuit_seqs,
                 report_errors,
@@ -351,7 +374,7 @@ def _suspicious_findings(
                 comparison,
                 structural_comparison,
                 attempts,
-                len(findings) + 1,
+                finding_ids,
                 winner.seq in meta_short_circuit_seqs,
             )
             if finding is not None:
@@ -361,7 +384,7 @@ def _suspicious_findings(
         if metadata is not None and metadata.inspection == "available" and metadata.spec_is_none:
             findings.append(
                 Finding(
-                    f"finding:{len(findings) + 1}",
+                    finding_ids.next_id(),
                     "no_spec",
                     name,
                     evidence_level="post_hoc",
@@ -369,8 +392,8 @@ def _suspicious_findings(
                     severity="informational",
                 )
             )
-    findings.extend(_path_hook_shadow_findings(events, len(findings)))
-    findings.extend(_failed_after_mutation_findings(events, len(findings)))
+    findings.extend(_path_hook_shadow_findings(events, finding_ids))
+    findings.extend(_failed_after_mutation_findings(events, finding_ids))
     return tuple(findings), tuple(routes), tuple(comparisons)
 
 
@@ -385,7 +408,7 @@ def _finder_contract_category(contract: FinderContract) -> "FinderContractCatego
     return "legacy_only" if legacy == "callable" else "protocol_less"
 
 
-def _finder_contract_findings(contracts: list[FinderContract]) -> list[Finding]:
+def _finder_contract_findings(contracts: list[FinderContract], finding_ids: _IdAllocator) -> list[Finding]:
     """Expose nonstandard legacy-only contracts as actionable findings."""
     findings: list[Finding] = []
     for contract in contracts:
@@ -393,7 +416,7 @@ def _finder_contract_findings(contracts: list[FinderContract]) -> list[Finding]:
             continue
         findings.append(
             Finding(
-                f"finding:{len(findings) + 1}",
+                finding_ids.next_id(),
                 "legacy_finder_contract",
                 contract.finder_type_name,
                 evidence_level="captured",
@@ -410,6 +433,7 @@ def _causal_explanations(
     attempts: tuple[ImportAttempt, ...],
     standard_resolutions: tuple[StandardResolution, ...],
     route_comparisons: tuple[RouteComparison, ...],
+    explanation_ids: _IdAllocator,
     events: list[MonitorEvent] | None = None,
 ) -> tuple[CausalExplanation, ...]:
     """Join namespace loss to descendant attempts and report-time path evidence."""
@@ -447,7 +471,7 @@ def _causal_explanations(
             )
             explanations.append(
                 CausalExplanation(
-                    explanation_id=f"explanation:{len(explanations) + 1}",
+                    explanation_id=explanation_ids.next_id(),
                     kind="namespace_truncation_failure",
                     confidence="correlated",
                     subject=attempt.fullname,
@@ -497,7 +521,7 @@ def _causal_explanations(
                     )
                     explanations.append(
                         CausalExplanation(
-                            explanation_id=f"explanation:{len(explanations) + 1}",
+                            explanation_id=explanation_ids.next_id(),
                             kind="namespace_candidate_displaced",
                             confidence="captured" if descendant is None else "correlated",
                             subject=resolution.fullname if descendant is None else descendant.fullname,
@@ -518,7 +542,7 @@ def _causal_explanations(
         event_seqs = (() if resolution.event_seq is None else (resolution.event_seq,)) + resolution.component_event_seqs
         explanations.append(
             CausalExplanation(
-                explanation_id=f"explanation:{len(explanations) + 1}",
+                explanation_id=explanation_ids.next_id(),
                 kind="standard_winner_precedence",
                 confidence="captured" if resolution.evidence_level == "captured" else "inferred",
                 subject=resolution.fullname,
@@ -540,7 +564,7 @@ def _causal_explanations(
             outcome = "finder_raised" if claim.exception_type_name is not None else "finder_returned_none"
             explanations.append(
                 CausalExplanation(
-                    explanation_id=f"explanation:{len(explanations) + 1}",
+                    explanation_id=explanation_ids.next_id(),
                     kind="finder_side_effect",
                     confidence="captured",
                     subject=finding.module,
@@ -576,7 +600,7 @@ def _causal_explanations(
             )
             explanations.append(
                 CausalExplanation(
-                    explanation_id=f"explanation:{len(explanations) + 1}",
+                    explanation_id=explanation_ids.next_id(),
                     kind=finding.kind,
                     confidence="captured",
                     subject=finding.module,
@@ -605,7 +629,7 @@ def _causal_explanations(
             later = matched[-1]
             explanations.append(
                 CausalExplanation(
-                    explanation_id=f"explanation:{len(explanations) + 1}",
+                    explanation_id=explanation_ids.next_id(),
                     kind="repeated_load_failure",
                     confidence="correlated",
                     subject=finding.module,
@@ -620,7 +644,7 @@ def _causal_explanations(
                     standard_attempt_id=later.attempt_id,
                 )
             )
-    return _append_ambiguous_explanations(tuple(explanations))
+    return _append_ambiguous_explanations(tuple(explanations), explanation_ids)
 
 
 def _failed_descendants_after(
@@ -645,7 +669,7 @@ def _namespace_displacement_findings(
     attempts: tuple[ImportAttempt, ...],
     standard_resolutions: tuple[StandardResolution, ...],
     events: list[MonitorEvent],
-    offset: int,
+    finding_ids: _IdAllocator,
 ) -> tuple[Finding, ...]:
     """Promote a displaced namespace only when a descendant then fails."""
     events_by_seq = {event.seq: event for event in events}
@@ -686,7 +710,7 @@ def _namespace_displacement_findings(
         )
         findings.append(
             Finding(
-                f"finding:{offset + len(findings) + 1}",
+                finding_ids.next_id(),
                 "regular_module_shadows_namespace",
                 resolution.fullname,
                 evidence_level="correlated",
@@ -703,7 +727,7 @@ def _namespace_displacement_findings(
 def _repeated_load_failure_findings(
     attempts: tuple[ImportAttempt, ...],
     standard_resolutions: tuple[StandardResolution, ...],
-    offset: int,
+    finding_ids: _IdAllocator,
 ) -> tuple[Finding, ...]:
     """Correlate a later failure with an earlier load from the same origin."""
     attempts_by_id = {attempt.attempt_id: attempt for attempt in attempts}
@@ -777,7 +801,7 @@ def _repeated_load_failure_findings(
         )
         findings.append(
             Finding(
-                f"finding:{offset + len(findings) + 1}",
+                finding_ids.next_id(),
                 "repeated_load_failure",
                 earlier.fullname,
                 evidence_level="correlated",
@@ -806,6 +830,7 @@ def _path_contains(directory: str | None, path: str) -> bool:
 
 def _append_ambiguous_explanations(
     explanations: tuple[CausalExplanation, ...],
+    explanation_ids: _IdAllocator,
 ) -> tuple[CausalExplanation, ...]:
     """Expose equally supported, contradictory conclusions without selecting one."""
     groups: dict[tuple[str, tuple[int, ...]], list[CausalExplanation]] = {}
@@ -821,7 +846,7 @@ def _append_ambiguous_explanations(
             continue
         ambiguous.append(
             CausalExplanation(
-                explanation_id=f"explanation:{len(explanations) + len(ambiguous) + 1}",
+                explanation_id=explanation_ids.next_id(),
                 kind="ambiguous_contention",
                 confidence="unknown",
                 subject=subject,
@@ -878,7 +903,7 @@ def _meta_short_circuit_claim_seqs(events: list[MonitorEvent]) -> set[int]:
     return claim_seqs
 
 
-def _path_hook_shadow_findings(events: list[MonitorEvent], offset: int) -> list[Finding]:
+def _path_hook_shadow_findings(events: list[MonitorEvent], finding_ids: _IdAllocator) -> list[Finding]:
     """Report paths accepted by distinct hooks across captured deep calls."""
     accepted: dict[str, DeepDiagnosticCall] = {}
     findings: list[Finding] = []
@@ -903,7 +928,7 @@ def _path_hook_shadow_findings(events: list[MonitorEvent], offset: int) -> list[
         emitted.add(key)
         findings.append(
             Finding(
-                f"finding:{offset + len(findings) + 1}",
+                finding_ids.next_id(),
                 "path_hook_shadow",
                 event.path,
                 deep_call=event,
@@ -916,7 +941,7 @@ def _path_hook_shadow_findings(events: list[MonitorEvent], offset: int) -> list[
     return findings
 
 
-def _failed_after_mutation_findings(events: list[MonitorEvent], offset: int) -> list[Finding]:
+def _failed_after_mutation_findings(events: list[MonitorEvent], finding_ids: _IdAllocator) -> list[Finding]:
     """Pair failures only with structural mutations captured inside that attempt."""
     mutation_seqs: list[int] = []
     started: dict[int, DeepImportEvent] = {}
@@ -951,7 +976,7 @@ def _failed_after_mutation_findings(events: list[MonitorEvent], offset: int) -> 
             continue
         findings.append(
             Finding(
-                f"finding:{offset + len(findings) + 1}",
+                finding_ids.next_id(),
                 "failed_after_mutation",
                 event.fullname,
                 evidence_level="structural_inference",
@@ -962,7 +987,7 @@ def _failed_after_mutation_findings(events: list[MonitorEvent], offset: int) -> 
     return findings
 
 
-def _finder_side_effect_findings(events: list[MonitorEvent], offset: int) -> list[Finding]:
+def _finder_side_effect_findings(events: list[MonitorEvent], finding_ids: _IdAllocator) -> list[Finding]:
     """Return captured target-cache changes made by passing or raising finders."""
     findings: list[Finding] = []
     for event in events:
@@ -974,7 +999,7 @@ def _finder_side_effect_findings(events: list[MonitorEvent], offset: int) -> lis
             continue
         findings.append(
             Finding(
-                f"finding:{offset + len(findings) + 1}",
+                finding_ids.next_id(),
                 "finder_side_effect",
                 event.fullname,
                 event,
@@ -996,8 +1021,8 @@ def _resolution_routes(
     name: str,
     module: object,
     winner: FindSpecCall,
-    route_number: int,
-    comparison_number: int,
+    route_ids: _IdAllocator,
+    comparison_ids: _IdAllocator,
     structural_context: _StructuralContext,
     meta_short_circuit: bool,
     report_errors: list[ReportError],
@@ -1008,7 +1033,7 @@ def _resolution_routes(
         observed = _post_hoc_spec_summary(module, observed)
     structural_comparison = _structural_comparison(winner.search_path, structural_context)
     captured_route = ResolutionRoute(
-        route_id=f"route:{route_number}",
+        route_id=route_ids.next_id(),
         module=name,
         kind="captured_claim",
         purpose="record_selected_custom_meta_path_route",
@@ -1037,7 +1062,7 @@ def _resolution_routes(
         target = module
         target_available = True
     standard_route = _probe_standard_path(
-        f"route:{route_number + 1}",
+        route_ids.next_id(),
         name,
         winner.search_path,
         winner.search_path_kind,
@@ -1047,7 +1072,7 @@ def _resolution_routes(
     if standard_route.status == "failed":
         report_errors.append(ReportError("standard_path_probe", standard_route.exception_type_name or "Exception"))
     comparison = _compare_routes(
-        f"comparison:{comparison_number}",
+        comparison_ids.next_id(),
         captured_route.route_id,
         standard_route.route_id,
         observed,
@@ -1067,7 +1092,7 @@ def _corroborated_route_finding(
     comparison: RouteComparison,
     structural_comparison: StructuralComparison,
     attempts: tuple[ImportAttempt, ...],
-    finding_number: int,
+    finding_ids: _IdAllocator,
     meta_short_circuit: bool,
 ) -> Finding | None:
     """Promote a route difference only when a descendant effect corroborates it."""
@@ -1102,7 +1127,7 @@ def _corroborated_route_finding(
     if structural_comparison.importer_cache_changed_paths:
         signals.append("importer_cache_changed")
     return Finding(
-        f"finding:{finding_number}",
+        finding_ids.next_id(),
         "namespace_truncation",
         name,
         winner,
@@ -1220,7 +1245,7 @@ def _compare_specs(left: SpecSummary, right: SpecSummary) -> RouteComparison:
     )
 
 
-def _module_replacement_findings(events: list[MonitorEvent], offset: int) -> list[Finding]:
+def _module_replacement_findings(events: list[MonitorEvent], finding_ids: _IdAllocator) -> list[Finding]:
     """Return exact object replacements captured across deep loader boundaries."""
     findings: list[Finding] = []
     previous_exec: dict[str, DeepDiagnosticCall] = {}
@@ -1263,7 +1288,7 @@ def _module_replacement_findings(events: list[MonitorEvent], offset: int) -> lis
         kind = "repeated_loader_execution" if prior_diverged else "module_replacement"
         findings.append(
             Finding(
-                f"finding:{offset + len(findings) + 1}",
+                finding_ids.next_id(),
                 kind,
                 event.fullname,
                 deep_call=event,
