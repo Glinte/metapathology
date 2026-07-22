@@ -1,8 +1,117 @@
-"""Typed contract and integrity checks for the machine-readable report."""
+"""Typed contract and integrity checks for the machine-readable report.
+
+The vocabularies below are defined at module scope (not under ``TYPE_CHECKING``)
+because :mod:`scripts.generate_report_schema` resolves these annotations at
+runtime via :func:`typing.get_type_hints` to emit the bundled JSON Schema. They
+mirror the internal aliases in :mod:`metapathology._records` and
+:mod:`metapathology._report_model`; those remain the source of truth for
+production typing, while these are the frozen public schema vocabulary.
+"""
 
 from typing import Literal, TypedDict
 
 ReportStatus = Literal["complete", "partial", "generation_failed"]
+
+# JSON ``kind`` discriminants for timeline events. Mirrors the ``EVENT_KIND``
+# registry values in ``_report_events``; keep the two in lockstep (asserted by
+# ``test_schema_vocabulary``).
+EventKind = Literal[
+    "import_audit_start",
+    "deep_diagnostic_call",
+    "deep_import_event",
+    "import_call",
+    "standard_finder_call",
+    "find_spec_call",
+    "importer_cache_diff",
+    "meta_path_mutation",
+    "meta_path_reassignment",
+    "path_hooks_mutation",
+    "path_hooks_reassignment",
+    "sys_path_mutation",
+    "sys_path_reassignment",
+    "internal_error",
+]
+
+# Closed vocabularies mirrored from the internal typing aliases.
+SnapshotKind = Literal["meta_path", "path_hooks", "importer_cache"]
+SnapshotPhase = Literal["install", "report"]
+OverflowPolicy = Literal["retain_all", "replace_latest"]
+Shutdown = Literal["synchronous_no_retry"]
+CacheState = Literal["unavailable", "missing", "none", "object"]
+ProtocolAvailability = Literal["callable", "non_callable", "indeterminate", "absent"]
+LocationsState = Literal["not_applicable", "captured", "post_hoc", "deferred", "failed"]
+LocationsComparisonState = Literal["not_applicable", "captured", "post_hoc", "deferred", "failed", "unavailable"]
+SearchPathKind = Literal["sys_path", "parent_path"]
+SearchPathPhase = Literal["import"]
+StatePhase = Literal["import", "report"]
+ResolutionCategory = Literal["namespace", "built_in", "frozen", "source", "bytecode", "extension", "zip"]
+StandardEvidenceLevel = Literal["captured", "inferred"]
+RouteKind = Literal["captured_claim", "standard_path_probe"]
+RoutePurpose = Literal[
+    "record_selected_custom_meta_path_route",
+    "show_standard_path_route_bypassed_by_captured_claim",
+]
+RouteEvidenceLevel = Literal["captured", "live_probe"]
+RouteStatus = Literal["found", "not_found", "failed", "target_unavailable"]
+ImportPresence = Literal["unknown", "present_at_report", "absent_at_report"]
+ImportProgress = Literal[
+    "started",
+    "loaded",
+    "failed",
+    "found",
+    "not_found",
+    "returned",
+    "raised",
+    "unobserved_reentrant",
+    "unknown",
+    "finder_claimed",
+    "finder_raised",
+]
+DeepBoundary = Literal["path_entry_finder", "loader_create_module", "loader_exec_module", "path_hook"]
+MutationOp = Literal[
+    "append",
+    "insert",
+    "extend",
+    "remove",
+    "pop",
+    "clear",
+    "reverse",
+    "sort",
+    "__setitem__",
+    "__delitem__",
+    "__iadd__",
+    "__imul__",
+]
+FindingSeverity = Literal["actionable", "warning", "informational"]
+FindingSubjectKind = Literal["module", "finder", "path"]
+FindingKind = Literal[
+    "failed_after_mutation",
+    "finder_side_effect",
+    "legacy_finder_contract",
+    "module_replacement",
+    "namespace_truncation",
+    "no_spec",
+    "path_hook_shadow",
+    "regular_module_shadows_namespace",
+    "repeated_load_failure",
+    "repeated_loader_execution",
+]
+FindingEvidenceLevel = Literal["post_hoc", "captured", "correlated", "structural_inference"]
+ExplanationConfidence = Literal["captured", "correlated", "inferred", "unknown"]
+ExplanationKind = Literal[
+    "ambiguous_contention",
+    "captured_claim",
+    "finder",
+    "finder_side_effect",
+    "module_replacement",
+    "namespace_candidate_displaced",
+    "namespace_truncation_failure",
+    "path",
+    "repeated_load_failure",
+    "repeated_loader_execution",
+    "standard_path_probe",
+    "standard_winner_precedence",
+]
 
 
 class SchemaVersion(TypedDict):
@@ -45,7 +154,7 @@ SpecValueJSON = str | ImportObjectValueJSON | None
 
 class ModuleStateJSON(TypedDict):
     object_id: str | None
-    state: str
+    state: CacheState
     type_name: str | None
 
 
@@ -54,7 +163,7 @@ class SpecSummaryJSON(TypedDict):
     is_namespace: bool | None
     is_package: bool | None
     loader: ImportObjectJSON | None
-    locations_state: str
+    locations_state: LocationsState
     origin: SpecValueJSON
     spec: ImportObjectJSON
     submodule_search_locations: list[SpecValueJSON] | None
@@ -73,9 +182,9 @@ class MechanismBaseJSON(TypedDict):
     dropped: int
     enabled: bool
     name: str
-    overflow_policy: str
+    overflow_policy: OverflowPolicy
     retained: int
-    shutdown: str
+    shutdown: Shutdown
 
 
 class MechanismJSON(MechanismBaseJSON, total=False):
@@ -121,8 +230,8 @@ class CaptureInfo(TypedDict, total=False):
 class SnapshotBaseJSON(TypedDict):
     entries: list[str] | list[ImportObjectJSON] | list[ImporterCacheEntryJSON] | None
     id: str
-    kind: str
-    phase: str
+    kind: SnapshotKind
+    phase: SnapshotPhase
 
 
 class SnapshotJSON(SnapshotBaseJSON, total=False):
@@ -130,7 +239,7 @@ class SnapshotJSON(SnapshotBaseJSON, total=False):
 
 
 class ProtocolJSON(TypedDict):
-    availability: str
+    availability: ProtocolAvailability
     defined_by: str | None
     evidence: str
 
@@ -154,42 +263,42 @@ class ImportAttemptJSON(TypedDict):
     evidence_event_refs: list[str]
     thread_id: int
     thread_name: str
-    progress: str
-    presence: str
+    progress: ImportProgress
+    presence: ImportPresence
 
 
 class StandardResolutionJSON(TypedDict):
     attempt_ref: str
-    category: str
+    category: ResolutionCategory
     component_event_refs: list[str]
-    evidence_level: str
+    evidence_level: StandardEvidenceLevel
     event_ref: str | None
     finder_type_name: str
     fullname: str
     later_finders: list[str]
     loader_type_name: str | None
     origin: str | None
-    state_phase: str
+    state_phase: StatePhase
 
 
 class ResolutionRouteJSON(TypedDict):
     id: str
     module: str
-    kind: str
-    purpose: str
+    kind: RouteKind
+    purpose: RoutePurpose
     limitations: list[str]
-    evidence_level: str
-    state_phase: str
+    evidence_level: RouteEvidenceLevel
+    state_phase: StatePhase
     predicts_alternative_winner: bool
     finder_type_name: str
     finder_id: str | None
-    status: str
+    status: RouteStatus
     spec: SpecSummaryJSON | None
     exception_type_name: str | None
     event_ref: str | None
     search_path: list[str]
-    search_path_kind: str
-    search_path_phase: str
+    search_path_kind: SearchPathKind
+    search_path_phase: SearchPathPhase
     signals: list[str]
 
 
@@ -208,7 +317,7 @@ class PathHooksComparisonJSON(TypedDict):
 
 
 class StructuralComparisonJSON(TypedDict):
-    evidence_level: str
+    evidence_level: Literal["structural_comparison"]
     importer_cache: ImporterCacheComparisonJSON
     path_hooks: PathHooksComparisonJSON
 
@@ -226,15 +335,9 @@ class RouteComparisonJSON(TypedDict):
     only_in_left_route: list[str]
     only_in_right_route: list[str]
     locations_reordered: bool | None
-    left_locations_state: str
-    right_locations_state: str
+    left_locations_state: LocationsComparisonState
+    right_locations_state: LocationsComparisonState
     structural_comparison: StructuralComparisonJSON
-
-
-class EventBaseJSON(TypedDict):
-    id: str
-    seq: int
-    kind: str
 
 
 class ObjectSizeJSON(TypedDict):
@@ -247,51 +350,173 @@ class MetaPathStateJSON(TypedDict):
     object_id: str
 
 
-class EventJSON(EventBaseJSON, total=False):
-    added: list[str] | list[ImportObjectJSON] | list[ImporterCacheEntryJSON]
-    attempt_id: int
-    boundary: str
-    contents_after: list[str] | list[ImportObjectJSON]
-    during_import: str | None
-    evidence: str
+# --- Timeline event envelope + per-kind payloads ----------------------------
+#
+# Every timeline event is ``{id, seq, kind, data}``: a shared envelope plus a
+# fully-typed, kind-specific ``data`` payload. ``kind`` is the discriminant for
+# the ``EventDataJSON`` union. Each payload TypedDict is total; the matching
+# ``_json_<kind>`` builder always emits every field.
+
+
+class ImportAuditStartDataJSON(TypedDict):
+    evidence: Literal["resolution_started"]
+    fullname: str | None
+    importer_cache: ObjectSizeJSON | None
+    attempt_ref: str
+    meta_path: MetaPathStateJSON
+    path_hooks_id: str | None
+    thread_name: str
+    thread_id: int
+
+
+class DeepDiagnosticCallDataJSON(TypedDict):
+    boundary: DeepBoundary
+    evidence: Literal["deep_delegation"]
+    exception_type_name: str | None
+    fullname: str | None
+    module_state_after: ModuleStateJSON | None
+    module_state_before: ModuleStateJSON | None
+    object_id: str
+    object_type_name: str
+    outcome: str
+    path: str | None
+    returned_finder: ImportObjectJSON | None
+    target_state: ModuleStateJSON | None
+    thread_name: str
+    thread_id: int
+
+
+class DeepImportEventDataJSON(TypedDict):
+    attempt_ref: str
+    evidence: Literal["exact_import_boundary"]
+    fullname: str
+    outcome: str
+    thread_id: int
+    thread_name: str
+
+
+class ImportCallDataJSON(TypedDict):
+    evidence: Literal["import_call_wrapper"]
+    exception_type_name: str | None
+    fromlist: list[str]
+    importing_module: str | None
+    level: int
+    module_state_before: ModuleStateJSON | None
+    name: str
+    outcome: str
+    thread_id: int
+    thread_name: str
+
+
+class StandardFinderCallDataJSON(TypedDict):
+    attempt_ref: str
+    evidence: Literal["captured_standard_finder_boundary"]
+    finder_type_name: str
+    fullname: str
+    spec: SpecSummaryJSON | None
+    thread_id: int
+    thread_name: str
+
+
+class FindSpecCallDataJSON(TypedDict):
     exception_type_name: str | None
     finder_id: str
     finder_type_name: str
     found: bool
-    fromlist: list[str]
-    fullname: str | None
-    importer_cache: ObjectSizeJSON | None
-    importing_module: str | None
-    level: int
+    fullname: str
     loader_type_name: str | None
-    message: str | None
-    meta_path: MetaPathStateJSON
     module_state_after: ModuleStateJSON | None
     module_state_before: ModuleStateJSON | None
-    name: str
-    new_contents: list[str] | list[ImportObjectJSON]
+    origin: str | None
+    search_path: list[str]
+    search_path_kind: SearchPathKind
+    spec: SpecSummaryJSON | None
+    target_state: ModuleStateJSON | None
+    thread_name: str
+    thread_id: int
+
+
+class ImporterCacheDiffDataJSON(TypedDict):
+    added: list[ImporterCacheEntryJSON]
     non_string_keys_after: int
     non_string_keys_before: int
-    object_id: str
-    object_type_name: str
     observation: str
-    old_contents: list[str] | list[ImportObjectJSON]
-    op: str
-    origin: str | None
-    outcome: str
-    path: str | None
-    path_hooks_id: str | None
-    removed: list[str] | list[ImportObjectJSON] | list[ImporterCacheEntryJSON]
+    removed: list[ImporterCacheEntryJSON]
     replaced: list[ImporterCacheReplacementJSON]
-    returned_finder: ImportObjectJSON | None
-    search_path: list[str]
-    search_path_kind: str
-    spec: SpecSummaryJSON | None
-    stack: list[FrameJSON]
-    target_state: ModuleStateJSON | None
-    thread_id: int
     thread_name: str
+
+
+class MetaPathMutationDataJSON(TypedDict):
+    added: list[str]
+    contents_after: list[str]
+    op: MutationOp
+    removed: list[str]
+    stack: list[FrameJSON]
+    thread_name: str
+
+
+class ReassignmentDataJSON(TypedDict):
+    during_import: str | None
+    new_contents: list[str]
+    old_contents: list[str]
+    stack: list[FrameJSON]
+    thread_name: str
+
+
+class PathHooksMutationDataJSON(TypedDict):
+    added: list[ImportObjectJSON]
+    contents_after: list[ImportObjectJSON]
+    op: MutationOp
+    removed: list[ImportObjectJSON]
+    stack: list[FrameJSON]
+    thread_name: str
+
+
+class PathHooksReassignmentDataJSON(TypedDict):
+    during_import: str | None
+    new_contents: list[ImportObjectJSON]
+    old_contents: list[ImportObjectJSON]
+    stack: list[FrameJSON]
+    thread_name: str
+
+
+class SysPathMutationDataJSON(TypedDict):
+    added: list[str]
+    contents_after: list[str]
+    op: MutationOp
+    removed: list[str]
+    stack: list[FrameJSON]
+    thread_name: str
+
+
+class InternalErrorDataJSON(TypedDict):
+    exception_type_name: str
+    message: str | None
     where: str
+
+
+EventDataJSON = (
+    ImportAuditStartDataJSON
+    | DeepDiagnosticCallDataJSON
+    | DeepImportEventDataJSON
+    | ImportCallDataJSON
+    | StandardFinderCallDataJSON
+    | FindSpecCallDataJSON
+    | ImporterCacheDiffDataJSON
+    | MetaPathMutationDataJSON
+    | ReassignmentDataJSON
+    | PathHooksMutationDataJSON
+    | PathHooksReassignmentDataJSON
+    | SysPathMutationDataJSON
+    | InternalErrorDataJSON
+)
+
+
+class EventJSON(TypedDict):
+    id: str
+    seq: int
+    kind: EventKind
+    data: EventDataJSON
 
 
 class ModuleMetadataJSON(TypedDict):
@@ -314,16 +539,16 @@ class LoaderGroupJSON(TypedDict):
 
 class LoaderInventoryInfo(TypedDict):
     available: bool
-    evidence: str
+    evidence: Literal["post_hoc"]
     groups: list[LoaderGroupJSON]
     non_string_keys_omitted: int
-    phase: str
+    phase: Literal["report"]
     unavailable: list[ModuleMetadataJSON]
 
 
 class FindingEvidenceJSON(TypedDict, total=False):
     event_refs: list[str]
-    level: str
+    level: FindingEvidenceLevel
     limitations: list[str]
     finder_claim: str
     module_spec: str
@@ -333,7 +558,7 @@ class FindingEvidenceJSON(TypedDict, total=False):
 
 
 class FindingSubjectJSON(TypedDict):
-    kind: str
+    kind: FindingSubjectKind
     value: str
 
 
@@ -344,12 +569,12 @@ class FindingClaimJSON(TypedDict):
     loader_type_name: str | None
     origin: str | None
     search_path: list[str]
-    search_path_kind: str
+    search_path_kind: SearchPathKind
     spec: SpecSummaryJSON | None
 
 
 class FindingDeepCallJSON(TypedDict):
-    boundary: str
+    boundary: DeepBoundary
     event_ref: str
     module_state_after: ModuleStateJSON | None
     module_state_before: ModuleStateJSON | None
@@ -360,10 +585,10 @@ class FindingDeepCallJSON(TypedDict):
 class FindingBaseJSON(TypedDict):
     evidence: FindingEvidenceJSON
     id: str
-    kind: str
+    kind: FindingKind
     module: str
     module_state_baseline: ModuleStateJSON | None
-    severity: str
+    severity: FindingSeverity
     signals: list[str]
     subject: FindingSubjectJSON
 
@@ -383,12 +608,12 @@ class ExplanationJSON(TypedDict):
     candidate_path: str | None
     boundary: str | None
     cause_finding_ref: str | None
-    confidence: str
+    confidence: ExplanationConfidence
     effect_status: str | None
     event_refs: list[str]
     finder_type_name: str | None
     id: str
-    kind: str
+    kind: ExplanationKind
     later_finders: list[str]
     next_observation: str | None
     origin: str | None
@@ -399,10 +624,14 @@ class ExplanationJSON(TypedDict):
     state_before: ModuleStateJSON | None
 
 
-class SummaryInfo(TypedDict):
+class SeverityCountsJSON(TypedDict):
     actionable: int
     warning: int
     informational: int
+
+
+class SummaryInfo(TypedDict):
+    counts: SeverityCountsJSON
     unresolved_import_count: int
     top_finding_ref: str | None
     top_explanation_ref: str | None
@@ -441,7 +670,7 @@ class SpeculativeReplayJSON(TypedDict):
     outcome: str
     path: str
     spec: SpecSummaryJSON | None
-    state_phase: str
+    state_phase: StatePhase
 
 
 class SpeculativeReplayInfoJSON(TypedDict):
@@ -452,7 +681,7 @@ class SpeculativeReplayInfoJSON(TypedDict):
 
 
 class ReportJSON(TypedDict):
-    """Complete schema 1.0 report document."""
+    """Complete schema 2.0 report document."""
 
     schema: SchemaVersion
     report_status: ReportStatus

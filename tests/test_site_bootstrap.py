@@ -158,7 +158,7 @@ def test_early_bootstrap_observes_later_pth_and_inherited_child(tmp_path: Path) 
         assert bootstrap["activation_source"] == "environment:METAPATHOLOGY_EARLY_BOOTSTRAP"
         assert bootstrap["site_packages"] == str(site_packages)
         assert "001_earlier_hook.pth" in bootstrap["earlier_pth_files"]
-        path_hook_events = [event for event in document["timeline"] if event["kind"] == "path_hooks_mutation"]
+        path_hook_events = [event["data"] for event in document["timeline"] if event["kind"] == "path_hooks_mutation"]
         assert any(reference["name"] == "later_hook" for event in path_hook_events for reference in event["added"])
         assert not any(
             reference["name"] == "earlier_hook" for event in path_hook_events for reference in event["added"]
@@ -170,7 +170,7 @@ def test_early_bootstrap_observes_later_pth_and_inherited_child(tmp_path: Path) 
             for reference in snapshot["entries"]
         }
         assert "earlier_hook" in initial_names
-        cache_events = [event for event in document["timeline"] if event["kind"] == "importer_cache_diff"]
+        cache_events = [event["data"] for event in document["timeline"] if event["kind"] == "importer_cache_diff"]
         assert any(
             entry["path"] == "metapathology-after-bootstrap" for event in cache_events for entry in event["added"]
         )

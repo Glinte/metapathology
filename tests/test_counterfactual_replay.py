@@ -296,9 +296,11 @@ assert probe["spec"]["loader"]["type_name"] == "ReloadLoader"
 claim = next(
     event
     for event in reversed(document["timeline"])
-    if event["kind"] == "find_spec_call" and event["fullname"] == "reload_probe_target" and event["found"]
+    if event["kind"] == "find_spec_call"
+    and event["data"]["fullname"] == "reload_probe_target"
+    and event["data"]["found"]
 )
-assert claim["target_state"]["object_id"] == hex(id(reload_probe_target))
+assert claim["data"]["target_state"]["object_id"] == hex(id(reload_probe_target))
 print("OK")
 """
 

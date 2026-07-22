@@ -38,10 +38,14 @@ assert builtins.__import__ is before, "wrapper not restored on uninstall"
 
 # The JSON projection carries the same evidence.
 document = json.loads(metapathology.render_report(format="json"))
-hits = [event for event in document["timeline"] if event["kind"] == "import_call" and event["name"] == "cache_target"]
+hits = [
+    event
+    for event in document["timeline"]
+    if event["kind"] == "import_call" and event["data"]["name"] == "cache_target"
+]
 assert len(hits) == 2, hits
-assert hits[1]["module_state_before"]["state"] == "object"
-assert hits[1]["importing_module"] == "__main__"
+assert hits[1]["data"]["module_state_before"]["state"] == "object"
+assert hits[1]["data"]["importing_module"] == "__main__"
 mechanisms = {item["name"]: item for item in document["capture"]["mechanisms"]}
 assert mechanisms["deep_import_calls"]["retained"] >= 2
 print("OK")

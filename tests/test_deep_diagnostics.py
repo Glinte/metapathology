@@ -84,7 +84,7 @@ else:
     raise AssertionError("loader exception changed")
 assert isinstance(sys.path_importer_cache[sentinel], Finder)
 document = json.loads(metapathology.render_report(format="json"))
-deep = [event for event in document["timeline"] if event["kind"] == "deep_diagnostic_call"]
+deep = [event["data"] for event in document["timeline"] if event["kind"] == "deep_diagnostic_call"]
 assert {event["boundary"] for event in deep} == {
     "path_hook", "path_entry_finder", "loader_create_module", "loader_exec_module"
 }, deep
@@ -394,7 +394,8 @@ def test_shared_loader_uses_each_call_actual_module_name(run_python: RunPython) 
         "metapathology.install(report_at_exit=False, deep_loaders=True)\n"
         "import shared_first, shared_second\n"
         "document = json.loads(metapathology.render_report(format='json'))\n"
-        "calls = [event for event in document['timeline'] if event.get('boundary', '').startswith('loader_')]\n"
+        "calls = [event['data'] for event in document['timeline'] "
+        "if event['kind'] == 'deep_diagnostic_call' and event['data']['boundary'].startswith('loader_')]\n"
         "assert {(event['boundary'], event['fullname']) for event in calls} == {\n"
         "    ('loader_create_module', 'shared_first'), ('loader_exec_module', 'shared_first'),\n"
         "    ('loader_create_module', 'shared_second'), ('loader_exec_module', 'shared_second'),\n"

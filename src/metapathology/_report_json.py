@@ -52,24 +52,36 @@ from metapathology._report_model import (
     TargetOutcome,
 )
 from metapathology._report_schema import (
+    DeepDiagnosticCallDataJSON,
+    DeepImportEventDataJSON,
     EarlySiteBootstrapJSON,
+    EventDataJSON,
     EventJSON,
     ExplanationJSON,
     FinderContractJSON,
     FindingEvidenceJSON,
     FindingJSON,
+    FindSpecCallDataJSON,
     FrameJSON,
     FrozenBootstrapJSON,
     ImportAttemptJSON,
+    ImportAuditStartDataJSON,
+    ImportCallDataJSON,
+    ImporterCacheDiffDataJSON,
     ImporterCacheEntryJSON,
     ImporterCacheReplacementJSON,
     ImportObjectJSON,
     ImportObjectValueJSON,
+    InternalErrorDataJSON,
     LoaderGroupJSON,
     LoaderInventoryInfo,
     MechanismJSON,
+    MetaPathMutationDataJSON,
     ModuleMetadataJSON,
     ModuleStateJSON,
+    PathHooksMutationDataJSON,
+    PathHooksReassignmentDataJSON,
+    ReassignmentDataJSON,
     ReportJSON,
     ReportStatus,
     ResolutionRouteJSON,
@@ -78,9 +90,11 @@ from metapathology._report_schema import (
     SpeculativeReplayInfoJSON,
     SpeculativeReplayJSON,
     SpecValueJSON,
+    StandardFinderCallDataJSON,
     StandardResolutionJSON,
     StructuralComparisonJSON,
     SummaryInfo,
+    SysPathMutationDataJSON,
     TargetOutcomeJSON,
 )
 from metapathology._speculative_replay import MAX_SPECULATIVE_REPLAYS
@@ -95,8 +109,8 @@ if TYPE_CHECKING:
 
 
 _SCHEMA_NAME = "metapathology.report"
-_SCHEMA_MAJOR = 1
-_SCHEMA_MINOR = 3
+_SCHEMA_MAJOR = 2
+_SCHEMA_MINOR = 0
 
 
 def _json_events(
@@ -426,11 +440,8 @@ def _json_module_state(state: ModuleCacheState | None) -> ModuleStateJSON | None
     }
 
 
-def _json_import_audit_start(event: ImportAuditStart) -> EventJSON:
+def _json_import_audit_start(event: ImportAuditStart) -> ImportAuditStartDataJSON:
     return {
-        "id": f"event:{event.seq}",
-        "seq": event.seq,
-        "kind": EVENT_KIND[type(event)],
         "evidence": "resolution_started",
         "fullname": event.fullname,
         "importer_cache": None
@@ -439,7 +450,7 @@ def _json_import_audit_start(event: ImportAuditStart) -> EventJSON:
             "object_id": f"0x{event.importer_cache_id:x}",
             "size": event.importer_cache_size,
         },
-        "attempt_id": event.attempt_id,
+        "attempt_ref": f"attempt:{event.attempt_id}",
         "meta_path": {
             "entries": list(event.meta_path_type_names),
             "object_id": f"0x{event.meta_path_id:x}",
@@ -450,11 +461,8 @@ def _json_import_audit_start(event: ImportAuditStart) -> EventJSON:
     }
 
 
-def _json_deep_diagnostic_call(event: DeepDiagnosticCall) -> EventJSON:
+def _json_deep_diagnostic_call(event: DeepDiagnosticCall) -> DeepDiagnosticCallDataJSON:
     return {
-        "id": f"event:{event.seq}",
-        "seq": event.seq,
-        "kind": EVENT_KIND[type(event)],
         "boundary": event.boundary,
         "evidence": "deep_delegation",
         "exception_type_name": event.exception_type_name,
@@ -472,12 +480,9 @@ def _json_deep_diagnostic_call(event: DeepDiagnosticCall) -> EventJSON:
     }
 
 
-def _json_deep_import_event(event: DeepImportEvent) -> EventJSON:
+def _json_deep_import_event(event: DeepImportEvent) -> DeepImportEventDataJSON:
     return {
-        "id": f"event:{event.seq}",
-        "seq": event.seq,
-        "kind": EVENT_KIND[type(event)],
-        "attempt_id": event.attempt_id,
+        "attempt_ref": f"attempt:{event.attempt_id}",
         "evidence": "exact_import_boundary",
         "fullname": event.fullname,
         "outcome": event.outcome,
@@ -486,11 +491,8 @@ def _json_deep_import_event(event: DeepImportEvent) -> EventJSON:
     }
 
 
-def _json_import_call(event: ImportCall) -> EventJSON:
+def _json_import_call(event: ImportCall) -> ImportCallDataJSON:
     return {
-        "id": f"event:{event.seq}",
-        "seq": event.seq,
-        "kind": EVENT_KIND[type(event)],
         "evidence": "import_call_wrapper",
         "exception_type_name": event.exception_type_name,
         "fromlist": list(event.fromlist),
@@ -504,12 +506,9 @@ def _json_import_call(event: ImportCall) -> EventJSON:
     }
 
 
-def _json_standard_finder_call(event: StandardFinderCall) -> EventJSON:
+def _json_standard_finder_call(event: StandardFinderCall) -> StandardFinderCallDataJSON:
     return {
-        "id": f"event:{event.seq}",
-        "seq": event.seq,
-        "kind": EVENT_KIND[type(event)],
-        "attempt_id": event.attempt_id,
+        "attempt_ref": f"attempt:{event.attempt_id}",
         "evidence": "captured_standard_finder_boundary",
         "finder_type_name": event.finder_type_name,
         "fullname": event.fullname,
@@ -519,11 +518,8 @@ def _json_standard_finder_call(event: StandardFinderCall) -> EventJSON:
     }
 
 
-def _json_find_spec_call(event: FindSpecCall) -> EventJSON:
+def _json_find_spec_call(event: FindSpecCall) -> FindSpecCallDataJSON:
     return {
-        "id": f"event:{event.seq}",
-        "seq": event.seq,
-        "kind": EVENT_KIND[type(event)],
         "exception_type_name": event.exception_type_name,
         "finder_id": f"0x{event.finder_id:x}",
         "finder_type_name": event.finder_type_name,
@@ -542,11 +538,8 @@ def _json_find_spec_call(event: FindSpecCall) -> EventJSON:
     }
 
 
-def _json_importer_cache_diff(event: ImporterCacheDiff) -> EventJSON:
+def _json_importer_cache_diff(event: ImporterCacheDiff) -> ImporterCacheDiffDataJSON:
     return {
-        "id": f"event:{event.seq}",
-        "seq": event.seq,
-        "kind": EVENT_KIND[type(event)],
         "added": [_json_importer_cache_entry(entry) for entry in event.added],
         "non_string_keys_after": event.non_string_keys_after,
         "non_string_keys_before": event.non_string_keys_before,
@@ -557,11 +550,8 @@ def _json_importer_cache_diff(event: ImporterCacheDiff) -> EventJSON:
     }
 
 
-def _json_meta_path_mutation(event: MetaPathMutation) -> EventJSON:
+def _json_meta_path_mutation(event: MetaPathMutation) -> MetaPathMutationDataJSON:
     return {
-        "id": f"event:{event.seq}",
-        "seq": event.seq,
-        "kind": EVENT_KIND[type(event)],
         "added": list(event.added),
         "contents_after": list(event.contents_after),
         "op": event.op,
@@ -571,11 +561,8 @@ def _json_meta_path_mutation(event: MetaPathMutation) -> EventJSON:
     }
 
 
-def _json_meta_path_reassignment(event: MetaPathReassignment) -> EventJSON:
+def _json_meta_path_reassignment(event: MetaPathReassignment) -> ReassignmentDataJSON:
     return {
-        "id": f"event:{event.seq}",
-        "seq": event.seq,
-        "kind": EVENT_KIND[type(event)],
         "during_import": event.during_import,
         "new_contents": list(event.new_contents),
         "old_contents": list(event.old_contents),
@@ -584,11 +571,8 @@ def _json_meta_path_reassignment(event: MetaPathReassignment) -> EventJSON:
     }
 
 
-def _json_path_hooks_mutation(event: PathHooksMutation) -> EventJSON:
+def _json_path_hooks_mutation(event: PathHooksMutation) -> PathHooksMutationDataJSON:
     return {
-        "id": f"event:{event.seq}",
-        "seq": event.seq,
-        "kind": EVENT_KIND[type(event)],
         "added": [_json_import_object(reference) for reference in event.added],
         "contents_after": [_json_import_object(reference) for reference in event.contents_after],
         "op": event.op,
@@ -598,11 +582,8 @@ def _json_path_hooks_mutation(event: PathHooksMutation) -> EventJSON:
     }
 
 
-def _json_path_hooks_reassignment(event: PathHooksReassignment) -> EventJSON:
+def _json_path_hooks_reassignment(event: PathHooksReassignment) -> PathHooksReassignmentDataJSON:
     return {
-        "id": f"event:{event.seq}",
-        "seq": event.seq,
-        "kind": EVENT_KIND[type(event)],
         "during_import": event.during_import,
         "new_contents": [_json_import_object(reference) for reference in event.new_contents],
         "old_contents": [_json_import_object(reference) for reference in event.old_contents],
@@ -611,11 +592,8 @@ def _json_path_hooks_reassignment(event: PathHooksReassignment) -> EventJSON:
     }
 
 
-def _json_sys_path_mutation(event: SysPathMutation) -> EventJSON:
+def _json_sys_path_mutation(event: SysPathMutation) -> SysPathMutationDataJSON:
     return {
-        "id": f"event:{event.seq}",
-        "seq": event.seq,
-        "kind": EVENT_KIND[type(event)],
         "added": list(event.added),
         "contents_after": list(event.contents_after),
         "op": event.op,
@@ -625,11 +603,8 @@ def _json_sys_path_mutation(event: SysPathMutation) -> EventJSON:
     }
 
 
-def _json_sys_path_reassignment(event: SysPathReassignment) -> EventJSON:
+def _json_sys_path_reassignment(event: SysPathReassignment) -> ReassignmentDataJSON:
     return {
-        "id": f"event:{event.seq}",
-        "seq": event.seq,
-        "kind": EVENT_KIND[type(event)],
         "during_import": event.during_import,
         "new_contents": list(event.new_contents),
         "old_contents": list(event.old_contents),
@@ -638,21 +613,18 @@ def _json_sys_path_reassignment(event: SysPathReassignment) -> EventJSON:
     }
 
 
-def _json_internal_error(event: InternalError) -> EventJSON:
+def _json_internal_error(event: InternalError) -> InternalErrorDataJSON:
     return {
-        "id": f"event:{event.seq}",
-        "seq": event.seq,
-        "kind": EVENT_KIND[type(event)],
         "exception_type_name": event.exception_type_name,
         "message": event.message,
         "where": event.where,
     }
 
 
-# One serializer per event type. The wrapper adds ``id``/``seq``/``kind``; each
-# builder returns only the type-specific fields. New event types must be added
-# here and in ``_report_events`` together.
-_EVENT_JSON_BUILDERS: "dict[type[MonitorEvent], Callable[..., EventJSON]]" = {
+# One serializer per event type, returning the kind-specific ``data`` payload.
+# ``_json_event`` wraps it in the shared ``{id, seq, kind, data}`` envelope. New
+# event types must be added here and in ``_report_events`` together.
+_EVENT_JSON_BUILDERS: "dict[type[MonitorEvent], Callable[..., EventDataJSON]]" = {
     ImportAuditStart: _json_import_audit_start,
     DeepDiagnosticCall: _json_deep_diagnostic_call,
     DeepImportEvent: _json_deep_import_event,
@@ -671,8 +643,13 @@ _EVENT_JSON_BUILDERS: "dict[type[MonitorEvent], Callable[..., EventJSON]]" = {
 
 
 def _json_event(event: MonitorEvent) -> EventJSON:
-    """Serialize a public event record without inspecting foreign objects."""
-    return _EVENT_JSON_BUILDERS[type(event)](event)
+    """Wrap one event's kind-specific payload in the shared envelope."""
+    return {
+        "id": f"event:{event.seq}",
+        "seq": event.seq,
+        "kind": EVENT_KIND[type(event)],
+        "data": _EVENT_JSON_BUILDERS[type(event)](event),
+    }
 
 
 def _json_import_attempt(attempt: ImportAttempt) -> ImportAttemptJSON:
@@ -1048,9 +1025,11 @@ def _json_explanation(explanation: CausalExplanation) -> ExplanationJSON:
 def _json_summary(summary: ReportSummary) -> SummaryInfo:
     """Serialize the shared counts-and-references summary."""
     return {
-        "actionable": summary.actionable,
-        "warning": summary.warning,
-        "informational": summary.informational,
+        "counts": {
+            "actionable": summary.actionable,
+            "warning": summary.warning,
+            "informational": summary.informational,
+        },
         "unresolved_import_count": summary.unresolved_import_count,
         "top_finding_ref": summary.top_finding_id,
         "top_explanation_ref": summary.top_explanation_id,
@@ -1096,9 +1075,7 @@ def failed_json_document(error_name: str) -> ReportJSON:
         "findings": [],
         "explanations": [],
         "summary": {
-            "actionable": 0,
-            "warning": 0,
-            "informational": 0,
+            "counts": {"actionable": 0, "warning": 0, "informational": 0},
             "unresolved_import_count": 0,
             "top_finding_ref": None,
             "top_explanation_ref": None,

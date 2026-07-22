@@ -121,7 +121,7 @@ def test_report_observes_negative_entries_and_ignores_non_string_keys(run_python
         "sys.path_importer_cache[object()] = object()\n"
         "document = json.loads(metapathology.render_report(format='json'))\n"
         "events = [event for event in document['timeline'] if event['kind'] == 'importer_cache_diff']\n"
-        "entry = next(entry for event in events for entry in event['added'] if entry['path'] == path)\n"
+        "entry = next(entry for event in events for entry in event['data']['added'] if entry['path'] == path)\n"
         "assert entry['finder'] is None\n"
         "report_snapshot = next(\n"
         "    snapshot for snapshot in document['snapshots']\n"

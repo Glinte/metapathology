@@ -110,7 +110,7 @@ assert contract["observation_event_ref"].startswith("event:")
 event_id = contract["observation_event_ref"]
 mutation = next(event for event in document["timeline"] if event["id"] == event_id)
 assert mutation["kind"] == "meta_path_mutation"
-assert mutation["added"] == ["LegacyFinder"]
+assert mutation["data"]["added"] == ["LegacyFinder"]
 replacement_contract = next(item for item in legacy_contracts if item["finder_id"] == hex(id(replacement_finder)))
 assert replacement_contract["observation"] == "reassignment"
 assert replacement_contract["observation_event_ref"] is None

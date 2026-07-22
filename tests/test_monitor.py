@@ -378,7 +378,11 @@ assert calls["identity_raised"].exception_type_name == "RuntimeError"
 assert calls["identity_raised"].module_state_after.state == "object"
 
 document = json.loads(metapathology.render_report(format="json"))
-event = next(item for item in document["timeline"] if item.get("fullname") == "identity_replaced")
+event = next(
+    item["data"]
+    for item in document["timeline"]
+    if item["kind"] == "find_spec_call" and item["data"]["fullname"] == "identity_replaced"
+)
 assert event["module_state_before"]["object_id"] == hex(id(original))
 assert event["module_state_after"]["object_id"] == hex(id(replacement))
 findings = [item for item in document["findings"] if item["kind"] == "finder_side_effect"]

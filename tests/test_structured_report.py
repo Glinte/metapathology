@@ -61,7 +61,7 @@ import observed_mod
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 1, "minor": 3, "name": "metapathology.report"}
+assert document["schema"] == {"major": 2, "minor": 0, "name": "metapathology.report"}
 assert document["report_status"] == "complete"
 assert isinstance(document["resolution_routes"], list)
 assert isinstance(document["route_comparisons"], list)
@@ -80,10 +80,10 @@ assert "importer_cache_diff" in kinds, kinds
 assert "import_audit_start" in kinds, kinds
 assert all(event["id"] == f"event:{event['seq']}" for event in document["timeline"])
 stack_event = next(event for event in document["timeline"] if event["kind"] == "meta_path_mutation")
-assert set(stack_event["stack"][0]) == {"filename", "function", "lineno"}
+assert set(stack_event["data"]["stack"][0]) == {"filename", "function", "lineno"}
 path_hook_event = next(event for event in document["timeline"] if event["kind"] == "path_hooks_mutation")
-assert path_hook_event["added"][0]["name"] == "probe_hook"
-assert path_hook_event["added"][0]["object_id"].startswith("0x")
+assert path_hook_event["data"]["added"][0]["name"] == "probe_hook"
+assert path_hook_event["data"]["added"][0]["object_id"].startswith("0x")
 snapshot_ids = {snapshot["id"] for snapshot in document["snapshots"]}
 assert "snapshot:path-hooks:install" in snapshot_ids
 assert "snapshot:path-hooks:report" in snapshot_ids

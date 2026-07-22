@@ -62,19 +62,19 @@ assert "import started: 'timeline_target'" in timeline
 assert "Events are numbered in the order they were recorded" in timeline
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 1, "minor": 3, "name": "metapathology.report"}
+assert document["schema"] == {"major": 2, "minor": 0, "name": "metapathology.report"}
 audit = next(
     event
     for event in document["timeline"]
-    if event["kind"] == "import_audit_start" and event["fullname"] == "timeline_target"
+    if event["kind"] == "import_audit_start" and event["data"]["fullname"] == "timeline_target"
 )
-assert audit["evidence"] == "resolution_started"
-assert audit["attempt_id"] == start.attempt_id
-assert audit["thread_id"] == start.thread_id
-assert audit["meta_path"]["entries"][0] == "DelegatingFinder"
-assert audit["meta_path"]["object_id"].startswith("0x")
-assert audit["path_hooks_id"].startswith("0x")
-assert audit["importer_cache"]["size"] >= 1
+assert audit["data"]["evidence"] == "resolution_started"
+assert audit["data"]["attempt_ref"] == f"attempt:{start.attempt_id}"
+assert audit["data"]["thread_id"] == start.thread_id
+assert audit["data"]["meta_path"]["entries"][0] == "DelegatingFinder"
+assert audit["data"]["meta_path"]["object_id"].startswith("0x")
+assert audit["data"]["path_hooks_id"].startswith("0x")
+assert audit["data"]["importer_cache"]["size"] >= 1
 attempt = next(item for item in document["import_attempts"] if item["fullname"] == "timeline_target")
 assert attempt["id"] == f"attempt:{start.attempt_id}"
 assert attempt["start_event_ref"] == f"event:{start.seq}"
