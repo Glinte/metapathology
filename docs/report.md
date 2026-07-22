@@ -173,9 +173,9 @@ some native extensions explicitly reject a second load.
 unavailable in `sys.modules`. The report proves the earlier success, later
 failure, and repeated loader/origin selection, but deliberately does not
 claim a particular exception because import exception messages are not
-captured. JSON findings retain explicit `attempt_refs` for the earlier load
-and every later exact failed attempt, including outer attempts that delegated
-to an inner PathFinder resolution.
+captured. JSON findings retain explicit `data.attempt_refs` for the earlier
+load and every later exact failed attempt, including outer attempts that
+delegated to an inner PathFinder resolution.
 
 ### legacy-finder-contract
 
@@ -396,6 +396,11 @@ Conventions for consumers:
 - `timeline` is ordered by capture sequence. Each event is an envelope
   (`id`, `seq`, `kind`) whose `data` object holds the fields specific to that
   `kind`.
+- `snapshots` and `findings` use the same envelope pattern. A snapshot's `data`
+  holds its `kind`-specific `entries` (plus `non_string_keys` for
+  `importer_cache`). A finding's `data` is tagged by `detail` and carries the
+  evidence for that family (for example `claim`, `deep_call`, `attempt_refs`,
+  `route_refs`/`route_comparison_ref`, or `finder_contract_ref`).
 - `summary.counts` holds the per-severity finding totals (`actionable`,
   `warning`, `informational`).
 - findings are in report priority order.
