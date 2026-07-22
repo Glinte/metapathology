@@ -38,7 +38,7 @@ from metapathology._report_model import (
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from traceback import StackSummary
 
     from metapathology._module_metadata import ModuleMetadata
@@ -228,8 +228,7 @@ def _ref_label(reference: ObjectRef) -> str:
     return reference.type_name if reference.name is None else reference.name
 
 
-def _emit_event_section(
-    lines: list[str],
+def _iter_event_section(
     empty_sections: list[str],
     items: list,
     label: str,
@@ -237,18 +236,18 @@ def _emit_event_section(
     context: _RenderContext,
     *,
     record_empty: bool = True,
-) -> None:
-    """Append one monitored-list section, or record its label as empty.
+) -> "Iterator[str]":
+    """Yield one monitored-list section, or record its label as empty.
 
     A present section is a ``-- label (N) --`` heading (preceded by a blank
     line) over ``render_item`` output for each entry. An absent section adds
     ``label`` to ``empty_sections`` only when ``record_empty`` is set.
     """
     if items:
-        lines.append("")
-        lines.append(context.heading(f"-- {label} ({len(items)}) --"))
+        yield ""
+        yield context.heading(f"-- {label} ({len(items)}) --")
         for item in items:
-            lines.extend(render_item(item, context))
+            yield from render_item(item, context)
     elif record_empty:
         empty_sections.append(label)
 
@@ -296,6 +295,7 @@ class _TextReportRenderer:
     def __init__(self, document: ReportDocument, *, color: bool) -> None:
         self.document = document
         self.context = _RenderContext(document, color=color)
+        self._empty: list[str] = []
         buckets = _TextEventBuckets(document.analysis.events)
         self.mutations = buckets.meta_path_mutations
         self.calls = buckets.finder_calls
@@ -315,36 +315,47 @@ class _TextReportRenderer:
             (buckets.importer_cache_diffs, "sys.path_importer_cache changes", _importer_cache_diff_lines, True),
         )
 
-    def render_lines(self) -> list[str]:
-        lines: list[str] = []
-        self._render_header(lines)
-        lines.append("")
-        divergent = self._render_findings(lines)
-        self._render_comparisons(lines, divergent)
-        self._render_evidence(lines)
-        empty_sections = self._render_observation_sections(lines)
-        self._render_errors(lines, empty_sections)
-        self._render_inventory(lines)
-        if empty_sections:
-            lines.extend(("", f"Nothing was recorded for: {', '.join(empty_sections)}."))
-        lines.append("")
-        return lines
+    def iter_lines(self) -> "Iterator[str]":
+        yield from self._render_header()
+        yield ""
+        divergent = self._divergent_comparisons()
+        yield from self._render_findings()
+        yield from self._render_comparisons(divergent)
+        yield from self._render_evidence()
+        yield from self._render_observation_sections()
+        yield from self._render_errors()
+        yield from self._render_inventory()
+        if self._empty:
+            yield ""
+            yield f"Nothing was recorded for: {', '.join(self._empty)}."
+        yield ""
 
-    def _render_header(self, lines: list[str]) -> None:
-        lines.append(self.context.heading("== metapathology report =="))
-        lines.extend(_verdict_lines(self.document, self.context))
-        lines.extend((f"report guide: {_REPORT_GUIDE_URL}", _monitoring_line(self.document)))
-        lines.extend(_mechanism_header_lines(self.document, self.context))
-        lines.extend(_snapshot_header_lines(self.document, self.context))
-        lines.extend(_inventory_header_lines(self.document))
+    def _render_header(self) -> "Iterator[str]":
+        yield self.context.heading("== metapathology report ==")
+        yield from _verdict_lines(self.document, self.context)
+        yield f"report guide: {_REPORT_GUIDE_URL}"
+        yield _monitoring_line(self.document)
+        yield from _mechanism_header_lines(self.document, self.context)
+        yield from _snapshot_header_lines(self.document, self.context)
+        yield from _inventory_header_lines(self.document)
         modules = self.document.capture.modules_since_install
-        lines.append(f"modules imported since install: {0 if modules is None else len(modules)}")
+        yield f"modules imported since install: {0 if modules is None else len(modules)}"
         if self.document.process.cwd:
-            lines.append(
+            yield (
                 f"paths shown relative to: {self.document.process.cwd} (that directory itself displays as <project>)"
             )
 
-    def _render_findings(self, lines: list[str]) -> tuple[RouteComparison, ...]:
+    def _divergent_comparisons(self) -> tuple[RouteComparison, ...]:
+        """Route comparisons that differ and are not already consumed by a finding."""
+        findings = self.document.analysis.findings
+        consumed = {item.route_comparison_id for item in findings if item.route_comparison_id is not None}
+        return tuple(
+            item
+            for item in self.document.analysis.route_comparisons
+            if _routes_differ(item) and item.comparison_id not in consumed
+        )
+
+    def _render_findings(self) -> "Iterator[str]":
         findings = self.document.analysis.findings
         counts = {severity: 0 for severity in ("actionable", "warning", "informational")}
         for finding in findings:
@@ -353,119 +364,109 @@ class _TextReportRenderer:
             f"{count} {self.context.severity(severity, severity)}" for severity, count in counts.items() if count
         )
         title = f"-- findings ({len(findings)}"
-        lines.append(
+        yield (
             f"{self.context.heading(title + ':')} {summary}{self.context.heading(') --')}"
             if summary
             else self.context.heading(title + ") --")
         )
-        consumed = {item.route_comparison_id for item in findings if item.route_comparison_id is not None}
-        divergent = tuple(
-            item
-            for item in self.document.analysis.route_comparisons
-            if _routes_differ(item) and item.comparison_id not in consumed
-        )
         if not findings:
-            self._render_empty_finding_message(lines, divergent)
-        lines.extend(_narrative_lines(self.document, self.context))
-        return divergent
+            yield from self._render_empty_finding_message(self._divergent_comparisons())
+        yield from _narrative_lines(self.document, self.context)
 
-    def _render_empty_finding_message(self, lines: list[str], divergent: tuple[RouteComparison, ...]) -> None:
+    def _render_empty_finding_message(self, divergent: tuple[RouteComparison, ...]) -> "Iterator[str]":
         modules = self.document.capture.modules_since_install
         if divergent or self.document.analysis.explanations:
-            lines.append("No problems were found. The comparisons below are informational.")
+            yield "No problems were found. The comparisons below are informational."
         else:
-            lines.append(
+            yield (
                 f"No import-hook interference detected across {0 if modules is None else len(modules)} monitored imports."
             )
 
-    def _render_comparisons(self, lines: list[str], divergent: tuple[RouteComparison, ...]) -> None:
+    def _render_comparisons(self, divergent: tuple[RouteComparison, ...]) -> "Iterator[str]":
         if not divergent:
             return
-        lines.extend(
-            (
-                "",
-                self.context.heading(f"-- modules found by a custom finder ({len(divergent)}) --"),
-                "For each module, the recorded result is compared with a fresh PathFinder search over the same"
-                " path, run at report time. The fresh search reflects current state; it does not show which finder"
-                " would have won during the run.",
-            )
+        yield ""
+        yield self.context.heading(f"-- modules found by a custom finder ({len(divergent)}) --")
+        yield (
+            "For each module, the recorded result is compared with a fresh PathFinder search over the same"
+            " path, run at report time. The fresh search reflects current state; it does not show which finder"
+            " would have won during the run."
         )
         for comparison in divergent:
-            lines.extend(_route_comparison_lines(comparison, self.context, self.mutations))
+            yield from _route_comparison_lines(comparison, self.context, self.mutations)
 
-    def _render_evidence(self, lines: list[str]) -> None:
+    def _render_evidence(self) -> "Iterator[str]":
         unresolved = _unresolved_import_lines(self.document, self.context)
         if unresolved:
-            lines.append("")
-            lines.extend(unresolved)
+            yield ""
+            yield from unresolved
 
-    def _render_observation_sections(self, lines: list[str]) -> list[str]:
-        empty: list[str] = []
+    def _render_observation_sections(self) -> "Iterator[str]":
         if self.calls:
-            lines.extend(
-                (
-                    "",
-                    self.context.heading("-- finder calls --"),
-                    "Standard CPython finders are not wrapped, so their calls do not appear here.",
-                )
-            )
-            lines.extend(_attribution_lines(self.calls, self.context))
+            yield ""
+            yield self.context.heading("-- finder calls --")
+            yield "Standard CPython finders are not wrapped, so their calls do not appear here."
+            yield from _attribution_lines(self.calls, self.context)
         else:
-            empty.append("finder calls")
-        self._render_contracts_and_timeline(lines, empty)
+            self._empty.append("finder calls")
+        yield from self._render_contracts_and_timeline()
         for items, label, renderer, record_empty in self.event_log_sections:
-            _emit_event_section(lines, empty, items, label, renderer, self.context, record_empty=record_empty)
-        self._render_replays(lines, empty)
-        return empty
+            yield from _iter_event_section(self._empty, items, label, renderer, self.context, record_empty=record_empty)
+        yield from self._render_replays()
 
-    def _render_contracts_and_timeline(self, lines: list[str], empty: list[str]) -> None:
+    def _render_contracts_and_timeline(self) -> "Iterator[str]":
         contracts = _finder_contract_lines(self.document.analysis.finder_contracts, self.context)
         if contracts:
-            lines.append("")
-            lines.extend(contracts)
+            yield ""
+            yield from contracts
         if self.document.analysis.standard_resolutions:
-            lines.append("")
-            lines.extend(_standard_resolution_lines(self.document.analysis.standard_resolutions, self.context))
+            yield ""
+            yield from _standard_resolution_lines(self.document.analysis.standard_resolutions, self.context)
         else:
-            empty.append("imports attributed to standard finders")
+            self._empty.append("imports attributed to standard finders")
         if self.document.analysis.events:
-            lines.append("")
-            lines.extend(_timeline_lines(self.document, self.context))
+            yield ""
+            yield from _timeline_lines(self.document, self.context)
         else:
-            empty.append("timeline events")
+            self._empty.append("timeline events")
 
-    def _render_replays(self, lines: list[str], empty: list[str]) -> None:
+    def _render_replays(self) -> "Iterator[str]":
         if not self.document.analysis.speculative_replay_enabled:
             return
         replay_lines = _speculative_replay_lines(self.document, self.context)
         if replay_lines:
-            lines.append("")
-            lines.extend(replay_lines)
+            yield ""
+            yield from replay_lines
         else:
-            empty.append("speculative replays")
+            self._empty.append("speculative replays")
 
-    def _render_errors(self, lines: list[str], empty: list[str]) -> None:
+    def _render_errors(self) -> "Iterator[str]":
         error_count = len(self.errors) + len(self.document.analysis.report_errors)
         if not error_count:
-            empty.append("internal errors")
+            self._empty.append("internal errors")
             return
-        lines.extend(("", self.context.negative(f"-- internal errors ({error_count}) --")))
-        lines.extend(_internal_error_line(error) for error in self.errors)
-        lines.extend(
-            f"during report in {error.where}: {error.exception_type_name}"
-            for error in self.document.analysis.report_errors
-        )
+        yield ""
+        yield self.context.negative(f"-- internal errors ({error_count}) --")
+        for error in self.errors:
+            yield _internal_error_line(error)
+        for error in self.document.analysis.report_errors:
+            yield f"during report in {error.where}: {error.exception_type_name}"
 
-    def _render_inventory(self, lines: list[str]) -> None:
+    def _render_inventory(self) -> "Iterator[str]":
         inventory = _loader_inventory_lines(self.document, self.context)
         if inventory:
-            lines.append("")
-            lines.extend(inventory)
+            yield ""
+            yield from inventory
 
 
 def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
     """Build the report body as a list of lines; the caller adds the trailing newline."""
-    return _TextReportRenderer(document, color=color).render_lines()
+    return list(iter_report_lines(document, color=color))
+
+
+def iter_report_lines(document: ReportDocument, *, color: bool = False) -> "Iterator[str]":
+    """Yield the report body one line at a time; the caller adds the trailing newline."""
+    return _TextReportRenderer(document, color=color).iter_lines()
 
 
 # One static consequence sentence per finding kind, stating only what the
