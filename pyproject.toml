@@ -1,6 +1,6 @@
 [project]
 name = "metapathology"
-version = "0.4.4"
+version = "0.4.5"
 description = "Diagnose which finders handle imports and how sys.meta_path changes"
 readme = "README.md"
 license = "MIT"
