@@ -17,7 +17,7 @@ TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from metapathology._frozen_bootstrap import activate_frozen
-    from metapathology._monitor import Monitor, get_monitor, install, monitoring, render_report, uninstall, write_report
+    from metapathology._monitor import Monitor
     from metapathology._records import (
         DeepDiagnosticCall,
         DeepImportEvent,
@@ -42,15 +42,15 @@ if TYPE_CHECKING:
         SysPathReassignment,
     )
     from metapathology._report_schema import ReportJSON, ReportStatus
+    from metapathology._runtime import get_monitor, install, monitoring, render_report, uninstall, write_report
 
 # Keep this in sync with ``project.version`` in pyproject.toml. The package
 # test enforces that invariant without making every CLI invocation import the
 # comparatively expensive ``importlib.metadata`` module.
 __version__ = "0.4.5"
 
-_MONITOR_EXPORTS = frozenset(
-    ("Monitor", "get_monitor", "install", "monitoring", "render_report", "uninstall", "write_report")
-)
+_MONITOR_EXPORTS = frozenset(("Monitor",))
+_RUNTIME_EXPORTS = frozenset(("get_monitor", "install", "monitoring", "render_report", "uninstall", "write_report"))
 _FROZEN_EXPORTS = frozenset(("activate_frozen",))
 _RECORD_EXPORTS = frozenset(
     (
@@ -119,6 +119,8 @@ def __getattr__(name: str) -> object:
     """Load public monitoring APIs only when first accessed."""
     if name in _MONITOR_EXPORTS:
         import metapathology._monitor as module
+    elif name in _RUNTIME_EXPORTS:
+        import metapathology._runtime as module
     elif name in _FROZEN_EXPORTS:
         import metapathology._frozen_bootstrap as module
     elif name in _RECORD_EXPORTS:

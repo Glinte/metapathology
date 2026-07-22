@@ -95,6 +95,7 @@ class MonitorSnapshot(_Record):
     skipped_finders: tuple[tuple[object, str], ...]
     finder_contracts: tuple[FinderContract, ...]
     importer_cache: _ImporterCacheReportState
+    retained_cache_finders: tuple[tuple[int, object], ...]
     early_site_bootstrap: _EarlySiteBootstrapState | None
     frozen_bootstrap: _FrozenBootstrapState | None
     enabled: bool

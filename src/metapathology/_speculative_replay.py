@@ -8,7 +8,7 @@ path ``P``, and a later import that traversed ``P`` failed to find a module
 
 Selection is pure and works only from already-captured evidence. The single
 foreign call per selected candidate — ``F.find_spec(M, None)`` — runs at report
-time under the monitor's report-analysis guard, calls no hook or loader, and
+time under the caller's observation-suspension guard, calls no hook or loader, and
 never mutates ``sys.path_hooks``, ``sys.path_importer_cache``, or
 ``sys.modules``. It says what the displaced finder returns now; it never claims
 the original import would have succeeded.
@@ -25,7 +25,6 @@ from metapathology._spec import summarize_spec
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from metapathology._monitor import Monitor
     from metapathology._records import MonitorEvent, ObjectRef
 
 # The whole report is capped at this many foreign find_spec calls. Replay is a
@@ -101,7 +100,7 @@ def _select_candidates(events: "list[MonitorEvent]") -> list[_Candidate]:
     return candidates
 
 
-def _replay_one(monitor: "Monitor", candidate: _Candidate, had_target: bool) -> SpeculativeReplay:
+def _replay_one(retained_finders: dict[int, object], candidate: _Candidate, had_target: bool) -> SpeculativeReplay:
     """Run at most one foreign ``find_spec`` for a selected candidate."""
     if had_target:
         # The original lookup carried a reload target we cannot faithfully
@@ -115,7 +114,7 @@ def _replay_one(monitor: "Monitor", candidate: _Candidate, had_target: bool) -> 
             candidate.attempt_seq,
             "declined_target_unavailable",
         )
-    finder = monitor._retained_cache_finder(candidate.finder.object_id)
+    finder = retained_finders.get(candidate.finder.object_id)
     if finder is None:
         return SpeculativeReplay(
             candidate.fullname,
@@ -173,15 +172,14 @@ def _replay_one(monitor: "Monitor", candidate: _Candidate, had_target: bool) -> 
 
 
 def replay_displaced_finders(
-    monitor: "Monitor",
     events: "list[MonitorEvent]",
+    retained_finders: tuple[tuple[int, object], ...],
 ) -> tuple[tuple[SpeculativeReplay, ...], int]:
     """Select and replay displaced cache finders, capped at a fixed budget.
 
     Returns the produced replays and the count of candidates omitted once the
-    per-report cap was reached. The caller runs this inside
-    ``monitor._report_analysis()`` so the probe cannot record monitor events or
-    re-enter the tool's own instrumentation.
+    per-report cap was reached. The caller suspends observation around this
+    probe so it cannot record monitor events or re-enter instrumentation.
     """
     candidates = _select_candidates(events)
     if not candidates:
@@ -194,10 +192,11 @@ def replay_displaced_finders(
         if isinstance(event, DeepDiagnosticCall) and event.boundary == "path_entry_finder"
     }
     replays: list[SpeculativeReplay] = []
+    finders_by_id = dict(retained_finders)
     omitted = 0
     for candidate in candidates:
         if len(replays) >= MAX_SPECULATIVE_REPLAYS:
             omitted += 1
             continue
-        replays.append(_replay_one(monitor, candidate, had_target.get(candidate.attempt_seq, False)))
+        replays.append(_replay_one(finders_by_id, candidate, had_target.get(candidate.attempt_seq, False)))
     return tuple(replays), omitted

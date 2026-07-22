@@ -13,6 +13,7 @@ from contextlib import suppress
 
 from metapathology._config import validate_report_color as validate_color
 from metapathology._config import validate_report_format as validate_format
+from metapathology._record import _Record
 from metapathology._records import type_name
 from metapathology._report_capture import capture_document
 from metapathology._report_json import failed_json_document, json_document
@@ -26,14 +27,29 @@ if TYPE_CHECKING:
     from os import PathLike
     from typing import Literal, TextIO
 
-    from metapathology._monitor import Monitor
+    from metapathology._monitor_model import MonitorSnapshot
+    from metapathology._report_model import ReportDocument
 
     _ColorMode = Literal["auto", "always", "never"]
     _ReportFormat = Literal["text", "json"]
 
 
+class ReportFailure(_Record):
+    """Format-neutral reduction of an ordinary report-generation failure."""
+
+    error_name: str
+
+
+def capture_report(snapshot: "MonitorSnapshot") -> "ReportDocument | ReportFailure":
+    """Build one reusable report artifact from an immutable monitor snapshot."""
+    try:
+        return capture_document(snapshot)
+    except Exception as exc:  # Reporting must never break the host program.
+        return ReportFailure(type_name(exc))
+
+
 def write_report(
-    monitor: "Monitor",
+    artifact: "ReportDocument | ReportFailure",
     destination: "TextIO | str | PathLike[str] | None" = None,
     *,
     format: "_ReportFormat" = "text",
@@ -42,53 +58,60 @@ def write_report(
     """Render a report and write it to stderr, a stream, or an atomic file.
 
     Args:
-        monitor: Installed process monitor to report.
+        artifact: Captured report document or generation failure.
         destination: Output stream or exact file path; None selects stderr.
         format: Text or stable JSON output.
         color: ANSI color policy for text output.
 
-    Errors are recorded and re-raised here. Automatic callers provide the
-    suppression boundary so explicit I/O retains conventional error handling.
+    I/O errors are re-raised here. The runtime records explicit failures and
+    provides the suppression boundary for automatic output.
     """
     report_format = validate_format(format)
     color_mode = validate_color(color)
-    try:
-        use_color = report_format == "text" and _color_enabled(destination, color_mode)
-        rendered = render_report(monitor, format=report_format, color=use_color)
-        if destination is None:
-            sys.stderr.write(rendered)
-        elif isinstance(destination, (str, os.PathLike)):
-            _write_atomic(destination, rendered)
-        else:
-            destination.write(rendered)
-    except Exception as exc:
-        monitor._record_internal_error("report_write", exc)
-        raise
+    use_color = report_format == "text" and _color_enabled(destination, color_mode)
+    rendered = render_report(artifact, format=report_format, color=use_color)
+    if destination is None:
+        sys.stderr.write(rendered)
+    elif isinstance(destination, (str, os.PathLike)):
+        _write_atomic(destination, rendered)
+    else:
+        destination.write(rendered)
 
 
-def render_report(monitor: "Monitor", *, format: "_ReportFormat" = "text", color: bool = False) -> str:
+def render_report(
+    artifact: "ReportDocument | ReportFailure", *, format: "_ReportFormat" = "text", color: bool = False
+) -> str:
     """Render the full diagnostic report as text or stable JSON.
 
     Args:
-        monitor: Installed process monitor to report.
+        artifact: Captured report document or generation failure.
         format: Text or stable JSON output.
         color: Include ANSI styling in text output. JSON is never styled.
 
-    Ordinary exceptions become a valid failure report. Control-flow
-    exceptions outside ``Exception`` continue to propagate unchanged.
+    Capture has already reduced ordinary failures into a reusable artifact.
     """
     report_format = validate_format(format)
     try:
-        document = capture_document(monitor)
-        if report_format == "json":
-            json_report = json_document(document)
-            return json.dumps(json_report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-        return "\n".join(render_lines(document, color=color)) + "\n"
-    except Exception as exc:  # The report must never break the host program.
-        error_name = type_name(exc)
-        if report_format == "json":
-            return json.dumps(failed_json_document(error_name), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-        return "\n".join(render_failure_lines(error_name, color=color)) + "\n"
+        return _render_artifact(artifact, report_format, color)
+    except Exception as exc:
+        return _render_failure(type_name(exc), report_format, color)
+
+
+def _render_artifact(artifact: "ReportDocument | ReportFailure", report_format: "_ReportFormat", color: bool) -> str:
+    """Project one captured artifact without consulting live monitor state."""
+    if isinstance(artifact, ReportFailure):
+        return _render_failure(artifact.error_name, report_format, color)
+    if report_format == "json":
+        json_report = json_document(artifact)
+        return json.dumps(json_report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    return "\n".join(render_lines(artifact, color=color)) + "\n"
+
+
+def _render_failure(error_name: str, report_format: "_ReportFormat", color: bool) -> str:
+    """Render a format-appropriate failure artifact."""
+    if report_format == "json":
+        return json.dumps(failed_json_document(error_name), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    return "\n".join(render_failure_lines(error_name, color=color)) + "\n"
 
 
 def _color_enabled(destination: "TextIO | str | PathLike[str] | None", mode: "_ColorMode") -> bool:

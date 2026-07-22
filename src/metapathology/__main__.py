@@ -245,6 +245,8 @@ def _run(invocation: _Invocation) -> int:
     import traceback
     from contextlib import suppress
 
+    from metapathology._runtime import write_configured_report
+
     if target is None:
         # Tab completion is quality-of-life only; readline is unavailable on
         # some platforms (notably Windows before the 3.13 REPL rewrite).
@@ -316,7 +318,7 @@ def _run(invocation: _Invocation) -> int:
         # Reporting is diagnostic-only and must not replace the target's exit
         # status when stderr or a configured file is unusable.
         with suppress(Exception):
-            monitor._write_configured_report()
+            write_configured_report()
     return exit_code
 
 

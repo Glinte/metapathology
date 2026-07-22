@@ -206,7 +206,7 @@ class _DeepDiagnostics:
 
     def _profile_import_boundary(self, frame: "FrameType", event: str, arg: object) -> None:
         """Record paired entry and completion for the captured ``_find_and_load`` code."""
-        if not self._enabled or not self._deep_import_outcomes or self._local.report_analysis:
+        if not self._enabled or not self._deep_import_outcomes or self._local.observation_suspended:
             return
         try:
             if frame.f_code is self._path_finder_code:
@@ -317,7 +317,7 @@ class _DeepDiagnostics:
             fromlist: "Sequence[str]" = (),
             level: int = 0,
         ) -> "ModuleType":
-            if not self._enabled or not self._deep_import_calls or self._local.report_analysis:
+            if not self._enabled or not self._deep_import_calls or self._local.observation_suspended:
                 return original(name, globals, locals, fromlist, level)
             # Reduce every argument to constant-size plain data before delegating;
             # never stringify foreign objects, and never import in this body.
@@ -404,7 +404,7 @@ class _DeepDiagnostics:
 
             @functools.wraps(original, assigned=(), updated=())
             def wrapped(fullname: str, target: object = None) -> object:
-                if not self._enabled or self._local.report_analysis:
+                if not self._enabled or self._local.observation_suspended:
                     return original(fullname, target)
                 target_state = None if target is None else ModuleCacheState("object", id(target), type_name(target))
                 if self._deep_local.active:
@@ -517,7 +517,7 @@ class _DeepDiagnostics:
                 if boundary == "loader_create_module"
                 else ModuleCacheState("object", id(argument), type_name(argument))
             )
-            if not self._enabled or self._local.report_analysis:
+            if not self._enabled or self._local.observation_suspended:
                 return original(argument)
             if self._deep_local.active:
                 self._record_deep_call(
@@ -682,6 +682,11 @@ class _DeepDiagnostics:
         self._deep_loader_patches.clear()
 
 
+def original_path_hook(hook: object) -> object:
+    """Return the foreign hook beneath one of this module's wrappers."""
+    return hook.hook if isinstance(hook, _DeepPathHook) else hook
+
+
 class _DeepPathHook:
     """Exact-delegating ``sys.path_hooks`` wrapper for deep path-hook tracing.
 
@@ -711,7 +716,7 @@ class _DeepPathHook:
     def __call__(self, path: str) -> "PathEntryFinderProtocol":
         monitor = self._monitor
         hook = self._hook
-        if not monitor._enabled or monitor._local.report_analysis:
+        if not monitor._enabled or monitor._local.observation_suspended:
             return hook(path)
         if monitor._deep_local.active:
             monitor._record_deep_call(

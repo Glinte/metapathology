@@ -464,7 +464,7 @@ class SpeculativeReplay(_Record):
     This record therefore describes the current behavior of a retained finder,
     not history: a returned spec does not prove the original import would have
     succeeded, and current finder state is not the historical state. It is
-    produced only at report time, under the report-analysis guard, and is never
+    produced only at report time, under the observation-suspension guard, and is never
     part of the monitor's chronological event log, so repeated reports recompute
     it rather than growing the log.
 

@@ -2,7 +2,7 @@
 
 import os
 
-from metapathology._monitor import install
+from metapathology._runtime import install
 
 TYPE_CHECKING = False
 

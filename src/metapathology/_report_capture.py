@@ -4,6 +4,7 @@ import os
 import sys
 import time
 
+from metapathology._deep_diagnostics import original_path_hook
 from metapathology._module_metadata import ModuleMetadata, inspect_module
 from metapathology._records import ObjectRef, SpeculativeReplay, type_name
 from metapathology._report_analysis import (
@@ -38,7 +39,6 @@ from metapathology._speculative_replay import replay_displaced_finders
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from metapathology._monitor import Monitor
     from metapathology._monitor_model import MonitorSnapshot
     from metapathology._records import MonitorEvent
     from metapathology._report_model import CausalExplanation, Finding, ResolutionRoute, RouteComparison
@@ -47,15 +47,14 @@ if TYPE_CHECKING:
 _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 
 
-def capture_document(monitor: "Monitor") -> ReportDocument:
+def capture_document(snapshot: "MonitorSnapshot") -> ReportDocument:
     """Copy evidence at one sequence cutoff before deriving any findings."""
-    snapshot = monitor._report_state()
     events = list(snapshot.events)
     finder_contracts = list(snapshot.finder_contracts)
     importer_cache = snapshot.importer_cache
     report_errors: list[ReportError] = []
     current_meta_path = _current_meta_path_names(report_errors)
-    current_path_hooks = _current_path_hooks(monitor, snapshot, report_errors)
+    current_path_hooks = _current_path_hooks(snapshot, report_errors)
     module_items = _module_items(report_errors)
     loader_inventory = _loader_inventory(module_items)
     attempts = _import_attempts(events, module_items)
@@ -82,12 +81,10 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         attempts=attempts,
         report_errors=report_errors,
     )
-    findings, explanations, resolution_routes, route_comparisons = _derive_findings(
-        monitor, inputs, standard_resolutions
-    )
+    findings, explanations, resolution_routes, route_comparisons = _derive_findings(inputs, standard_resolutions)
     # Speculative replay and the process snapshot run after finding derivation
     # so their report_errors keep their historical position in the log.
-    speculative_replays, speculative_replays_omitted = _speculative_replays(monitor, snapshot, events)
+    speculative_replays, speculative_replays_omitted = _speculative_replays(snapshot, events)
     summary = _report_summary(findings, explanations, attempts)
     process = _capture_process(report_errors)
     return ReportDocument(
@@ -134,21 +131,19 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
 
 
 def _derive_findings(
-    monitor: "Monitor",
     inputs: _AnalysisInputs,
     standard_resolutions: tuple[StandardResolution, ...],
 ) -> "tuple[tuple[Finding, ...], tuple[CausalExplanation, ...], tuple[ResolutionRoute, ...], tuple[RouteComparison, ...]]":
-    """Run the finding/route/explanation pipeline under the report-analysis guard.
+    """Run the finding/route/explanation pipeline from one captured snapshot.
 
     One allocator per element kind numbers ids in creation order; the shared
     ``finding`` allocator carries across the corroborated-route, namespace, and
     repeated-load passes so the numbering stays contiguous.
     """
     finding_ids = _IdAllocator("finding")
-    with monitor._report_analysis():
-        findings, resolution_routes, route_comparisons = _suspicious_findings(
-            inputs, finding_ids, _IdAllocator("route"), _IdAllocator("comparison")
-        )
+    findings, resolution_routes, route_comparisons = _suspicious_findings(
+        inputs, finding_ids, _IdAllocator("route"), _IdAllocator("comparison")
+    )
     findings = (
         *findings,
         *_namespace_displacement_findings(inputs.attempts, standard_resolutions, inputs.events, finding_ids),
@@ -161,18 +156,17 @@ def _derive_findings(
 
 
 def _speculative_replays(
-    monitor: "Monitor", snapshot: "MonitorSnapshot", events: list["MonitorEvent"]
+    snapshot: "MonitorSnapshot", events: list["MonitorEvent"]
 ) -> tuple[tuple[SpeculativeReplay, ...], int]:
     """Replay displaced importer-cache finders when the mechanism is enabled.
 
-    The single foreign ``find_spec()`` per candidate runs under the
-    report-analysis guard so it records no monitor events and cannot re-enter
-    the tool's own instrumentation.
+    The runtime suspends observation around the whole artifact capture, so the
+    single foreign ``find_spec()`` per candidate records no monitor events and
+    cannot re-enter the tool's own instrumentation.
     """
     if not snapshot.speculative_replay_enabled:
         return (), 0
-    with monitor._report_analysis():
-        return replay_displaced_finders(monitor, events)
+    return replay_displaced_finders(events, snapshot.retained_cache_finders)
 
 
 def _target_outcome(snapshot: "MonitorSnapshot") -> TargetOutcome | None:
@@ -252,7 +246,6 @@ def _current_meta_path_names(report_errors: list[ReportError]) -> tuple[str, ...
 
 
 def _current_path_hooks(
-    monitor: "Monitor",
     snapshot: "MonitorSnapshot",
     report_errors: list[ReportError],
 ) -> tuple[ObjectRef, ...] | None:
@@ -260,7 +253,7 @@ def _current_path_hooks(
     if not snapshot.path_hooks_enabled:
         return None
     try:
-        return monitor._current_path_hook_refs()
+        return tuple(ObjectRef.of(original_path_hook(hook)) for hook in list(sys.path_hooks))
     except Exception as exc:
         report_errors.append(ReportError("snapshot.path_hooks", type_name(exc)))
         return None

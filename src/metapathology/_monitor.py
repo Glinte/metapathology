@@ -5,17 +5,13 @@ scope; recording code takes ``_record_lock`` only around plain-data appends;
 foreign objects are reduced to type names and ids at capture time.
 """
 
-import atexit
 import functools
-import os
 import sys
 import threading
 import traceback
 import warnings
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 
-from metapathology import _report
-from metapathology._config import normalize_report_destination, resolve_install_request
 from metapathology._deep_diagnostics import _DeepDiagnostics
 from metapathology._finder_attribution import _FinderAttribution
 from metapathology._importer_cache import _ImporterCacheObserver
@@ -51,14 +47,13 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
     from importlib.machinery import ModuleSpec
-    from os import PathLike
     from types import FrameType, ModuleType
-    from typing import Concatenate, Literal, ParamSpec, Protocol, TextIO
+    from typing import Concatenate, ParamSpec, Protocol
     from typing import cast as _cast
 
     from _typeshed.importlib import PathEntryFinderProtocol
 
-    from metapathology._config import InstallRequest
+    from metapathology._config import MonitoringRequest
     from metapathology._monitor_model import DeepImportCallsStatus, DeepImportOutcomesStatus, StandardFinderStatus
     from metapathology._records import MutationOp
 
@@ -99,7 +94,7 @@ class _ImportThreadState(_ThreadState):
     instance attributes on first assignment (``threading.local`` semantics).
     """
 
-    report_analysis = False
+    observation_suspended = False
     thread_id: "int | None" = None
     pending_import_attempt: "tuple[int, str] | None" = None
 
@@ -200,15 +195,6 @@ class Monitor:
         self._enabled = False
         # sys.addaudithook is one-way; remember so a reinstall never stacks a second hook.
         self._audit_installed = False
-        # Whether our atexit callback is currently registered (mirrors it for unregister).
-        self._report_at_exit = False
-        self._atexit_callback = self._report_atexit
-        # Resolved automatic report destination. None means stderr. The PID is
-        # added only when an automatic file report is written; explicit paths
-        # passed to write_report() remain unchanged.
-        self._report_destination: str | None = None
-        self._report_format: Literal["text", "json"] = "text"
-        self._report_color: Literal["auto", "always", "never"] = "auto"
         # Set by the generated .pth activation path. The first activation wins
         # because a later site directory cannot move the evidence cutoff earlier.
         self._early_site_bootstrap: _EarlySiteBootstrapState | None = None
@@ -284,10 +270,6 @@ class Monitor:
         """Availability of exact aggregate standard-finder evidence."""
         return self._deep.standard_finder_status
 
-    def _current_path_hook_refs(self) -> tuple[ObjectRef, ...]:
-        """Copy current path-hook identities for report capture."""
-        return tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in list(sys.path_hooks))
-
     def _original_path_hook(self, hook: object) -> object:
         """Normalize one deep wrapper to the foreign hook it delegates to."""
         return self._deep.original_path_hook(hook)
@@ -331,7 +313,7 @@ class Monitor:
         """Return ``(finder name, reason)`` for meta-path entries that could not be instrumented."""
         return self._finder_attribution.skipped_names(self)
 
-    def _report_state(self) -> MonitorSnapshot:
+    def _snapshot(self) -> MonitorSnapshot:
         """Copy chronological evidence and skipped finders at one sequence cutoff."""
         self._importer_cache.observe("report")
         with self._record_lock:
@@ -343,6 +325,7 @@ class Monitor:
                 skipped_finders=skipped_finders,
                 finder_contracts=finder_contracts,
                 importer_cache=cache_state,
+                retained_cache_finders=self._importer_cache.retained_finders_locked(),
                 early_site_bootstrap=self._early_site_bootstrap,
                 frozen_bootstrap=self._frozen_bootstrap,
                 enabled=self._enabled,
@@ -358,10 +341,6 @@ class Monitor:
                 speculative_replay_enabled=self._enabled and self._speculative_replay,
                 target_outcome=self._target_outcome,
             )
-
-    def _retained_cache_finder(self, finder_id: int) -> object | None:
-        """Return the live importer-cache finder the observer retained, if any."""
-        return self._importer_cache.retained_finder(finder_id)
 
     def _set_early_site_bootstrap(
         self,
@@ -384,114 +363,29 @@ class Monitor:
                 self._frozen_bootstrap = state
 
     @contextmanager
-    def _report_analysis(self) -> "Iterator[None]":
-        """Make every monitor producer inert during report-time foreign calls."""
+    def _suspend_observation(self) -> "Iterator[None]":
+        """Make this thread's monitor producers inert around diagnostic work."""
         previously_active = self._local.active
-        previously_reporting = self._local.report_analysis
+        previously_suspended = self._local.observation_suspended
         self._local.active = True
-        self._local.report_analysis = True
+        self._local.observation_suspended = True
         try:
             yield
         finally:
             self._local.active = previously_active
-            self._local.report_analysis = previously_reporting
+            self._local.observation_suspended = previously_suspended
 
-    def install(
-        self,
-        *,
-        report_at_exit: bool = True,
-        report_destination: "str | PathLike[str] | None" = None,
-        report_format: "Literal['text', 'json'] | None" = None,
-        report_color: "Literal['auto', 'always', 'never'] | None" = None,
-        monitor_path_hooks: bool | None = None,
-        monitor_importer_cache: bool | None = None,
-        monitor_sys_path: bool | None = None,
-        deep: bool | None = None,
-        deep_path_hooks: bool | None = None,
-        deep_path_entry_finders: bool | None = None,
-        deep_loaders: bool | None = None,
-        deep_import_outcomes: bool | None = None,
-        deep_import_calls: bool | None = None,
-        speculative_replay: bool | None = None,
-    ) -> None:
-        """Instrument ``sys.meta_path`` and register the import audit hook (idempotent).
-
-        A repeat call on an already-enabled monitor changes nothing except
-        that ``report_at_exit=True`` still registers the exit report if it is
-        not registered yet.
-
-        Args:
-            report_at_exit: Register an atexit callback for the resolved output.
-            report_destination: Automatic report path. When omitted, consult
-                ``METAPATHOLOGY_REPORT`` and then default to stderr.
-            report_format: ``"text"`` or ``"json"``. When omitted, consult
-                ``METAPATHOLOGY_REPORT_FORMAT`` and default according to the
-                destination (text for stderr, JSON for a file).
-            report_color: ``"auto"``, ``"always"``, or ``"never"`` for
-                automatic text reports. When omitted, consult
-                ``METAPATHOLOGY_COLOR`` and default to ``"auto"``.
-            monitor_path_hooks: Instrument and observe ``sys.path_hooks``.
-                A later true value enables the mechanism; false never disables
-                an already-active mechanism.
-            monitor_importer_cache: Passively observe
-                ``sys.path_importer_cache``. A later true value enables the
-                mechanism; false never disables an already-active mechanism.
-            monitor_sys_path: Instrument and observe ``sys.path``. This is
-                opt-in unless all deep diagnostics are enabled.
-            deep: Enable every deep mechanism not explicitly configured.
-            deep_path_hooks: Replace path hooks with exact-delegating call wrappers.
-            deep_path_entry_finders: Shadow mutable path-entry finder calls.
-            deep_loaders: Shadow mutable loader lifecycle methods.
-            deep_import_outcomes: Profile CPython's complete import boundary.
-            deep_import_calls: Wrap ``builtins.__import__`` to observe every
-                import statement, including ``sys.modules`` cache hits.
-            speculative_replay: At report time, replay a displaced
-                importer-cache finder against a module that later failed to
-                resolve on its path, to report whether that finder returns a
-                spec now. Independent of ``deep``; consult
-                ``METAPATHOLOGY_SPECULATIVE_REPLAY`` when omitted.
-        """
-        # os.fspath() may execute foreign code. Reduce it before taking the
-        # lifecycle lock; the resolver receives plain values only.
-        normalized_destination = normalize_report_destination(report_destination)
-        report_configuration_explicit = (
-            report_destination is not None or report_format is not None or report_color is not None
-        )
+    def _install(self, request: "MonitoringRequest") -> None:
+        """Activate the monitoring mechanisms from one resolved request."""
         with self._lifecycle_condition:
             while self._transition_generation is not None:
                 self._lifecycle_condition.wait()
-            was_enabled = self._enabled
-            request = resolve_install_request(
-                report_at_exit=report_at_exit,
-                report_destination=normalized_destination,
-                report_destination_explicit=report_destination is not None,
-                report_format=report_format,
-                report_color=report_color,
-                monitor_path_hooks=monitor_path_hooks,
-                monitor_importer_cache=monitor_importer_cache,
-                monitor_sys_path=monitor_sys_path,
-                deep=deep,
-                deep_path_hooks=deep_path_hooks,
-                deep_path_entry_finders=deep_path_entry_finders,
-                deep_loaders=deep_loaders,
-                deep_import_outcomes=deep_import_outcomes,
-                deep_import_calls=deep_import_calls,
-                speculative_replay=speculative_replay,
-                use_environment=not was_enabled,
-                configure_report=not was_enabled or report_configuration_explicit,
-                current_report_destination=self._report_destination,
-                current_report_format=self._report_format,
-                current_report_color=self._report_color,
-            )
             self._lifecycle_generation += 1
             generation = self._lifecycle_generation
             self._transition_generation = generation
             activate_monitor = not self._enabled
             if activate_monitor:
                 self._enabled = True
-            self._report_destination = request.report_destination
-            self._report_format = request.report_format
-            self._report_color = request.report_color
         try:
             # Explicit errors were raised by the resolver before this point.
             # Invalid environment values are retained as plain diagnostics.
@@ -533,7 +427,7 @@ class Monitor:
             self._meta_path_lease = _OwnedValue(current, instrumented)
             sys.meta_path = instrumented
 
-    def _activate_requested_mechanisms(self, request: "InstallRequest") -> None:
+    def _activate_requested_mechanisms(self, request: "MonitoringRequest") -> None:
         """Enable requested independent mechanisms without disabling active ones."""
         if request.monitor_path_hooks and not self._path_hooks_enabled:
             self._enable_path_hooks()
@@ -553,9 +447,6 @@ class Monitor:
             self._deep.enable_import_calls()
         if request.speculative_replay:
             self._speculative_replay = True
-        if request.report_at_exit and not self._report_at_exit:
-            self._report_at_exit = True
-            atexit.register(self._atexit_callback)
 
     def _enable_path_hooks(self) -> None:
         """Install the instrumented list around the current ``sys.path_hooks`` contents."""
@@ -587,7 +478,7 @@ class Monitor:
             self._local.thread_id = thread_id
         return thread_id
 
-    def uninstall(self) -> None:
+    def _uninstall(self) -> None:
         """Restore plain import lists and unshadow all finders (idempotent)."""
         with self._lifecycle_condition:
             while self._transition_generation is not None:
@@ -627,9 +518,6 @@ class Monitor:
             with self._record_lock:
                 self._observed_path_hooks.clear()
                 self._importer_cache.uninstall()
-        if self._report_at_exit:
-            self._report_at_exit = False
-            atexit.unregister(self._atexit_callback)
 
     @classmethod
     def _restore_owned_attribute(cls, patch: _OwnedAttribute) -> None:
@@ -1019,297 +907,3 @@ class Monitor:
         with self._record_lock:
             self._seq += 1
             self._events.append(InternalError(seq=self._seq, where=where, exception_type_name=exception_type_name))
-
-    def _report_atexit(self) -> None:
-        """Write the configured report without breaking interpreter shutdown."""
-        with suppress(Exception):
-            self._write_configured_report()
-
-    def _write_configured_report(self) -> None:
-        """Write the configured report, adding this process's ID to file paths."""
-        with self._reinstall_lock:
-            destination = self._report_destination
-            format = self._report_format
-            color = self._report_color
-        if destination is not None:
-            destination = _pid_destination(destination, os.getpid())
-        _report.write_report(self, destination, format=format, color=color)
-
-
-# One Monitor per process: the instrumentation targets process-global state
-# (sys.meta_path, the audit hook), so multiple instances would fight each other.
-_monitor_singleton: Monitor | None = None
-_singleton_lock = threading.Lock()
-# Context-managed regions are independently composable even though they share
-# the process-global monitor. Lifecycle calls remain outside this condition
-# because finder cleanup and instrumentation can execute foreign code.
-_monitoring_region_condition = threading.Condition()
-_monitoring_region_count = 0
-_monitoring_regions_own_installation = False
-_monitoring_region_transition = False
-_PREEXISTING_MONITOR_WARNING = (
-    "monitoring() entered while monitoring was already installed; "
-    "the pre-existing installation will remain active after the region exits"
-)
-
-
-def _release_monitoring_region(monitor: Monitor | None) -> None:
-    """Release one reserved region and clean up its shared installation if last."""
-    global _monitoring_region_count, _monitoring_regions_own_installation, _monitoring_region_transition
-    with _monitoring_region_condition:
-        _monitoring_region_count -= 1
-        should_uninstall = _monitoring_region_count == 0 and _monitoring_regions_own_installation
-        if should_uninstall:
-            _monitoring_region_transition = True
-        elif _monitoring_region_count == 0:
-            _monitoring_regions_own_installation = False
-    if should_uninstall:
-        try:
-            if monitor is not None:
-                monitor.uninstall()
-        finally:
-            with _monitoring_region_condition:
-                _monitoring_regions_own_installation = False
-                _monitoring_region_transition = False
-                _monitoring_region_condition.notify_all()
-
-
-def install(
-    *,
-    report_at_exit: bool = True,
-    report_destination: "str | PathLike[str] | None" = None,
-    report_format: "Literal['text', 'json'] | None" = None,
-    report_color: "Literal['auto', 'always', 'never'] | None" = None,
-    monitor_path_hooks: bool | None = None,
-    monitor_importer_cache: bool | None = None,
-    monitor_sys_path: bool | None = None,
-    deep: bool | None = None,
-    deep_path_hooks: bool | None = None,
-    deep_path_entry_finders: bool | None = None,
-    deep_loaders: bool | None = None,
-    deep_import_outcomes: bool | None = None,
-    deep_import_calls: bool | None = None,
-    speculative_replay: bool | None = None,
-) -> Monitor:
-    """Install the import-machinery monitor (idempotent) and return it.
-
-    Call as early as possible: only imports and mutations that happen after
-    this call are observed.
-
-    Args:
-        report_at_exit: Register an atexit callback for the resolved output.
-        report_destination: Automatic report path, or None to consult the
-            environment and then default to stderr.
-        report_format: ``"text"`` or ``"json"``; the destination determines
-            the default when neither the API nor environment configures it.
-        report_color: ``"auto"``, ``"always"``, or ``"never"`` for the
-            automatic text report; None consults ``METAPATHOLOGY_COLOR``.
-        monitor_path_hooks: Observe ``sys.path_hooks`` mutations and direct
-            reassignment. A later true value enables this mechanism.
-        monitor_importer_cache: Passively observe
-            ``sys.path_importer_cache``. A later true value enables this
-            mechanism.
-        monitor_sys_path: Opt in to reversible ``sys.path`` mutation and
-            reassignment observation.
-        deep: Enable every deep mechanism not explicitly configured.
-        deep_path_hooks: Replace path hooks with call-capturing delegates.
-        deep_path_entry_finders: Shadow path-entry finder calls as they appear.
-        deep_loaders: Shadow modern loader creation and execution reached through captured finders.
-        deep_import_outcomes: Observe exact CPython import invocation outcomes.
-        deep_import_calls: Wrap ``builtins.__import__`` to observe every import
-            statement, including ``sys.modules`` cache hits.
-        speculative_replay: At report time, replay a displaced importer-cache
-            finder against a module that later failed on its path. Independent
-            of ``deep``; consults ``METAPATHOLOGY_SPECULATIVE_REPLAY``.
-    """
-    global _monitor_singleton
-    with _singleton_lock:
-        if _monitor_singleton is None:
-            _monitor_singleton = Monitor()
-        monitor = _monitor_singleton
-    monitor.install(
-        report_at_exit=report_at_exit,
-        report_destination=report_destination,
-        report_format=report_format,
-        report_color=report_color,
-        monitor_path_hooks=monitor_path_hooks,
-        monitor_importer_cache=monitor_importer_cache,
-        monitor_sys_path=monitor_sys_path,
-        deep=deep,
-        deep_path_hooks=deep_path_hooks,
-        deep_path_entry_finders=deep_path_entry_finders,
-        deep_loaders=deep_loaders,
-        deep_import_outcomes=deep_import_outcomes,
-        deep_import_calls=deep_import_calls,
-        speculative_replay=speculative_replay,
-    )
-    return monitor
-
-
-@contextmanager
-def monitoring(
-    *,
-    monitor_path_hooks: bool | None = None,
-    monitor_importer_cache: bool | None = None,
-    monitor_sys_path: bool | None = None,
-    deep: bool | None = None,
-    deep_path_hooks: bool | None = None,
-    deep_path_entry_finders: bool | None = None,
-    deep_loaders: bool | None = None,
-    deep_import_outcomes: bool | None = None,
-    deep_import_calls: bool | None = None,
-    speculative_replay: bool | None = None,
-) -> "Iterator[Monitor]":
-    """Observe imports only while the context-managed region is active.
-
-    Nested and overlapping regions share the process-wide monitor. The last
-    region uninstalls it only when the first region began from an inactive
-    monitor. Entering the outermost region around a manually installed monitor
-    emits a warning and leaves that installation active afterward. Mechanisms
-    enabled by nested regions remain enabled until the shared installation ends.
-
-    Args:
-        monitor_path_hooks: Observe ``sys.path_hooks`` mutations and direct
-            reassignment.
-        monitor_importer_cache: Passively observe
-            ``sys.path_importer_cache``.
-        monitor_sys_path: Opt in to reversible ``sys.path`` observation.
-        deep: Enable every deep mechanism not explicitly configured.
-        deep_path_hooks: Replace path hooks with call-capturing delegates.
-        deep_path_entry_finders: Shadow path-entry finder calls as they appear.
-        deep_loaders: Shadow modern loader lifecycle methods.
-        deep_import_outcomes: Observe exact CPython import invocation outcomes.
-        deep_import_calls: Wrap ``builtins.__import__`` to observe every import
-            statement, including ``sys.modules`` cache hits.
-        speculative_replay: At report time, replay a displaced importer-cache
-            finder against a module that later failed on its path.
-
-    Yields:
-        The process-wide monitor collecting events for the region.
-    """
-    global _monitoring_region_count, _monitoring_regions_own_installation, _monitoring_region_transition
-    began_inactive = False
-    warn_preexisting = False
-    with _monitoring_region_condition:
-        while _monitoring_region_transition:
-            _monitoring_region_condition.wait()
-        first_region = _monitoring_region_count == 0
-        if first_region:
-            _monitoring_region_transition = True
-            current = get_monitor()
-            began_inactive = current is None or not current.enabled
-            warn_preexisting = not began_inactive
-        else:
-            # Reserve this region before applying its options so an earlier
-            # region cannot uninstall the shared monitor underneath install().
-            _monitoring_region_count += 1
-    try:
-        if warn_preexisting:
-            warnings.warn(_PREEXISTING_MONITOR_WARNING, RuntimeWarning, stacklevel=3)
-        monitor = install(
-            report_at_exit=False,
-            monitor_path_hooks=monitor_path_hooks,
-            monitor_importer_cache=monitor_importer_cache,
-            monitor_sys_path=monitor_sys_path,
-            deep=deep,
-            deep_path_hooks=deep_path_hooks,
-            deep_path_entry_finders=deep_path_entry_finders,
-            deep_loaders=deep_loaders,
-            deep_import_outcomes=deep_import_outcomes,
-            deep_import_calls=deep_import_calls,
-            speculative_replay=speculative_replay,
-        )
-    except BaseException:
-        if first_region:
-            if began_inactive:
-                partially_installed = get_monitor()
-                if partially_installed is not None:
-                    with suppress(Exception):
-                        partially_installed.uninstall()
-            with _monitoring_region_condition:
-                _monitoring_region_transition = False
-                _monitoring_region_condition.notify_all()
-        else:
-            # An earlier region may have exited while this reserved slot was
-            # applying its options, making this the final release.
-            _release_monitoring_region(get_monitor())
-        raise
-    if first_region:
-        with _monitoring_region_condition:
-            _monitoring_regions_own_installation = began_inactive
-            _monitoring_region_count = 1
-            _monitoring_region_transition = False
-            _monitoring_region_condition.notify_all()
-    try:
-        yield monitor
-    finally:
-        _release_monitoring_region(monitor)
-
-
-def uninstall() -> None:
-    """Undo :func:`install`: restore a plain ``sys.meta_path`` and unshadow finders."""
-    monitor = get_monitor()
-    if monitor is not None:
-        monitor.uninstall()
-
-
-def get_monitor() -> Monitor | None:
-    """Return the process-wide monitor, or None if :func:`install` was never called."""
-    with _singleton_lock:
-        return _monitor_singleton
-
-
-def write_report(
-    destination: "TextIO | str | PathLike[str] | None" = None,
-    *,
-    format: "Literal['text', 'json']" = "text",
-    color: "Literal['auto', 'always', 'never']" = "auto",
-) -> None:
-    """Write a text or JSON report to stderr, a stream, or an atomic file.
-
-    Args:
-        destination: Output stream or exact file path; None selects stderr.
-        format: Text or stable JSON output.
-        color: ANSI color policy for text output. Auto detects a TTY and
-            honors ``NO_COLOR`` and ``TERM=dumb``.
-
-    Raises:
-        RuntimeError: If :func:`install` was never called.
-        ValueError: If ``format`` is unsupported.
-        OSError: If a file or stream write fails.
-    """
-    _report.write_report(_require_monitor(), destination, format=format, color=color)
-
-
-def render_report(*, format: "Literal['text', 'json']" = "text", color: bool = False) -> str:
-    """Return the diagnostic report as text or versioned JSON.
-
-    Args:
-        format: Text or stable JSON output.
-        color: Include ANSI styling in text output. JSON is never styled.
-
-    Raises:
-        RuntimeError: If :func:`install` was never called.
-        ValueError: If ``format`` is unsupported.
-    """
-    return _report.render_report(_require_monitor(), format=format, color=color)
-
-
-def _pid_destination(path: str, pid: int) -> str:
-    """Add ``pid`` to an automatic filename, replacing ``{pid}`` when supplied."""
-    if "{pid}" in path:
-        return path.replace("{pid}", str(pid))
-    stem, suffix = os.path.splitext(path)
-    return f"{stem}.{pid}{suffix}"
-
-
-def _require_monitor() -> Monitor:
-    """Return the singleton monitor.
-
-    Raises:
-        RuntimeError: If :func:`install` was never called.
-    """
-    monitor = get_monitor()
-    if monitor is None:
-        raise RuntimeError("metapathology.install() has not been called")
-    return monitor

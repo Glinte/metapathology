@@ -58,6 +58,37 @@ class InstallRequest(_Record):
     issues: tuple[str, ...]
 
 
+class MonitoringRequest(_Record):
+    """Resolved capture mechanisms consumed by Monitor alone."""
+
+    monitor_path_hooks: bool
+    monitor_importer_cache: bool
+    monitor_sys_path: bool
+    deep_path_hooks: bool
+    deep_path_entry_finders: bool
+    deep_loaders: bool
+    deep_import_outcomes: bool
+    deep_import_calls: bool
+    speculative_replay: bool
+    issues: tuple[str, ...]
+
+
+def monitoring_request(request: InstallRequest) -> MonitoringRequest:
+    """Project a process installation request onto Monitor-owned options."""
+    return MonitoringRequest(
+        monitor_path_hooks=request.monitor_path_hooks,
+        monitor_importer_cache=request.monitor_importer_cache,
+        monitor_sys_path=request.monitor_sys_path,
+        deep_path_hooks=request.deep_path_hooks,
+        deep_path_entry_finders=request.deep_path_entry_finders,
+        deep_loaders=request.deep_loaders,
+        deep_import_outcomes=request.deep_import_outcomes,
+        deep_import_calls=request.deep_import_calls,
+        speculative_replay=request.speculative_replay,
+        issues=request.issues,
+    )
+
+
 def normalize_report_destination(destination: "str | PathLike[str] | None") -> str | None:
     """Reduce an explicit destination before any lifecycle lock is acquired."""
     if destination is None:
