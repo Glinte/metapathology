@@ -22,6 +22,7 @@ from typing import get_args
 from metapathology._report_events import EVENT_KIND
 from metapathology._report_json import _EVENT_JSON_BUILDERS
 from metapathology._report_schema import EventKind
+from metapathology._report_text import _TIMELINE_LINE_BUILDERS
 
 RunPython = Callable[..., "subprocess.CompletedProcess[str]"]
 
@@ -34,6 +35,10 @@ def test_every_event_type_has_a_payload_builder() -> None:
     # Each dispatched event type must have both a stable ``kind`` and a JSON
     # payload builder, so ``_json_event`` can always build a full envelope.
     assert set(_EVENT_JSON_BUILDERS) == set(EVENT_KIND)
+
+
+def test_every_event_type_has_a_text_timeline_builder() -> None:
+    assert set(_TIMELINE_LINE_BUILDERS) == set(EVENT_KIND)
 
 
 _JSON_TYPES: dict[str, type | tuple[type, ...]] = {

@@ -80,6 +80,31 @@ class MonitoringRequest(_Record):
     issues: tuple[str, ...]
 
 
+class _UnresolvedReportingOptions(_Record):
+    """Normalized output options awaiting environment and lifecycle resolution."""
+
+    report_at_exit: bool
+    destinations: list[str]
+    text_destinations: list[str]
+    json_destinations: list[str]
+    color: "_ColorMode | str | None"
+
+
+class _UnresolvedMonitoringOptions(_Record):
+    """Capture options awaiting umbrella-flag and environment resolution."""
+
+    monitor_path_hooks: bool | None
+    monitor_importer_cache: bool | None
+    monitor_sys_path: bool | None
+    deep: bool | None
+    deep_path_hooks: bool | None
+    deep_path_entry_finders: bool | None
+    deep_loaders: bool | None
+    deep_import_outcomes: bool | None
+    deep_import_calls: bool | None
+    speculative_replay: bool | None
+
+
 def monitoring_request(request: InstallRequest) -> MonitoringRequest:
     """Project a process installation request onto Monitor-owned options."""
     return MonitoringRequest(
@@ -128,52 +153,39 @@ def infer_report_format(destination: str) -> "_ReportFormat":
 
 def resolve_install_request(
     *,
-    report_at_exit: bool,
-    report_destination: list[str],
-    report_text: list[str],
-    report_json: list[str],
-    report_color: "_ColorMode | str | None",
-    monitor_path_hooks: bool | None,
-    monitor_importer_cache: bool | None,
-    monitor_sys_path: bool | None,
-    deep: bool | None,
-    deep_path_hooks: bool | None,
-    deep_path_entry_finders: bool | None,
-    deep_loaders: bool | None,
-    deep_import_outcomes: bool | None,
-    deep_import_calls: bool | None,
-    speculative_replay: bool | None,
+    reporting: _UnresolvedReportingOptions,
+    monitoring: _UnresolvedMonitoringOptions,
     use_environment: bool,
     configure_report: bool,
     current_report_targets: tuple[ReportTarget, ...],
 ) -> InstallRequest:
     """Resolve one complete request without mutating monitor or import state."""
     issues: list[str] = []
-    deep_enabled = _resolve_bool(deep, DEEP_ENV, False, issues)
-    resolved_path_hooks = _resolve_bool(monitor_path_hooks, MONITOR_PATH_HOOKS_ENV, True, issues)
+    deep_enabled = _resolve_bool(monitoring.deep, DEEP_ENV, False, issues)
+    resolved_path_hooks = _resolve_bool(monitoring.monitor_path_hooks, MONITOR_PATH_HOOKS_ENV, True, issues)
     resolved_importer_cache = _resolve_bool(
-        monitor_importer_cache,
+        monitoring.monitor_importer_cache,
         MONITOR_IMPORTER_CACHE_ENV,
         True,
         issues,
     )
-    resolved_sys_path = _resolve_bool(monitor_sys_path, MONITOR_SYS_PATH_ENV, deep_enabled, issues)
-    resolved_deep_path_hooks = _resolve_bool(deep_path_hooks, DEEP_PATH_HOOKS_ENV, deep_enabled, issues)
+    resolved_sys_path = _resolve_bool(monitoring.monitor_sys_path, MONITOR_SYS_PATH_ENV, deep_enabled, issues)
+    resolved_deep_path_hooks = _resolve_bool(monitoring.deep_path_hooks, DEEP_PATH_HOOKS_ENV, deep_enabled, issues)
     resolved_deep_path_entry_finders = _resolve_bool(
-        deep_path_entry_finders,
+        monitoring.deep_path_entry_finders,
         DEEP_PATH_ENTRY_FINDERS_ENV,
         deep_enabled,
         issues,
     )
-    resolved_deep_loaders = _resolve_bool(deep_loaders, DEEP_LOADERS_ENV, deep_enabled, issues)
+    resolved_deep_loaders = _resolve_bool(monitoring.deep_loaders, DEEP_LOADERS_ENV, deep_enabled, issues)
     resolved_deep_import_outcomes = _resolve_bool(
-        deep_import_outcomes,
+        monitoring.deep_import_outcomes,
         DEEP_IMPORT_OUTCOMES_ENV,
         deep_enabled,
         issues,
     )
     resolved_deep_import_calls = _resolve_bool(
-        deep_import_calls,
+        monitoring.deep_import_calls,
         DEEP_IMPORT_CALLS_ENV,
         deep_enabled,
         issues,
@@ -181,23 +193,23 @@ def resolve_install_request(
     # Independent of --deep: deep capture delegates along paths the target
     # actually took, while speculative replay invokes a path it did not.
     resolved_speculative_replay = _resolve_bool(
-        speculative_replay,
+        monitoring.speculative_replay,
         SPECULATIVE_REPLAY_ENV,
         False,
         issues,
     )
     targets = _resolve_report_targets(
-        destinations=report_destination,
-        text_destinations=report_text,
-        json_destinations=report_json,
-        color=report_color,
+        destinations=reporting.destinations,
+        text_destinations=reporting.text_destinations,
+        json_destinations=reporting.json_destinations,
+        color=reporting.color,
         use_environment=use_environment,
         configure=configure_report,
         current_targets=current_report_targets,
         issues=issues,
     )
     return InstallRequest(
-        report_at_exit=report_at_exit,
+        report_at_exit=reporting.report_at_exit,
         report_targets=targets,
         monitor_path_hooks=resolved_path_hooks,
         monitor_importer_cache=resolved_importer_cache,

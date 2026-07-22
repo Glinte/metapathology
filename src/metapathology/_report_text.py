@@ -40,14 +40,24 @@ from metapathology._report_model import (
     finding_route_comparison_id,
     finding_structural_comparison,
 )
+from metapathology._report_text_context import (
+    _ANSI_BOLD_CYAN,
+    _ANSI_BOLD_RED,
+    _ANSI_RESET,
+    _ref_label,
+    _RenderContext,
+)
 
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from traceback import StackSummary
+    from typing import TypeVar
 
     from metapathology._module_metadata import ModuleMetadata
+
+    _EventT = TypeVar("_EventT", bound=MonitorEvent)
 
 
 # This package's own directory, normcased for comparison: used to drop our
@@ -62,12 +72,6 @@ _STANDARD_FINDER_IDS = frozenset((id(BuiltinImporter), id(FrozenImporter), id(Pa
 # Max claimed modules listed per finder in the attribution section.
 _MAX_LISTED_MODULES = 25
 _MAX_CACHE_CHANGES_PER_DIFF = 25
-_ANSI_RESET = "\x1b[0m"
-_ANSI_BOLD_CYAN = "\x1b[1;36m"
-_ANSI_BOLD_RED = "\x1b[1;31m"
-_ANSI_GREEN = "\x1b[32m"
-_ANSI_YELLOW = "\x1b[33m"
-_ANSI_CYAN = "\x1b[36m"
 # Loader type names shipped by CPython's import machinery (zipimport
 # included). Their inventory groups are summarized as counts in text; a class
 # merely named like one of these still shows up because any metadata
@@ -86,158 +90,11 @@ _STANDARD_LOADER_NAMES = frozenset(
 )
 
 
-class _RenderContext:
-    """Per-document display state computed once before rendering.
-
-    Holds the base directory for path shortening, whether the per-line
-    ``[thread ...]`` suffix can be elided (single-threaded capture), and which
-    display labels need an ``id 0x...`` suffix because several distinct
-    objects share them. Ambiguity is tracked per display domain (finders vs
-    path hooks) so that, for example, many per-module loader instances do not
-    force hex ids back onto unrelated sections.
-    """
-
-    __slots__ = (
-        "_base",
-        "_base_prefix",
-        "color",
-        "comparisons_by_id",
-        "finder_ambiguous",
-        "hook_ambiguous",
-        "only_thread",
-        "relevant_cache_paths",
-        "routes_by_id",
-    )
-
-    def __init__(self, document: ReportDocument, *, color: bool) -> None:
-        self.color = color
-        cwd = document.process.cwd
-        if cwd:
-            base = os.path.normcase(cwd).rstrip(os.sep)
-            self._base: str | None = base
-            self._base_prefix: str | None = base + os.sep
-        else:
-            self._base = None
-            self._base_prefix = None
-
-        threads = {
-            thread
-            for thread in (getattr(event, "thread_name", None) for event in document.analysis.events)
-            if thread is not None
-        }
-        self.only_thread: str | None = next(iter(threads)) if len(threads) == 1 else None
-
-        finder_ids: dict[str, set[int]] = {}
-        hook_ids: dict[str, set[int]] = {}
-        for event in document.analysis.events:
-            if isinstance(event, FindSpecCall):
-                finder_ids.setdefault(event.finder_type_name, set()).add(event.finder_id)
-            elif isinstance(event, PathHooksMutation):
-                for reference in (*event.added, *event.removed, *event.contents_after):
-                    _note_label(hook_ids, reference)
-            elif isinstance(event, PathHooksReassignment):
-                for reference in (*event.old_contents, *event.new_contents):
-                    _note_label(hook_ids, reference)
-        for reference in (*document.path_hooks.initial, *(document.path_hooks.current or ())):
-            _note_label(hook_ids, reference)
-        self.finder_ambiguous = {label for label, ids in finder_ids.items() if len(ids) > 1}
-        self.hook_ambiguous = {label for label, ids in hook_ids.items() if len(ids) > 1}
-        self.routes_by_id = {route.route_id: route for route in document.analysis.resolution_routes}
-        self.comparisons_by_id = {
-            comparison.comparison_id: comparison for comparison in document.analysis.route_comparisons
-        }
-
-        relevant_cache_paths: set[str] = set()
-        for finding in document.analysis.findings:
-            structural = finding_structural_comparison(finding)
-            if structural is not None:
-                relevant_cache_paths.update(os.path.normcase(path) for path in structural.importer_cache_changed_paths)
-        for route in document.analysis.resolution_routes:
-            relevant_cache_paths.update(os.path.normcase(path) for path in route.search_path)
-        self.relevant_cache_paths = relevant_cache_paths
-
-    def display_path(self, path: str) -> str:
-        """Shorten a path under the report's base directory."""
-        if self._base is None or self._base_prefix is None:
-            return path
-        # normcase preserves length, so slicing the original keeps its casing.
-        normalized = os.path.normcase(path)
-        if normalized.rstrip(os.sep) == self._base:
-            return "<project>"
-        if normalized.startswith(self._base_prefix):
-            return path[len(self._base_prefix) :]
-        return path
-
-    def quoted_path(self, path: str) -> str:
-        """Quote a shortened path without repr's backslash escaping."""
-        return f"'{self.display_path(path)}'"
-
-    def finder_label(self, type_name: str, finder_id: int) -> str:
-        """Name an instrumented finder, adding its id only when the type name is ambiguous."""
-        if type_name in self.finder_ambiguous:
-            return f"{type_name} id 0x{finder_id:x}"
-        return type_name
-
-    def hook_ref(self, reference: ObjectRef) -> str:
-        """Name a path hook, adding its id only when the display label is ambiguous."""
-        label = _ref_label(reference)
-        if label in self.hook_ambiguous:
-            return f"{label} id 0x{reference.object_id:x}"
-        return label
-
-    def hook_refs(self, references: tuple[ObjectRef, ...]) -> str:
-        """Format a path-hook snapshot."""
-        return "[" + ", ".join(self.hook_ref(reference) for reference in references) + "]"
-
-    def thread_suffix(self, thread_name: str) -> str:
-        """Per-line thread marker, elided when the whole capture is single-threaded."""
-        return "" if self.only_thread is not None else f" [thread {thread_name}]"
-
-    def styled(self, text: str, ansi: str) -> str:
-        """Wrap one semantic token in ANSI escapes when color is enabled."""
-        return f"{ansi}{text}{_ANSI_RESET}" if self.color else text
-
-    def heading(self, text: str) -> str:
-        """Style a report or section heading."""
-        return self.styled(text, _ANSI_BOLD_CYAN)
-
-    def severity(self, text: str, severity: str) -> str:
-        """Style a compact marker according to finding severity."""
-        ansi = {
-            "actionable": _ANSI_BOLD_RED,
-            "warning": _ANSI_YELLOW,
-            "informational": _ANSI_CYAN,
-        }.get(severity, _ANSI_CYAN)
-        return self.styled(text, ansi)
-
-    def positive(self, text: str) -> str:
-        """Style a positive status marker."""
-        return self.styled(text, _ANSI_GREEN)
-
-    def negative(self, text: str) -> str:
-        """Style a failure or removal marker."""
-        return self.styled(text, _ANSI_BOLD_RED)
-
-    def warning(self, text: str) -> str:
-        """Style a warning or replacement marker."""
-        return self.styled(text, _ANSI_YELLOW)
-
-
-def _note_label(ids_by_label: dict[str, set[int]], reference: ObjectRef) -> None:
-    """Record one displayed label/id pair for ambiguity detection."""
-    ids_by_label.setdefault(_ref_label(reference), set()).add(reference.object_id)
-
-
-def _ref_label(reference: ObjectRef) -> str:
-    """Preferred display label: the callable's own name, else its type name."""
-    return reference.type_name if reference.name is None else reference.name
-
-
 def _iter_event_section(
     empty_sections: list[str],
-    items: list,
+    items: "list[_EventT]",
     label: str,
-    render_item: "Callable[..., list[str]]",
+    render_item: "Callable[[_EventT, _RenderContext], list[str]]",
     context: _RenderContext,
     *,
     record_empty: bool = True,
@@ -305,20 +162,7 @@ class _TextReportRenderer:
         self.mutations = buckets.meta_path_mutations
         self.calls = buckets.finder_calls
         self.errors = buckets.internal_errors
-        self.event_log_sections: tuple[tuple[list, str, Callable[..., list[str]], bool], ...] = (
-            (self.mutations, "sys.meta_path mutations", _mutation_lines, True),
-            (buckets.meta_path_reassignments, "sys.meta_path reassignments", _reassignment_lines, True),
-            (buckets.path_hook_mutations, "sys.path_hooks mutations", _path_hooks_mutation_lines, True),
-            (buckets.path_hook_reassignments, "sys.path_hooks reassignments", _path_hooks_reassignment_lines, True),
-            (buckets.sys_path_mutations, "sys.path mutations", _sys_path_mutation_lines, document.sys_path_enabled),
-            (
-                buckets.sys_path_reassignments,
-                "sys.path reassignments",
-                _sys_path_reassignment_lines,
-                document.sys_path_enabled,
-            ),
-            (buckets.importer_cache_diffs, "sys.path_importer_cache changes", _importer_cache_diff_lines, True),
-        )
+        self.buckets = buckets
 
     def iter_lines(self) -> "Iterator[str]":
         yield from self._render_header()
@@ -419,9 +263,58 @@ class _TextReportRenderer:
         else:
             self._empty.append("finder calls")
         yield from self._render_contracts_and_timeline()
-        for items, label, renderer, record_empty in self.event_log_sections:
-            yield from _iter_event_section(self._empty, items, label, renderer, self.context, record_empty=record_empty)
+        yield from self._render_event_sections()
         yield from self._render_replays()
+
+    def _render_event_sections(self) -> "Iterator[str]":
+        """Render independently typed exhaustive-event sections."""
+        yield from _iter_event_section(
+            self._empty, self.mutations, "sys.meta_path mutations", _mutation_lines, self.context
+        )
+        yield from _iter_event_section(
+            self._empty,
+            self.buckets.meta_path_reassignments,
+            "sys.meta_path reassignments",
+            _reassignment_lines,
+            self.context,
+        )
+        yield from _iter_event_section(
+            self._empty,
+            self.buckets.path_hook_mutations,
+            "sys.path_hooks mutations",
+            _path_hooks_mutation_lines,
+            self.context,
+        )
+        yield from _iter_event_section(
+            self._empty,
+            self.buckets.path_hook_reassignments,
+            "sys.path_hooks reassignments",
+            _path_hooks_reassignment_lines,
+            self.context,
+        )
+        yield from _iter_event_section(
+            self._empty,
+            self.buckets.sys_path_mutations,
+            "sys.path mutations",
+            _sys_path_mutation_lines,
+            self.context,
+            record_empty=self.document.sys_path_enabled,
+        )
+        yield from _iter_event_section(
+            self._empty,
+            self.buckets.sys_path_reassignments,
+            "sys.path reassignments",
+            _sys_path_reassignment_lines,
+            self.context,
+            record_empty=self.document.sys_path_enabled,
+        )
+        yield from _iter_event_section(
+            self._empty,
+            self.buckets.importer_cache_diffs,
+            "sys.path_importer_cache changes",
+            _importer_cache_diff_lines,
+            self.context,
+        )
 
     def _render_contracts_and_timeline(self) -> "Iterator[str]":
         contracts = _finder_contract_lines(self.document.analysis.finder_contracts, self.context)

@@ -63,6 +63,7 @@ from metapathology._report_model import (
 from metapathology._report_schema import (
     DeepDiagnosticCallDataJSON,
     DeepImportEventDataJSON,
+    DiagnosticsInfo,
     EarlySiteBootstrapJSON,
     EventDataJSON,
     EventJSON,
@@ -95,11 +96,13 @@ from metapathology._report_schema import (
     ModuleStateJSON,
     PathHooksMutationDataJSON,
     PathHooksReassignmentDataJSON,
+    ProcessInfo,
     ReassignmentDataJSON,
     ReportJSON,
     ReportStatus,
     ResolutionRouteJSON,
     RouteComparisonJSON,
+    SnapshotJSON,
     SpecSummaryJSON,
     SpeculativeReplayInfoJSON,
     SpeculativeReplayJSON,
@@ -158,27 +161,72 @@ def _json_events(
     return timeline, counts, internal_error_refs
 
 
-class _JSONDocumentBuilder:
-    """Own one stable-schema projection pass for a captured report document."""
-
-    def __init__(self, document: ReportDocument) -> None:
-        self.document = document
-
-    def build(self) -> ReportJSON:
-        return _build_json_document(self.document)
-
-
 def json_document(document: ReportDocument) -> ReportJSON:
     """Project one report document onto the stable JSON schema."""
-    return _JSONDocumentBuilder(document).build()
+    return _build_json_document(document)
 
 
 def _build_json_document(document: ReportDocument) -> ReportJSON:
     """Project one report document onto the stable JSON schema."""
     timeline, event_counts, internal_error_refs = _json_events(document.analysis.events)
     report_status: ReportStatus = "partial" if document.analysis.report_errors or internal_error_refs else "complete"
+    return {
+        "schema": {"major": _SCHEMA_MAJOR, "minor": _SCHEMA_MINOR, "name": _SCHEMA_NAME},
+        "report_status": report_status,
+        "tool": {"name": "metapathology", "version": __version__},
+        "generated_at": document.process.generated_at,
+        "process": _json_process(document),
+        "capture": {
+            "baseline_module_count": document.capture.baseline_module_count,
+            "cutoff_seq": document.capture.cutoff_seq,
+            "early_site_bootstrap": _json_early_site_bootstrap(document.capture.early_site_bootstrap),
+            "frozen_bootstrap": _json_frozen_bootstrap(document.capture.frozen_bootstrap),
+            "enabled": document.capture.monitor_enabled,
+            "mechanisms": _json_mechanisms(document, event_counts),
+            "modules_since_install": None
+            if document.capture.modules_since_install is None
+            else list(document.capture.modules_since_install),
+        },
+        "snapshots": _json_snapshots(document),
+        "loader_inventory": _json_loader_inventory(document.analysis.loader_inventory),
+        "finder_contracts": [_json_finder_contract(contract) for contract in document.analysis.finder_contracts],
+        "import_attempts": [_json_import_attempt(attempt) for attempt in document.analysis.attempts],
+        "standard_resolutions": [
+            _json_standard_resolution(resolution) for resolution in document.analysis.standard_resolutions
+        ],
+        "resolution_routes": [_json_resolution_route(route) for route in document.analysis.resolution_routes],
+        "route_comparisons": [_json_route_comparison(comparison) for comparison in document.analysis.route_comparisons],
+        "timeline": timeline,
+        "findings": [_json_finding(finding) for finding in document.analysis.findings],
+        "explanations": [_json_explanation(explanation) for explanation in document.analysis.explanations],
+        "summary": _json_summary(document.analysis.summary),
+        "speculative_replay": _json_speculative_replay(document),
+        "target_outcome": _json_target_outcome(document.analysis.target_outcome),
+        "diagnostics": _json_diagnostics(document, internal_error_refs),
+    }
+
+
+def _json_process(document: ReportDocument) -> ProcessInfo:
+    """Project process metadata that is completed from the current interpreter."""
     version = sys.version_info
-    mechanisms: list[MechanismJSON] = [
+    return {
+        "argv": list(document.process.argv),
+        "cwd": document.process.cwd,
+        "executable": sys.executable if isinstance(sys.executable, str) else None,
+        "implementation": sys.implementation.name,
+        "parent_pid": os.getppid(),
+        "pid": os.getpid(),
+        "platform": sys.platform,
+        "python_version": f"{version.major}.{version.minor}.{version.micro}",
+    }
+
+
+def _json_mechanisms(
+    document: ReportDocument,
+    event_counts: "dict[EventCountKind, int]",
+) -> list[MechanismJSON]:
+    """Describe the independently enabled capture mechanisms."""
+    return [
         _mechanism("meta_path_mutations", document.capture.monitor_enabled, event_counts["mutations"], "best_effort"),
         _mechanism(
             "meta_path_reassignments",
@@ -247,111 +295,78 @@ def _build_json_document(document: ReportDocument) -> ReportJSON:
             "passive_boundaries",
         ),
     ]
+
+
+def _json_snapshots(document: ReportDocument) -> list[SnapshotJSON]:
+    """Project install- and report-time import-state snapshots."""
+    return [
+        {
+            "data": {"entries": list(document.meta_path.initial)},
+            "id": "snapshot:install",
+            "kind": "meta_path",
+            "phase": "install",
+        },
+        {
+            "data": {"entries": None if document.meta_path.current is None else list(document.meta_path.current)},
+            "id": "snapshot:report",
+            "kind": "meta_path",
+            "phase": "report",
+        },
+        {
+            "data": {"entries": [_json_import_object(reference) for reference in document.path_hooks.initial]},
+            "id": "snapshot:path-hooks:install",
+            "kind": "path_hooks",
+            "phase": "install",
+        },
+        {
+            "data": {
+                "entries": None
+                if document.path_hooks.current is None
+                else [_json_import_object(reference) for reference in document.path_hooks.current]
+            },
+            "id": "snapshot:path-hooks:report",
+            "kind": "path_hooks",
+            "phase": "report",
+        },
+        {
+            "data": {
+                "entries": [_json_importer_cache_entry(entry) for entry in document.importer_cache.initial],
+                "non_string_keys": document.importer_cache.initial_non_string_keys,
+            },
+            "id": "snapshot:importer-cache:install",
+            "kind": "importer_cache",
+            "phase": "install",
+        },
+        {
+            "data": {
+                "entries": None
+                if document.importer_cache.current is None
+                else [_json_importer_cache_entry(entry) for entry in document.importer_cache.current],
+                "non_string_keys": document.importer_cache.current_non_string_keys,
+            },
+            "id": "snapshot:importer-cache:report",
+            "kind": "importer_cache",
+            "phase": "report",
+        },
+    ]
+
+
+def _json_diagnostics(document: ReportDocument, internal_error_refs: list[str]) -> DiagnosticsInfo:
+    """Project failures isolated while observing or reporting."""
     return {
-        "schema": {"major": _SCHEMA_MAJOR, "minor": _SCHEMA_MINOR, "name": _SCHEMA_NAME},
-        "report_status": report_status,
-        "tool": {"name": "metapathology", "version": __version__},
-        "generated_at": document.process.generated_at,
-        "process": {
-            "argv": list(document.process.argv),
-            "cwd": document.process.cwd,
-            "executable": sys.executable if isinstance(sys.executable, str) else None,
-            "implementation": sys.implementation.name,
-            "parent_pid": os.getppid(),
-            "pid": os.getpid(),
-            "platform": sys.platform,
-            "python_version": f"{version.major}.{version.minor}.{version.micro}",
-        },
-        "capture": {
-            "baseline_module_count": document.capture.baseline_module_count,
-            "cutoff_seq": document.capture.cutoff_seq,
-            "early_site_bootstrap": _json_early_site_bootstrap(document.capture.early_site_bootstrap),
-            "frozen_bootstrap": _json_frozen_bootstrap(document.capture.frozen_bootstrap),
-            "enabled": document.capture.monitor_enabled,
-            "mechanisms": mechanisms,
-            "modules_since_install": None
-            if document.capture.modules_since_install is None
-            else list(document.capture.modules_since_install),
-        },
-        "snapshots": [
-            {
-                "data": {"entries": list(document.meta_path.initial)},
-                "id": "snapshot:install",
-                "kind": "meta_path",
-                "phase": "install",
-            },
-            {
-                "data": {"entries": None if document.meta_path.current is None else list(document.meta_path.current)},
-                "id": "snapshot:report",
-                "kind": "meta_path",
-                "phase": "report",
-            },
-            {
-                "data": {"entries": [_json_import_object(reference) for reference in document.path_hooks.initial]},
-                "id": "snapshot:path-hooks:install",
-                "kind": "path_hooks",
-                "phase": "install",
-            },
-            {
-                "data": {
-                    "entries": None
-                    if document.path_hooks.current is None
-                    else [_json_import_object(reference) for reference in document.path_hooks.current]
-                },
-                "id": "snapshot:path-hooks:report",
-                "kind": "path_hooks",
-                "phase": "report",
-            },
-            {
-                "data": {
-                    "entries": [_json_importer_cache_entry(entry) for entry in document.importer_cache.initial],
-                    "non_string_keys": document.importer_cache.initial_non_string_keys,
-                },
-                "id": "snapshot:importer-cache:install",
-                "kind": "importer_cache",
-                "phase": "install",
-            },
-            {
-                "data": {
-                    "entries": None
-                    if document.importer_cache.current is None
-                    else [_json_importer_cache_entry(entry) for entry in document.importer_cache.current],
-                    "non_string_keys": document.importer_cache.current_non_string_keys,
-                },
-                "id": "snapshot:importer-cache:report",
-                "kind": "importer_cache",
-                "phase": "report",
-            },
+        "internal_error_refs": internal_error_refs,
+        "report_errors": [
+            {"exception_type_name": error.exception_type_name, "where": error.where}
+            for error in document.analysis.report_errors
         ],
-        "loader_inventory": _json_loader_inventory(document.analysis.loader_inventory),
-        "finder_contracts": [_json_finder_contract(contract) for contract in document.analysis.finder_contracts],
-        "import_attempts": [_json_import_attempt(attempt) for attempt in document.analysis.attempts],
-        "standard_resolutions": [
-            _json_standard_resolution(resolution) for resolution in document.analysis.standard_resolutions
+        "skipped_finders": [
+            {
+                "expected": skipped.expected,
+                "finder_type_name": skipped.finder_type_name,
+                "reason": skipped.reason,
+            }
+            for skipped in document.analysis.skipped_finders
         ],
-        "resolution_routes": [_json_resolution_route(route) for route in document.analysis.resolution_routes],
-        "route_comparisons": [_json_route_comparison(comparison) for comparison in document.analysis.route_comparisons],
-        "timeline": timeline,
-        "findings": [_json_finding(finding) for finding in document.analysis.findings],
-        "explanations": [_json_explanation(explanation) for explanation in document.analysis.explanations],
-        "summary": _json_summary(document.analysis.summary),
-        "speculative_replay": _json_speculative_replay(document),
-        "target_outcome": _json_target_outcome(document.analysis.target_outcome),
-        "diagnostics": {
-            "internal_error_refs": internal_error_refs,
-            "report_errors": [
-                {"exception_type_name": error.exception_type_name, "where": error.where}
-                for error in document.analysis.report_errors
-            ],
-            "skipped_finders": [
-                {
-                    "expected": skipped.expected,
-                    "finder_type_name": skipped.finder_type_name,
-                    "reason": skipped.reason,
-                }
-                for skipped in document.analysis.skipped_finders
-            ],
-        },
     }
 
 
