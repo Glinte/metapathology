@@ -59,6 +59,7 @@ if TYPE_CHECKING:
         "repeated_loader_execution",
     ]
     FindingEvidenceLevel = Literal["post_hoc", "captured", "correlated", "structural_inference"]
+    FindingDetail = Literal["bare", "correlation", "contract", "claim", "route", "deep_call"]
     ImportPresence = Literal["unknown", "present_at_report", "absent_at_report"]
     ResolutionCategory = Literal["namespace", "built_in", "frozen", "source", "bytecode", "extension", "zip"]
     StatePhase = Literal["import", "report"]
@@ -391,26 +392,122 @@ def _path_key(path: str) -> str:
     return os.path.normcase(os.path.abspath(path))
 
 
+class BareEvidence(_Record):
+    """Finding carrying no structured evidence beyond its supporting events."""
+
+    detail: 'Literal["bare"]' = "bare"
+
+
+class CorrelationEvidence(_Record):
+    """Finding correlated across several import attempts by shared route."""
+
+    attempt_ids: tuple[int, ...]
+    detail: 'Literal["correlation"]' = "correlation"
+
+
+class ContractEvidence(_Record):
+    """Finding backed by one observed finder contract."""
+
+    finder_contract: FinderContract
+    detail: 'Literal["contract"]' = "contract"
+
+
+class ClaimEvidence(_Record):
+    """Finding backed by one captured ``find_spec`` claim."""
+
+    claim: FindSpecCall
+    detail: 'Literal["claim"]' = "claim"
+
+
+class RouteEvidence(_Record):
+    """Finding backed by a captured claim compared against a probed route."""
+
+    claim: FindSpecCall
+    route_ids: tuple[str, ...]
+    route_comparison_id: str
+    structural_comparison: StructuralComparison
+    detail: 'Literal["route"]' = "route"
+
+
+class DeepCallEvidence(_Record):
+    """Finding backed by one deep-diagnostic delegation boundary."""
+
+    deep_call: DeepDiagnosticCall
+    module_state_baseline: ModuleCacheState | None = None
+    detail: 'Literal["deep_call"]' = "deep_call"
+
+
+# Evidence variants are a total function of ``Finding.kind``: each kind always
+# builds exactly one variant (see ``_report_analysis``). Consumers narrow on the
+# variant type instead of re-checking optional fields.
+FindingEvidence = (
+    BareEvidence | CorrelationEvidence | ContractEvidence | ClaimEvidence | RouteEvidence | DeepCallEvidence
+)
+
+
 class Finding(_Record):
     """Structured evidence for one human or machine-readable finding."""
 
     finding_id: str
     kind: "FindingKind"
     module: str
-    claim: FindSpecCall | None = None
-    route_ids: tuple[str, ...] = ()
-    route_comparison_id: str | None = None
-    structural_comparison: StructuralComparison | None = None
-    deep_call: DeepDiagnosticCall | None = None
+    evidence: FindingEvidence = BareEvidence()
     evidence_level: "FindingEvidenceLevel" = "post_hoc"
     limitations: tuple[str, ...] = ()
     subject_kind: "FindingSubjectKind" = "module"
-    finder_contract: FinderContract | None = None
     supporting_event_seqs: tuple[int, ...] = ()
     severity: "FindingSeverity" = "warning"
     signals: tuple[str, ...] = ()
-    module_state_baseline: ModuleCacheState | None = None
-    attempt_ids: tuple[int, ...] = ()
+
+
+def finding_claim(finding: "Finding") -> FindSpecCall | None:
+    """Return the captured claim a finding carries, regardless of its kind."""
+    evidence = finding.evidence
+    if isinstance(evidence, (ClaimEvidence, RouteEvidence)):
+        return evidence.claim
+    return None
+
+
+def finding_deep_call(finding: "Finding") -> DeepDiagnosticCall | None:
+    """Return the deep-diagnostic boundary a finding carries, if any."""
+    evidence = finding.evidence
+    return evidence.deep_call if isinstance(evidence, DeepCallEvidence) else None
+
+
+def finding_structural_comparison(finding: "Finding") -> StructuralComparison | None:
+    """Return the structural comparison a finding carries, if any."""
+    evidence = finding.evidence
+    return evidence.structural_comparison if isinstance(evidence, RouteEvidence) else None
+
+
+def finding_route_comparison_id(finding: "Finding") -> str | None:
+    """Return the route-comparison id a finding references, if any."""
+    evidence = finding.evidence
+    return evidence.route_comparison_id if isinstance(evidence, RouteEvidence) else None
+
+
+def finding_route_ids(finding: "Finding") -> tuple[str, ...]:
+    """Return the route ids a finding references, if any."""
+    evidence = finding.evidence
+    return evidence.route_ids if isinstance(evidence, RouteEvidence) else ()
+
+
+def finding_finder_contract(finding: "Finding") -> FinderContract | None:
+    """Return the finder contract a finding carries, if any."""
+    evidence = finding.evidence
+    return evidence.finder_contract if isinstance(evidence, ContractEvidence) else None
+
+
+def finding_attempt_ids(finding: "Finding") -> tuple[int, ...]:
+    """Return the correlated attempt ids a finding carries, if any."""
+    evidence = finding.evidence
+    return evidence.attempt_ids if isinstance(evidence, CorrelationEvidence) else ()
+
+
+def finding_module_state_baseline(finding: "Finding") -> ModuleCacheState | None:
+    """Return the deep-call module-state baseline a finding carries, if any."""
+    evidence = finding.evidence
+    return evidence.module_state_baseline if isinstance(evidence, DeepCallEvidence) else None
 
 
 class CausalExplanation(_Record):

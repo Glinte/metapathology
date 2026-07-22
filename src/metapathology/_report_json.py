@@ -50,6 +50,14 @@ from metapathology._report_model import (
     StandardResolution,
     StructuralComparison,
     TargetOutcome,
+    finding_attempt_ids,
+    finding_claim,
+    finding_deep_call,
+    finding_finder_contract,
+    finding_module_state_baseline,
+    finding_route_comparison_id,
+    finding_route_ids,
+    finding_structural_comparison,
 )
 from metapathology._report_schema import (
     DeepDiagnosticCallDataJSON,
@@ -899,7 +907,7 @@ def _json_finding(finding: Finding) -> FindingJSON:
         "id": finding.finding_id,
         "kind": finding.kind,
         "module": finding.module,
-        "module_state_baseline": _json_module_state(finding.module_state_baseline),
+        "module_state_baseline": _json_module_state(finding_module_state_baseline(finding)),
         "severity": finding.severity,
         "signals": list(finding.signals),
         "subject": {"kind": finding.subject_kind, "value": finding.module},
@@ -907,8 +915,9 @@ def _json_finding(finding: Finding) -> FindingJSON:
     _add_finding_references(result, finding)
     _add_finding_claim(result, evidence, finding)
     _add_finding_deep_call(result, finding)
-    if finding.structural_comparison is not None:
-        result["structural_comparison"] = _json_structural_comparison(finding.structural_comparison)
+    structural = finding_structural_comparison(finding)
+    if structural is not None:
+        result["structural_comparison"] = _json_structural_comparison(structural)
     if finding.kind == "no_spec":
         evidence["finder_claim"] = "not_recorded"
         evidence["module_spec"] = "missing"
@@ -917,15 +926,19 @@ def _json_finding(finding: Finding) -> FindingJSON:
 
 def _json_finding_evidence(finding: Finding) -> FindingEvidenceJSON:
     event_refs: list[str] = []
-    if finding.claim is not None:
-        event_refs.append(f"event:{finding.claim.seq}")
-    if finding.deep_call is not None:
-        event_refs.append(f"event:{finding.deep_call.seq}")
-    if finding.finder_contract is not None and finding.finder_contract.observation_seq is not None:
-        event_refs.append(f"event:{finding.finder_contract.observation_seq}")
+    claim = finding_claim(finding)
+    if claim is not None:
+        event_refs.append(f"event:{claim.seq}")
+    deep_call = finding_deep_call(finding)
+    if deep_call is not None:
+        event_refs.append(f"event:{deep_call.seq}")
+    contract = finding_finder_contract(finding)
+    if contract is not None and contract.observation_seq is not None:
+        event_refs.append(f"event:{contract.observation_seq}")
     event_refs.extend(f"event:{seq}" for seq in finding.supporting_event_seqs)
-    if finding.structural_comparison is not None:
-        event_refs.extend(f"event:{seq}" for seq in finding.structural_comparison.importer_cache_event_seqs)
+    structural = finding_structural_comparison(finding)
+    if structural is not None:
+        event_refs.extend(f"event:{seq}" for seq in structural.importer_cache_event_seqs)
     return {
         "event_refs": list(dict.fromkeys(event_refs)),
         "level": finding.evidence_level,
@@ -934,47 +947,51 @@ def _json_finding_evidence(finding: Finding) -> FindingEvidenceJSON:
 
 
 def _add_finding_references(result: FindingJSON, finding: Finding) -> None:
-    if finding.attempt_ids:
-        result["attempt_refs"] = [f"attempt:{attempt_id}" for attempt_id in finding.attempt_ids]
-    if finding.finder_contract is not None:
-        result["finder_contract_ref"] = _finder_contract_id(finding.finder_contract)
-    if finding.route_ids:
-        result["route_refs"] = list(finding.route_ids)
-    if finding.route_comparison_id is not None:
-        result["route_comparison_ref"] = finding.route_comparison_id
+    attempt_ids = finding_attempt_ids(finding)
+    if attempt_ids:
+        result["attempt_refs"] = [f"attempt:{attempt_id}" for attempt_id in attempt_ids]
+    contract = finding_finder_contract(finding)
+    if contract is not None:
+        result["finder_contract_ref"] = _finder_contract_id(contract)
+    route_ids = finding_route_ids(finding)
+    if route_ids:
+        result["route_refs"] = list(route_ids)
+    route_comparison_id = finding_route_comparison_id(finding)
+    if route_comparison_id is not None:
+        result["route_comparison_ref"] = route_comparison_id
 
 
 def _add_finding_claim(result: FindingJSON, evidence: FindingEvidenceJSON, finding: Finding) -> None:
-    if finding.claim is not None:
+    claim = finding_claim(finding)
+    if claim is not None:
         result["claim"] = {
-            "event_ref": f"event:{finding.claim.seq}",
-            "finder_id": f"0x{finding.claim.finder_id:x}",
-            "finder_type_name": finding.claim.finder_type_name,
-            "loader_type_name": finding.claim.loader_type_name,
-            "origin": finding.claim.origin,
-            "search_path": list(finding.claim.search_path),
-            "search_path_kind": finding.claim.search_path_kind,
-            "spec": None if finding.claim.spec_summary is None else _json_spec_summary(finding.claim.spec_summary),
+            "event_ref": f"event:{claim.seq}",
+            "finder_id": f"0x{claim.finder_id:x}",
+            "finder_type_name": claim.finder_type_name,
+            "loader_type_name": claim.loader_type_name,
+            "origin": claim.origin,
+            "search_path": list(claim.search_path),
+            "search_path_kind": claim.search_path_kind,
+            "spec": None if claim.spec_summary is None else _json_spec_summary(claim.spec_summary),
         }
         if finding.kind == "finder_side_effect":
-            evidence["module_state_after"] = _json_module_state(finding.claim.module_state_after)
-            evidence["module_state_before"] = _json_module_state(finding.claim.module_state_before)
+            evidence["module_state_after"] = _json_module_state(claim.module_state_after)
+            evidence["module_state_before"] = _json_module_state(claim.module_state_before)
             evidence["outcome"] = (
-                f"raised:{finding.claim.exception_type_name}"
-                if finding.claim.exception_type_name is not None
-                else "declined"
+                f"raised:{claim.exception_type_name}" if claim.exception_type_name is not None else "declined"
             )
 
 
 def _add_finding_deep_call(result: FindingJSON, finding: Finding) -> None:
-    if finding.deep_call is not None:
+    deep_call = finding_deep_call(finding)
+    if deep_call is not None:
         result["deep_call"] = {
-            "boundary": finding.deep_call.boundary,
-            "event_ref": f"event:{finding.deep_call.seq}",
-            "module_state_after": _json_module_state(finding.deep_call.module_state_after),
-            "module_state_before": _json_module_state(finding.deep_call.module_state_before),
-            "outcome": finding.deep_call.outcome,
-            "target_state": _json_module_state(finding.deep_call.target_state),
+            "boundary": deep_call.boundary,
+            "event_ref": f"event:{deep_call.seq}",
+            "module_state_after": _json_module_state(deep_call.module_state_after),
+            "module_state_before": _json_module_state(deep_call.module_state_before),
+            "outcome": deep_call.outcome,
+            "target_state": _json_module_state(deep_call.target_state),
         }
 
 

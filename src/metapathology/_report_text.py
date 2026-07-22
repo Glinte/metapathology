@@ -27,12 +27,18 @@ from metapathology._records import (
 from metapathology._report_analysis import unresolved_attempts
 from metapathology._report_model import (
     CausalExplanation,
+    ContractEvidence,
+    DeepCallEvidence,
     Finding,
     ReportDocument,
     ResolutionRoute,
     RouteComparison,
     StandardResolution,
     StructuralComparison,
+    finding_claim,
+    finding_deep_call,
+    finding_route_comparison_id,
+    finding_structural_comparison,
 )
 
 TYPE_CHECKING = False
@@ -143,10 +149,9 @@ class _RenderContext:
 
         relevant_cache_paths: set[str] = set()
         for finding in document.analysis.findings:
-            if finding.structural_comparison is not None:
-                relevant_cache_paths.update(
-                    os.path.normcase(path) for path in finding.structural_comparison.importer_cache_changed_paths
-                )
+            structural = finding_structural_comparison(finding)
+            if structural is not None:
+                relevant_cache_paths.update(os.path.normcase(path) for path in structural.importer_cache_changed_paths)
         for route in document.analysis.resolution_routes:
             relevant_cache_paths.update(os.path.normcase(path) for path in route.search_path)
         self.relevant_cache_paths = relevant_cache_paths
@@ -348,7 +353,11 @@ class _TextReportRenderer:
     def _divergent_comparisons(self) -> tuple[RouteComparison, ...]:
         """Route comparisons that differ and are not already consumed by a finding."""
         findings = self.document.analysis.findings
-        consumed = {item.route_comparison_id for item in findings if item.route_comparison_id is not None}
+        consumed = {
+            route_comparison_id
+            for item in findings
+            if (route_comparison_id := finding_route_comparison_id(item)) is not None
+        }
         return tuple(
             item
             for item in self.document.analysis.route_comparisons
@@ -1260,10 +1269,12 @@ def _protected_event_positions(document: ReportDocument, events: "tuple[MonitorE
     referenced_seqs: set[int] = set()
     for finding in document.analysis.findings:
         referenced_seqs.update(finding.supporting_event_seqs)
-        if finding.claim is not None:
-            referenced_seqs.add(finding.claim.seq)
-        if finding.deep_call is not None:
-            referenced_seqs.add(finding.deep_call.seq)
+        claim = finding_claim(finding)
+        if claim is not None:
+            referenced_seqs.add(claim.seq)
+        deep_call = finding_deep_call(finding)
+        if deep_call is not None:
+            referenced_seqs.add(deep_call.seq)
     for explanation in document.analysis.explanations:
         referenced_seqs.update(explanation.event_seqs)
     position_by_seq = {event.seq: index for index, event in enumerate(events)}
@@ -1834,14 +1845,14 @@ def _attribution_lines(calls: list[FindSpecCall], context: _RenderContext) -> li
 
 def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
     """Render one structured finding as a headline plus labeled evidence lines."""
-    if finding.kind == "legacy_finder_contract" and finding.finder_contract is not None:
-        contract = finding.finder_contract
+    if finding.kind == "legacy_finder_contract" and isinstance(finding.evidence, ContractEvidence):
+        contract = finding.evidence.finder_contract
         return [
             f"[legacy-finder-contract] {contract.finder_type_name}: find_module is callable but find_spec is not",
             "    CPython 3.12+ removed the legacy fallback; direct consumers may require find_spec earlier",
         ]
-    if finding.kind == "path_hook_shadow" and finding.deep_call is not None:
-        call = finding.deep_call
+    if finding.kind == "path_hook_shadow" and isinstance(finding.evidence, DeepCallEvidence):
+        call = finding.evidence.deep_call
         return [
             f"[path-hook-shadow] {context.quoted_path(finding.module)}: distinct hooks accepted this path",
             f"    captured acceptances: event #{finding.supporting_event_seqs[0]} and event #{call.seq}",
@@ -1862,10 +1873,12 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
             f"[repeated-load-failure] '{finding.module}': the same loader and origin were resolved after an earlier successful load",
             "    the later exact import failed; the captured sequence correlates the repeated load but does not include its exception message",
         ]
-    if finding.kind in ("module_replacement", "repeated_loader_execution") and finding.deep_call is not None:
-        call = finding.deep_call
+    if finding.kind in ("module_replacement", "repeated_loader_execution") and isinstance(
+        finding.evidence, DeepCallEvidence
+    ):
+        call = finding.evidence.deep_call
         transition = _module_transition(
-            finding.module_state_baseline or call.module_state_before, _deep_effective_module_state(call)
+            finding.evidence.module_state_baseline or call.module_state_before, _deep_effective_module_state(call)
         )
         headline = (
             f"[repeated-loader-execution] '{finding.module}': the loader executed a different module object"
@@ -1881,7 +1894,7 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
             f"[no-spec] '{finding.module}' is in sys.modules with no __spec__, and no finder call for it was "
             "recorded (likely created manually or loaded without the normal import machinery)."
         ]
-    claim = finding.claim
+    claim = finding_claim(finding)
     if finding.kind == "finder_side_effect" and claim is not None:
         finder = context.finder_label(claim.finder_type_name, claim.finder_id)
         outcome = f"raising {claim.exception_type_name}" if claim.exception_type_name is not None else "returning None"
@@ -1895,9 +1908,8 @@ def _finding_lines(finding: Finding, context: _RenderContext) -> list[str]:
         return [f"[{tag}] '{finding.module}'"]
     finder = context.finder_label(claim.finder_type_name, claim.finder_id)
     if finding.kind == "namespace_truncation":
-        comparison = (
-            None if finding.route_comparison_id is None else context.comparisons_by_id.get(finding.route_comparison_id)
-        )
+        route_comparison_id = finding_route_comparison_id(finding)
+        comparison = None if route_comparison_id is None else context.comparisons_by_id.get(route_comparison_id)
         if comparison is None:
             standard_only = "unavailable"
         else:
@@ -2035,7 +2047,7 @@ def _route_difference_line(comparison: RouteComparison) -> str:
 
 def _structural_comparison_line(finding: Finding) -> str:
     """Label identity-only evidence separately from a report-time probe."""
-    comparison = finding.structural_comparison
+    comparison = finding_structural_comparison(finding)
     if comparison is None:
         return "since install: comparison unavailable"
     return _structural_evidence_line(comparison)

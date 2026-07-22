@@ -33,13 +33,19 @@ from metapathology._records import (
     type_name,
 )
 from metapathology._report_model import (
+    BareEvidence,
     CausalExplanation,
+    ClaimEvidence,
+    ContractEvidence,
+    CorrelationEvidence,
+    DeepCallEvidence,
     Finding,
     ImportAttempt,
     ReportError,
     ReportSummary,
     ResolutionRoute,
     RouteComparison,
+    RouteEvidence,
     StandardResolution,
     StructuralComparison,
 )
@@ -516,6 +522,7 @@ def _suspicious_findings(
                     evidence_level="post_hoc",
                     limitations=("report_snapshot_cannot_identify_load_mechanism",),
                     severity="informational",
+                    evidence=BareEvidence(),
                 )
             )
     findings.extend(_path_hook_shadow_findings(events, finding_ids))
@@ -548,7 +555,7 @@ def _finder_contract_findings(contracts: list[FinderContract], finding_ids: _IdA
                 evidence_level="captured",
                 limitations=("protocols_were_inspected_not_invoked",),
                 subject_kind="finder",
-                finder_contract=contract,
+                evidence=ContractEvidence(finder_contract=contract),
             )
         )
     return findings
@@ -585,16 +592,18 @@ class _CausalExplanationBuilder:
     def _namespace_truncation_explanations(self) -> list[CausalExplanation]:
         explanations: list[CausalExplanation] = []
         for finding in self.findings:
-            comparison = self.comparisons.get(finding.route_comparison_id or "")
-            if finding.kind != "namespace_truncation" or comparison is None or finding.claim is None:
+            evidence = finding.evidence
+            if finding.kind != "namespace_truncation" or not isinstance(evidence, RouteEvidence):
                 continue
-            explanations.extend(self._truncation_failures(finding, comparison))
+            comparison = self.comparisons.get(evidence.route_comparison_id)
+            if comparison is None:
+                continue
+            explanations.extend(self._truncation_failures(finding, evidence.claim, comparison))
         return explanations
 
-    def _truncation_failures(self, finding: Finding, comparison: RouteComparison) -> list[CausalExplanation]:
-        claim = finding.claim
-        if claim is None:
-            return []
+    def _truncation_failures(
+        self, finding: Finding, claim: FindSpecCall, comparison: RouteComparison
+    ) -> list[CausalExplanation]:
         prefix = finding.module + "."
         groups: dict[str, list[ImportAttempt]] = {}
         for attempt in self.attempts:
@@ -742,10 +751,13 @@ class _CausalExplanationBuilder:
         return explanations
 
     def _finding_explanation(self, finding: Finding) -> CausalExplanation | None:
-        if finding.kind == "finder_side_effect" and finding.claim is not None:
-            return self._finder_side_effect_explanation(finding, finding.claim)
-        if finding.kind in ("module_replacement", "repeated_loader_execution") and finding.deep_call is not None:
-            return self._module_identity_explanation(finding, finding.deep_call)
+        evidence = finding.evidence
+        if finding.kind == "finder_side_effect" and isinstance(evidence, ClaimEvidence):
+            return self._finder_side_effect_explanation(finding, evidence.claim)
+        if finding.kind in ("module_replacement", "repeated_loader_execution") and isinstance(
+            evidence, DeepCallEvidence
+        ):
+            return self._module_identity_explanation(finding, evidence)
         if finding.kind == "repeated_load_failure":
             return self._repeated_load_explanation(finding)
         return None
@@ -769,9 +781,10 @@ class _CausalExplanationBuilder:
             state_after=claim.module_state_after,
         )
 
-    def _module_identity_explanation(self, finding: Finding, call: DeepDiagnosticCall) -> CausalExplanation:
-        baseline = finding.module_state_baseline or call.module_state_before
-        target_diverged = _target_identity_diverged(finding, call, baseline)
+    def _module_identity_explanation(self, finding: Finding, evidence: DeepCallEvidence) -> CausalExplanation:
+        call = evidence.deep_call
+        baseline = evidence.module_state_baseline or call.module_state_before
+        target_diverged = _target_identity_diverged(evidence.module_state_baseline, call, baseline)
         kind = "module_replacement" if finding.kind == "module_replacement" else "repeated_loader_execution"
         return CausalExplanation(
             explanation_id=self.ids.next_id(),
@@ -819,7 +832,7 @@ class _CausalExplanationBuilder:
 
 
 def _target_identity_diverged(
-    finding: Finding,
+    module_state_baseline: ModuleCacheState | None,
     call: DeepDiagnosticCall,
     baseline: ModuleCacheState | None,
 ) -> bool:
@@ -837,7 +850,7 @@ def _target_identity_diverged(
         and call.module_state_after.state == "object"
         and baseline.object_id != call.module_state_after.object_id
     )
-    return finding.module_state_baseline is not None or not cache_replaced
+    return module_state_baseline is not None or not cache_replaced
 
 
 def _causal_explanations(
@@ -922,7 +935,7 @@ def _namespace_displacement_findings(
                 resolution.fullname,
                 evidence_level="correlated",
                 limitations=("exception_message_not_captured",),
-                attempt_ids=tuple(descendant.attempt_id for descendant in descendants),
+                evidence=CorrelationEvidence(attempt_ids=tuple(descendant.attempt_id for descendant in descendants)),
                 supporting_event_seqs=event_seqs,
                 severity="actionable",
                 signals=("namespace_candidate_found", "regular_module_selected", "descendant_failed"),
@@ -1033,7 +1046,9 @@ def _repeated_load_finding(
         earlier.fullname,
         evidence_level="correlated",
         limitations=("exception_message_not_captured",),
-        attempt_ids=(candidate.earlier_attempt.attempt_id, *(attempt.attempt_id for attempt in failed_attempts)),
+        evidence=CorrelationEvidence(
+            attempt_ids=(candidate.earlier_attempt.attempt_id, *(attempt.attempt_id for attempt in failed_attempts))
+        ),
         supporting_event_seqs=event_seqs,
         severity="actionable",
         signals=("same_loader", "same_origin", "earlier_attempt_loaded", "later_attempt_failed"),
@@ -1153,7 +1168,7 @@ def _path_hook_shadow_findings(events: list[MonitorEvent], finding_ids: _IdAlloc
                 finding_ids.next_id(),
                 "path_hook_shadow",
                 event.path,
-                deep_call=event,
+                evidence=DeepCallEvidence(deep_call=event),
                 evidence_level="structural_inference",
                 limitations=("acceptance_was_captured_across_distinct_resolution_states",),
                 subject_kind="path",
@@ -1201,6 +1216,7 @@ def _failed_after_mutation_findings(events: list[MonitorEvent], finding_ids: _Id
                 finding_ids.next_id(),
                 "failed_after_mutation",
                 event.fullname,
+                evidence=BareEvidence(),
                 evidence_level="structural_inference",
                 limitations=("temporal_correlation_does_not_prove_mutation_caused_failure",),
                 supporting_event_seqs=(mutation_seq, start.seq, event.seq),
@@ -1224,7 +1240,7 @@ def _finder_side_effect_findings(events: list[MonitorEvent], finding_ids: _IdAll
                 finding_ids.next_id(),
                 "finder_side_effect",
                 event.fullname,
-                event,
+                evidence=ClaimEvidence(claim=event),
                 evidence_level="captured",
                 limitations=("boundary_delta_does_not_identify_nested_cause",),
             )
@@ -1345,10 +1361,12 @@ def _corroborated_route_finding(
         finding_ids.next_id(),
         "namespace_truncation",
         name,
-        winner,
-        route_ids=(captured_route.route_id, standard_route.route_id),
-        route_comparison_id=comparison.comparison_id,
-        structural_comparison=structural_comparison,
+        evidence=RouteEvidence(
+            claim=winner,
+            route_ids=(captured_route.route_id, standard_route.route_id),
+            route_comparison_id=comparison.comparison_id,
+            structural_comparison=structural_comparison,
+        ),
         evidence_level="correlated",
         limitations=(
             "standard_path_probe_uses_report_time_importer_state",
@@ -1462,8 +1480,10 @@ def _module_replacement_finding(
         finding_ids.next_id(),
         kind,
         event.fullname,
-        deep_call=event,
-        module_state_baseline=prior_state if prior_diverged else None,
+        evidence=DeepCallEvidence(
+            deep_call=event,
+            module_state_baseline=prior_state if prior_diverged else None,
+        ),
         supporting_event_seqs=((prior.seq,) if prior_diverged and prior is not None else ()),
         evidence_level="captured",
         limitations=("boundary_delta_does_not_reconstruct_intermediate_states",),

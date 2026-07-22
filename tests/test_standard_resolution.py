@@ -20,7 +20,7 @@ from metapathology._report_analysis import (
     _repeated_load_failure_findings,
     _standard_spec_classification,
 )
-from metapathology._report_model import ImportAttempt, StandardResolution
+from metapathology._report_model import CorrelationEvidence, ImportAttempt, StandardResolution
 from metapathology._spec import summarize_spec
 
 RunPython = Callable[..., subprocess.CompletedProcess[str]]
@@ -64,7 +64,8 @@ def test_repeated_load_failure_attaches_failed_attempt_without_own_resolution() 
     finding = _repeated_load_failure_findings(attempts, resolutions, _IdAllocator("finding"))[0]
 
     assert {10, 15} <= set(finding.supporting_event_seqs)
-    assert finding.attempt_ids == (1, 2, 3)
+    assert isinstance(finding.evidence, CorrelationEvidence)
+    assert finding.evidence.attempt_ids == (1, 2, 3)
 
 
 def test_standard_loader_categories_are_explicit() -> None:
