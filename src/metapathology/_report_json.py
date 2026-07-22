@@ -35,6 +35,7 @@ from metapathology._records import (
     SysPathReassignment,
 )
 from metapathology._report_analysis import _finder_contract_category
+from metapathology._report_events import EVENT_COUNT_KEY, EVENT_KIND
 from metapathology._report_model import (
     CausalExplanation,
     EarlySiteBootstrap,
@@ -85,25 +86,10 @@ from metapathology._speculative_replay import MAX_SPECULATIVE_REPLAYS
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
     from traceback import FrameSummary
-    from typing import Literal
 
-    EventCountKind = Literal[
-        "audit_starts",
-        "calls",
-        "deep_calls",
-        "deep_import_events",
-        "import_calls",
-        "importer_cache_diffs",
-        "mutations",
-        "path_hook_mutations",
-        "path_hook_reassignments",
-        "reassignments",
-        "standard_finder_calls",
-        "sys_path_mutations",
-        "sys_path_reassignments",
-    ]
+    from metapathology._report_events import EventCountKind
 
 
 _SCHEMA_NAME = "metapathology.report"
@@ -134,32 +120,9 @@ def _json_events(
     internal_error_refs: list[str] = []
     for event in events:
         timeline.append(_json_event(event))
-        if isinstance(event, FindSpecCall):
-            counts["calls"] += 1
-        elif isinstance(event, ImportAuditStart):
-            counts["audit_starts"] += 1
-        elif isinstance(event, DeepDiagnosticCall):
-            counts["deep_calls"] += 1
-        elif isinstance(event, DeepImportEvent):
-            counts["deep_import_events"] += 1
-        elif isinstance(event, ImportCall):
-            counts["import_calls"] += 1
-        elif isinstance(event, StandardFinderCall):
-            counts["standard_finder_calls"] += 1
-        elif isinstance(event, MetaPathMutation):
-            counts["mutations"] += 1
-        elif isinstance(event, MetaPathReassignment):
-            counts["reassignments"] += 1
-        elif isinstance(event, PathHooksMutation):
-            counts["path_hook_mutations"] += 1
-        elif isinstance(event, PathHooksReassignment):
-            counts["path_hook_reassignments"] += 1
-        elif isinstance(event, SysPathMutation):
-            counts["sys_path_mutations"] += 1
-        elif isinstance(event, SysPathReassignment):
-            counts["sys_path_reassignments"] += 1
-        elif isinstance(event, ImporterCacheDiff):
-            counts["importer_cache_diffs"] += 1
+        count_key = EVENT_COUNT_KEY.get(type(event))
+        if count_key is not None:
+            counts[count_key] += 1
         elif isinstance(event, InternalError):
             internal_error_refs.append(f"event:{event.seq}")
     return timeline, counts, internal_error_refs
@@ -446,207 +409,253 @@ def _json_module_state(state: ModuleCacheState | None) -> ModuleStateJSON | None
     }
 
 
+def _json_import_audit_start(event: ImportAuditStart) -> EventJSON:
+    return {
+        "id": f"event:{event.seq}",
+        "seq": event.seq,
+        "kind": EVENT_KIND[type(event)],
+        "evidence": "resolution_started",
+        "fullname": event.fullname,
+        "importer_cache": None
+        if event.importer_cache_id is None
+        else {
+            "object_id": f"0x{event.importer_cache_id:x}",
+            "size": event.importer_cache_size,
+        },
+        "attempt_id": event.attempt_id,
+        "meta_path": {
+            "entries": list(event.meta_path_type_names),
+            "object_id": f"0x{event.meta_path_id:x}",
+        },
+        "path_hooks_id": None if event.path_hooks_id is None else f"0x{event.path_hooks_id:x}",
+        "thread_name": event.thread_name,
+        "thread_id": event.thread_id,
+    }
+
+
+def _json_deep_diagnostic_call(event: DeepDiagnosticCall) -> EventJSON:
+    return {
+        "id": f"event:{event.seq}",
+        "seq": event.seq,
+        "kind": EVENT_KIND[type(event)],
+        "boundary": event.boundary,
+        "evidence": "deep_delegation",
+        "exception_type_name": event.exception_type_name,
+        "fullname": event.fullname,
+        "module_state_after": _json_module_state(event.module_state_after),
+        "module_state_before": _json_module_state(event.module_state_before),
+        "object_id": f"0x{event.object_id:x}",
+        "object_type_name": event.object_type_name,
+        "outcome": event.outcome,
+        "path": event.path,
+        "returned_finder": None if event.returned_finder is None else _json_import_object(event.returned_finder),
+        "target_state": _json_module_state(event.target_state),
+        "thread_name": event.thread_name,
+        "thread_id": event.thread_id,
+    }
+
+
+def _json_deep_import_event(event: DeepImportEvent) -> EventJSON:
+    return {
+        "id": f"event:{event.seq}",
+        "seq": event.seq,
+        "kind": EVENT_KIND[type(event)],
+        "attempt_id": event.attempt_id,
+        "evidence": "exact_import_boundary",
+        "fullname": event.fullname,
+        "outcome": event.outcome,
+        "thread_id": event.thread_id,
+        "thread_name": event.thread_name,
+    }
+
+
+def _json_import_call(event: ImportCall) -> EventJSON:
+    return {
+        "id": f"event:{event.seq}",
+        "seq": event.seq,
+        "kind": EVENT_KIND[type(event)],
+        "evidence": "import_call_wrapper",
+        "exception_type_name": event.exception_type_name,
+        "fromlist": list(event.fromlist),
+        "importing_module": event.importing_module,
+        "level": event.level,
+        "module_state_before": _json_module_state(event.module_state_before),
+        "name": event.name,
+        "outcome": event.outcome,
+        "thread_id": event.thread_id,
+        "thread_name": event.thread_name,
+    }
+
+
+def _json_standard_finder_call(event: StandardFinderCall) -> EventJSON:
+    return {
+        "id": f"event:{event.seq}",
+        "seq": event.seq,
+        "kind": EVENT_KIND[type(event)],
+        "attempt_id": event.attempt_id,
+        "evidence": "captured_standard_finder_boundary",
+        "finder_type_name": event.finder_type_name,
+        "fullname": event.fullname,
+        "spec": _json_spec_summary(event.spec_summary),
+        "thread_id": event.thread_id,
+        "thread_name": event.thread_name,
+    }
+
+
+def _json_find_spec_call(event: FindSpecCall) -> EventJSON:
+    return {
+        "id": f"event:{event.seq}",
+        "seq": event.seq,
+        "kind": EVENT_KIND[type(event)],
+        "exception_type_name": event.exception_type_name,
+        "finder_id": f"0x{event.finder_id:x}",
+        "finder_type_name": event.finder_type_name,
+        "found": event.found,
+        "fullname": event.fullname,
+        "loader_type_name": event.loader_type_name,
+        "module_state_after": _json_module_state(event.module_state_after),
+        "module_state_before": _json_module_state(event.module_state_before),
+        "origin": event.origin,
+        "search_path": list(event.search_path),
+        "search_path_kind": event.search_path_kind,
+        "spec": None if event.spec_summary is None else _json_spec_summary(event.spec_summary),
+        "target_state": _json_module_state(event.target_state),
+        "thread_name": event.thread_name,
+        "thread_id": event.thread_id,
+    }
+
+
+def _json_importer_cache_diff(event: ImporterCacheDiff) -> EventJSON:
+    return {
+        "id": f"event:{event.seq}",
+        "seq": event.seq,
+        "kind": EVENT_KIND[type(event)],
+        "added": [_json_importer_cache_entry(entry) for entry in event.added],
+        "non_string_keys_after": event.non_string_keys_after,
+        "non_string_keys_before": event.non_string_keys_before,
+        "observation": event.observation,
+        "removed": [_json_importer_cache_entry(entry) for entry in event.removed],
+        "replaced": [_json_importer_cache_replacement(item) for item in event.replaced],
+        "thread_name": event.thread_name,
+    }
+
+
+def _json_meta_path_mutation(event: MetaPathMutation) -> EventJSON:
+    return {
+        "id": f"event:{event.seq}",
+        "seq": event.seq,
+        "kind": EVENT_KIND[type(event)],
+        "added": list(event.added),
+        "contents_after": list(event.contents_after),
+        "op": event.op,
+        "removed": list(event.removed),
+        "stack": [_json_frame(frame) for frame in event.stack],
+        "thread_name": event.thread_name,
+    }
+
+
+def _json_meta_path_reassignment(event: MetaPathReassignment) -> EventJSON:
+    return {
+        "id": f"event:{event.seq}",
+        "seq": event.seq,
+        "kind": EVENT_KIND[type(event)],
+        "during_import": event.during_import,
+        "new_contents": list(event.new_contents),
+        "old_contents": list(event.old_contents),
+        "stack": [_json_frame(frame) for frame in event.stack],
+        "thread_name": event.thread_name,
+    }
+
+
+def _json_path_hooks_mutation(event: PathHooksMutation) -> EventJSON:
+    return {
+        "id": f"event:{event.seq}",
+        "seq": event.seq,
+        "kind": EVENT_KIND[type(event)],
+        "added": [_json_import_object(reference) for reference in event.added],
+        "contents_after": [_json_import_object(reference) for reference in event.contents_after],
+        "op": event.op,
+        "removed": [_json_import_object(reference) for reference in event.removed],
+        "stack": [_json_frame(frame) for frame in event.stack],
+        "thread_name": event.thread_name,
+    }
+
+
+def _json_path_hooks_reassignment(event: PathHooksReassignment) -> EventJSON:
+    return {
+        "id": f"event:{event.seq}",
+        "seq": event.seq,
+        "kind": EVENT_KIND[type(event)],
+        "during_import": event.during_import,
+        "new_contents": [_json_import_object(reference) for reference in event.new_contents],
+        "old_contents": [_json_import_object(reference) for reference in event.old_contents],
+        "stack": [_json_frame(frame) for frame in event.stack],
+        "thread_name": event.thread_name,
+    }
+
+
+def _json_sys_path_mutation(event: SysPathMutation) -> EventJSON:
+    return {
+        "id": f"event:{event.seq}",
+        "seq": event.seq,
+        "kind": EVENT_KIND[type(event)],
+        "added": list(event.added),
+        "contents_after": list(event.contents_after),
+        "op": event.op,
+        "removed": list(event.removed),
+        "stack": [_json_frame(frame) for frame in event.stack],
+        "thread_name": event.thread_name,
+    }
+
+
+def _json_sys_path_reassignment(event: SysPathReassignment) -> EventJSON:
+    return {
+        "id": f"event:{event.seq}",
+        "seq": event.seq,
+        "kind": EVENT_KIND[type(event)],
+        "during_import": event.during_import,
+        "new_contents": list(event.new_contents),
+        "old_contents": list(event.old_contents),
+        "stack": [_json_frame(frame) for frame in event.stack],
+        "thread_name": event.thread_name,
+    }
+
+
+def _json_internal_error(event: InternalError) -> EventJSON:
+    return {
+        "id": f"event:{event.seq}",
+        "seq": event.seq,
+        "kind": EVENT_KIND[type(event)],
+        "exception_type_name": event.exception_type_name,
+        "message": event.message,
+        "where": event.where,
+    }
+
+
+# One serializer per event type. The wrapper adds ``id``/``seq``/``kind``; each
+# builder returns only the type-specific fields. New event types must be added
+# here and in ``_report_events`` together.
+_EVENT_JSON_BUILDERS: "dict[type[MonitorEvent], Callable[..., EventJSON]]" = {
+    ImportAuditStart: _json_import_audit_start,
+    DeepDiagnosticCall: _json_deep_diagnostic_call,
+    DeepImportEvent: _json_deep_import_event,
+    ImportCall: _json_import_call,
+    StandardFinderCall: _json_standard_finder_call,
+    FindSpecCall: _json_find_spec_call,
+    ImporterCacheDiff: _json_importer_cache_diff,
+    MetaPathMutation: _json_meta_path_mutation,
+    MetaPathReassignment: _json_meta_path_reassignment,
+    PathHooksMutation: _json_path_hooks_mutation,
+    PathHooksReassignment: _json_path_hooks_reassignment,
+    SysPathMutation: _json_sys_path_mutation,
+    SysPathReassignment: _json_sys_path_reassignment,
+    InternalError: _json_internal_error,
+}
+
+
 def _json_event(event: MonitorEvent) -> EventJSON:
     """Serialize a public event record without inspecting foreign objects."""
-    result: EventJSON = {"id": f"event:{event.seq}", "seq": event.seq, "kind": ""}
-    if isinstance(event, ImportAuditStart):
-        result.update(
-            {
-                "evidence": "resolution_started",
-                "fullname": event.fullname,
-                "importer_cache": None
-                if event.importer_cache_id is None
-                else {
-                    "object_id": f"0x{event.importer_cache_id:x}",
-                    "size": event.importer_cache_size,
-                },
-                "kind": "import_audit_start",
-                "attempt_id": event.attempt_id,
-                "meta_path": {
-                    "entries": list(event.meta_path_type_names),
-                    "object_id": f"0x{event.meta_path_id:x}",
-                },
-                "path_hooks_id": None if event.path_hooks_id is None else f"0x{event.path_hooks_id:x}",
-                "thread_name": event.thread_name,
-                "thread_id": event.thread_id,
-            }
-        )
-    elif isinstance(event, DeepDiagnosticCall):
-        result.update(
-            {
-                "boundary": event.boundary,
-                "evidence": "deep_delegation",
-                "exception_type_name": event.exception_type_name,
-                "fullname": event.fullname,
-                "kind": "deep_diagnostic_call",
-                "module_state_after": _json_module_state(event.module_state_after),
-                "module_state_before": _json_module_state(event.module_state_before),
-                "object_id": f"0x{event.object_id:x}",
-                "object_type_name": event.object_type_name,
-                "outcome": event.outcome,
-                "path": event.path,
-                "returned_finder": None
-                if event.returned_finder is None
-                else _json_import_object(event.returned_finder),
-                "target_state": _json_module_state(event.target_state),
-                "thread_name": event.thread_name,
-                "thread_id": event.thread_id,
-            }
-        )
-    elif isinstance(event, DeepImportEvent):
-        result.update(
-            {
-                "attempt_id": event.attempt_id,
-                "evidence": "exact_import_boundary",
-                "fullname": event.fullname,
-                "kind": "deep_import_event",
-                "outcome": event.outcome,
-                "thread_id": event.thread_id,
-                "thread_name": event.thread_name,
-            }
-        )
-    elif isinstance(event, ImportCall):
-        result.update(
-            {
-                "evidence": "import_call_wrapper",
-                "exception_type_name": event.exception_type_name,
-                "fromlist": list(event.fromlist),
-                "importing_module": event.importing_module,
-                "kind": "import_call",
-                "level": event.level,
-                "module_state_before": _json_module_state(event.module_state_before),
-                "name": event.name,
-                "outcome": event.outcome,
-                "thread_id": event.thread_id,
-                "thread_name": event.thread_name,
-            }
-        )
-    elif isinstance(event, StandardFinderCall):
-        result.update(
-            {
-                "attempt_id": event.attempt_id,
-                "evidence": "captured_standard_finder_boundary",
-                "finder_type_name": event.finder_type_name,
-                "fullname": event.fullname,
-                "kind": "standard_finder_call",
-                "spec": _json_spec_summary(event.spec_summary),
-                "thread_id": event.thread_id,
-                "thread_name": event.thread_name,
-            }
-        )
-    elif isinstance(event, FindSpecCall):
-        result.update(
-            {
-                "exception_type_name": event.exception_type_name,
-                "finder_id": f"0x{event.finder_id:x}",
-                "finder_type_name": event.finder_type_name,
-                "found": event.found,
-                "fullname": event.fullname,
-                "kind": "find_spec_call",
-                "loader_type_name": event.loader_type_name,
-                "module_state_after": _json_module_state(event.module_state_after),
-                "module_state_before": _json_module_state(event.module_state_before),
-                "origin": event.origin,
-                "search_path": list(event.search_path),
-                "search_path_kind": event.search_path_kind,
-                "spec": None if event.spec_summary is None else _json_spec_summary(event.spec_summary),
-                "target_state": _json_module_state(event.target_state),
-                "thread_name": event.thread_name,
-                "thread_id": event.thread_id,
-            }
-        )
-    elif isinstance(event, ImporterCacheDiff):
-        result.update(
-            {
-                "added": [_json_importer_cache_entry(entry) for entry in event.added],
-                "kind": "importer_cache_diff",
-                "non_string_keys_after": event.non_string_keys_after,
-                "non_string_keys_before": event.non_string_keys_before,
-                "observation": event.observation,
-                "removed": [_json_importer_cache_entry(entry) for entry in event.removed],
-                "replaced": [_json_importer_cache_replacement(item) for item in event.replaced],
-                "thread_name": event.thread_name,
-            }
-        )
-    elif isinstance(event, MetaPathMutation):
-        result.update(
-            {
-                "added": list(event.added),
-                "contents_after": list(event.contents_after),
-                "kind": "meta_path_mutation",
-                "op": event.op,
-                "removed": list(event.removed),
-                "stack": [_json_frame(frame) for frame in event.stack],
-                "thread_name": event.thread_name,
-            }
-        )
-    elif isinstance(event, MetaPathReassignment):
-        result.update(
-            {
-                "during_import": event.during_import,
-                "kind": "meta_path_reassignment",
-                "new_contents": list(event.new_contents),
-                "old_contents": list(event.old_contents),
-                "stack": [_json_frame(frame) for frame in event.stack],
-                "thread_name": event.thread_name,
-            }
-        )
-    elif isinstance(event, PathHooksMutation):
-        result.update(
-            {
-                "added": [_json_import_object(reference) for reference in event.added],
-                "contents_after": [_json_import_object(reference) for reference in event.contents_after],
-                "kind": "path_hooks_mutation",
-                "op": event.op,
-                "removed": [_json_import_object(reference) for reference in event.removed],
-                "stack": [_json_frame(frame) for frame in event.stack],
-                "thread_name": event.thread_name,
-            }
-        )
-    elif isinstance(event, PathHooksReassignment):
-        result.update(
-            {
-                "during_import": event.during_import,
-                "kind": "path_hooks_reassignment",
-                "new_contents": [_json_import_object(reference) for reference in event.new_contents],
-                "old_contents": [_json_import_object(reference) for reference in event.old_contents],
-                "stack": [_json_frame(frame) for frame in event.stack],
-                "thread_name": event.thread_name,
-            }
-        )
-    elif isinstance(event, SysPathMutation):
-        result.update(
-            {
-                "added": list(event.added),
-                "contents_after": list(event.contents_after),
-                "kind": "sys_path_mutation",
-                "op": event.op,
-                "removed": list(event.removed),
-                "stack": [_json_frame(frame) for frame in event.stack],
-                "thread_name": event.thread_name,
-            }
-        )
-    elif isinstance(event, SysPathReassignment):
-        result.update(
-            {
-                "during_import": event.during_import,
-                "kind": "sys_path_reassignment",
-                "new_contents": list(event.new_contents),
-                "old_contents": list(event.old_contents),
-                "stack": [_json_frame(frame) for frame in event.stack],
-                "thread_name": event.thread_name,
-            }
-        )
-    else:
-        result.update(
-            {
-                "exception_type_name": event.exception_type_name,
-                "kind": "internal_error",
-                "message": event.message,
-                "where": event.where,
-            }
-        )
-    return result
+    return _EVENT_JSON_BUILDERS[type(event)](event)
 
 
 def _json_import_attempt(attempt: ImportAttempt) -> ImportAttemptJSON:

@@ -38,7 +38,7 @@ from metapathology._report_model import (
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
     from traceback import StackSummary
     from typing import TypeVar
 
@@ -1290,84 +1290,125 @@ def _import_call_line(event: ImportCall, context: _RenderContext) -> str:
     return f"#{event.seq} {spec}{by}: {outcome}{context.thread_suffix(event.thread_name)}"
 
 
+def _timeline_deep_import_event(event: DeepImportEvent, context: _RenderContext) -> str:
+    return f"#{event.seq} import of {event.fullname!r}: {event.outcome}{context.thread_suffix(event.thread_name)}"
+
+
+def _timeline_import_audit_start(event: ImportAuditStart, context: _RenderContext) -> str:
+    # Stable snapshot context lives in the timeline preamble; deviations are
+    # appended by _timeline_lines as continuation lines.
+    return f"#{event.seq} import started: {event.fullname!r}{context.thread_suffix(event.thread_name)}"
+
+
+def _timeline_find_spec_call(event: FindSpecCall, context: _RenderContext) -> str:
+    if event.exception_type_name is not None:
+        outcome = f"raised {event.exception_type_name}"
+    elif event.found:
+        origin = "None" if event.origin is None else context.quoted_path(event.origin)
+        outcome = f"found it (loader {event.loader_type_name}, origin {origin})"
+    else:
+        outcome = "returned None"
+    finder = context.finder_label(event.finder_type_name, event.finder_id)
+    transition = _module_transition_suffix(event.module_state_before, event.module_state_after)
+    return (
+        f"#{event.seq} {finder}.find_spec({event.fullname!r}): {outcome}{transition}"
+        f"{context.thread_suffix(event.thread_name)}"
+    )
+
+
+def _timeline_standard_finder_call(event: StandardFinderCall, context: _RenderContext) -> str:
+    loader = event.spec_summary.loader
+    loader_name = "None" if loader is None else loader.type_name
+    return (
+        f"#{event.seq} captured {event.finder_type_name} result for {event.fullname!r}: loader {loader_name}"
+        f"{context.thread_suffix(event.thread_name)}"
+    )
+
+
+def _timeline_importer_cache_diff(event: ImporterCacheDiff, context: _RenderContext) -> str:
+    deltas: list[str] = []
+    if event.added:
+        deltas.append(context.positive(f"+{len(event.added)}"))
+    if event.removed:
+        deltas.append(context.negative(f"-{len(event.removed)}"))
+    if event.replaced:
+        deltas.append(context.warning(f"~{len(event.replaced)}"))
+    delta = " ".join(deltas) if deltas else "(no changes)"
+    return (
+        f"#{event.seq} sys.path_importer_cache {_observation_label(event.observation)}: {delta}"
+        f"{context.thread_suffix(event.thread_name)}"
+    )
+
+
+def _timeline_meta_path_mutation(event: MetaPathMutation, context: _RenderContext) -> str:
+    return (
+        f"#{event.seq} sys.meta_path {event.op} {_timeline_delta(event.added, event.removed, context)}"
+        f"{context.thread_suffix(event.thread_name)}"
+    )
+
+
+def _timeline_meta_path_reassignment(event: MetaPathReassignment, context: _RenderContext) -> str:
+    return (
+        f"#{event.seq} sys.meta_path reassignment detected during {event.during_import!r}"
+        f"{context.thread_suffix(event.thread_name)}"
+    )
+
+
+def _timeline_path_hooks_mutation(event: PathHooksMutation, context: _RenderContext) -> str:
+    return (
+        f"#{event.seq} sys.path_hooks {event.op}: "
+        f"{context.positive(f'+{len(event.added)}')} {context.negative(f'-{len(event.removed)}')}"
+        f"{context.thread_suffix(event.thread_name)}"
+    )
+
+
+def _timeline_path_hooks_reassignment(event: PathHooksReassignment, context: _RenderContext) -> str:
+    return (
+        f"#{event.seq} sys.path_hooks reassignment detected during {event.during_import!r}"
+        f"{context.thread_suffix(event.thread_name)}"
+    )
+
+
+def _timeline_sys_path_mutation(event: SysPathMutation, context: _RenderContext) -> str:
+    return (
+        f"#{event.seq} sys.path {event.op} {_timeline_delta(event.added, event.removed, context)}"
+        f"{context.thread_suffix(event.thread_name)}"
+    )
+
+
+def _timeline_sys_path_reassignment(event: SysPathReassignment, context: _RenderContext) -> str:
+    return (
+        f"#{event.seq} sys.path reassignment detected during {event.during_import!r}"
+        f"{context.thread_suffix(event.thread_name)}"
+    )
+
+
+def _timeline_internal_error(event: InternalError, context: _RenderContext) -> str:
+    return _internal_error_line(event)
+
+
+# One line renderer per event type, dispatched by concrete type in _timeline_line.
+_TIMELINE_LINE_BUILDERS: "dict[type[MonitorEvent], Callable[..., str]]" = {
+    DeepDiagnosticCall: _deep_call_line,
+    DeepImportEvent: _timeline_deep_import_event,
+    ImportCall: _import_call_line,
+    ImportAuditStart: _timeline_import_audit_start,
+    FindSpecCall: _timeline_find_spec_call,
+    StandardFinderCall: _timeline_standard_finder_call,
+    ImporterCacheDiff: _timeline_importer_cache_diff,
+    MetaPathMutation: _timeline_meta_path_mutation,
+    MetaPathReassignment: _timeline_meta_path_reassignment,
+    PathHooksMutation: _timeline_path_hooks_mutation,
+    PathHooksReassignment: _timeline_path_hooks_reassignment,
+    SysPathMutation: _timeline_sys_path_mutation,
+    SysPathReassignment: _timeline_sys_path_reassignment,
+    InternalError: _timeline_internal_error,
+}
+
+
 def _timeline_line(event: MonitorEvent, context: _RenderContext) -> str:
     """Render one compact line using only data captured in the event record."""
-    if isinstance(event, DeepDiagnosticCall):
-        return _deep_call_line(event, context)
-    if isinstance(event, DeepImportEvent):
-        return f"#{event.seq} import of {event.fullname!r}: {event.outcome}{context.thread_suffix(event.thread_name)}"
-    if isinstance(event, ImportCall):
-        return _import_call_line(event, context)
-    if isinstance(event, ImportAuditStart):
-        # Stable snapshot context lives in the timeline preamble; deviations
-        # are appended by _timeline_lines as continuation lines.
-        return f"#{event.seq} import started: {event.fullname!r}{context.thread_suffix(event.thread_name)}"
-    if isinstance(event, FindSpecCall):
-        if event.exception_type_name is not None:
-            outcome = f"raised {event.exception_type_name}"
-        elif event.found:
-            origin = "None" if event.origin is None else context.quoted_path(event.origin)
-            outcome = f"found it (loader {event.loader_type_name}, origin {origin})"
-        else:
-            outcome = "returned None"
-        finder = context.finder_label(event.finder_type_name, event.finder_id)
-        transition = _module_transition_suffix(event.module_state_before, event.module_state_after)
-        return (
-            f"#{event.seq} {finder}.find_spec({event.fullname!r}): {outcome}{transition}"
-            f"{context.thread_suffix(event.thread_name)}"
-        )
-    if isinstance(event, StandardFinderCall):
-        loader = event.spec_summary.loader
-        loader_name = "None" if loader is None else loader.type_name
-        return (
-            f"#{event.seq} captured {event.finder_type_name} result for {event.fullname!r}: loader {loader_name}"
-            f"{context.thread_suffix(event.thread_name)}"
-        )
-    if isinstance(event, ImporterCacheDiff):
-        deltas: list[str] = []
-        if event.added:
-            deltas.append(context.positive(f"+{len(event.added)}"))
-        if event.removed:
-            deltas.append(context.negative(f"-{len(event.removed)}"))
-        if event.replaced:
-            deltas.append(context.warning(f"~{len(event.replaced)}"))
-        delta = " ".join(deltas) if deltas else "(no changes)"
-        return (
-            f"#{event.seq} sys.path_importer_cache {_observation_label(event.observation)}: {delta}"
-            f"{context.thread_suffix(event.thread_name)}"
-        )
-    if isinstance(event, MetaPathMutation):
-        return (
-            f"#{event.seq} sys.meta_path {event.op} {_timeline_delta(event.added, event.removed, context)}"
-            f"{context.thread_suffix(event.thread_name)}"
-        )
-    if isinstance(event, MetaPathReassignment):
-        return (
-            f"#{event.seq} sys.meta_path reassignment detected during {event.during_import!r}"
-            f"{context.thread_suffix(event.thread_name)}"
-        )
-    if isinstance(event, PathHooksMutation):
-        return (
-            f"#{event.seq} sys.path_hooks {event.op}: "
-            f"{context.positive(f'+{len(event.added)}')} {context.negative(f'-{len(event.removed)}')}"
-            f"{context.thread_suffix(event.thread_name)}"
-        )
-    if isinstance(event, PathHooksReassignment):
-        return (
-            f"#{event.seq} sys.path_hooks reassignment detected during {event.during_import!r}"
-            f"{context.thread_suffix(event.thread_name)}"
-        )
-    if isinstance(event, SysPathMutation):
-        return (
-            f"#{event.seq} sys.path {event.op} {_timeline_delta(event.added, event.removed, context)}"
-            f"{context.thread_suffix(event.thread_name)}"
-        )
-    if isinstance(event, SysPathReassignment):
-        return (
-            f"#{event.seq} sys.path reassignment detected during {event.during_import!r}"
-            f"{context.thread_suffix(event.thread_name)}"
-        )
-    return _internal_error_line(event)
+    return _TIMELINE_LINE_BUILDERS[type(event)](event, context)
 
 
 def _timeline_delta(added: tuple[str, ...], removed: tuple[str, ...], context: _RenderContext) -> str:
