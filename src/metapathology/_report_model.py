@@ -274,48 +274,89 @@ class FrozenBootstrap(_Record):
     boundary: str
 
 
-class ReportDocument(_Record):
-    """One sequence-cutoff snapshot shared by all report renderers."""
+class ProcessInfo(_Record):
+    """Host-process identity shared by the text header and JSON ``process`` block."""
 
     generated_at: str
-    attempts: tuple[ImportAttempt, ...]
+    cwd: str | None
+    argv: tuple[str, ...]
+
+
+class CaptureInfo(_Record):
+    """Monitor-lifetime facts that are not per-mechanism snapshots."""
+
     cutoff_seq: int
     monitor_enabled: bool
     baseline_module_count: int
-    initial_meta_path: tuple[str, ...]
-    current_meta_path: tuple[str, ...] | None
-    path_hooks_enabled: bool
-    initial_path_hooks: tuple[ObjectRef, ...]
-    current_path_hooks: tuple[ObjectRef, ...] | None
-    importer_cache_enabled: bool
-    initial_importer_cache: tuple[ImporterCacheEntry, ...]
-    initial_importer_cache_non_string_keys: int
-    current_importer_cache: tuple[ImporterCacheEntry, ...] | None
-    current_importer_cache_non_string_keys: int | None
-    importer_cache_observations: int
-    importer_cache_coalesced: int
-    loader_inventory: LoaderInventory
     modules_since_install: tuple[str, ...] | None
-    events: tuple[MonitorEvent, ...]
-    explanations: tuple[CausalExplanation, ...]
     early_site_bootstrap: EarlySiteBootstrap | None
     frozen_bootstrap: FrozenBootstrap | None
     deep_diagnostics: tuple[str, ...]
     deep_import_outcomes_status: "DeepImportOutcomesStatus"
     deep_import_calls_status: "DeepImportCallsStatus"
-    skipped_finders: tuple[SkippedFinder, ...]
-    standard_resolutions: tuple[StandardResolution, ...]
     standard_finder_status: "StandardFinderStatus"
+
+
+class MetaPathSnapshot(_Record):
+    """Install-time and report-time ``sys.meta_path`` entry names.
+
+    ``sys.meta_path`` is always monitored when the monitor is enabled, so this
+    record carries no ``enabled`` flag; ``current`` is None only when the
+    report-time snapshot could not be copied.
+    """
+
+    initial: tuple[str, ...]
+    current: tuple[str, ...] | None
+
+
+class PathHooksSnapshot(_Record):
+    """Install-time and report-time ``sys.path_hooks`` identities."""
+
+    enabled: bool
+    initial: tuple[ObjectRef, ...]
+    current: tuple[ObjectRef, ...] | None
+
+
+class ImporterCacheSnapshot(_Record):
+    """Install-time and report-time ``sys.path_importer_cache`` state."""
+
+    enabled: bool
+    initial: tuple[ImporterCacheEntry, ...]
+    initial_non_string_keys: int
+    current: tuple[ImporterCacheEntry, ...] | None
+    current_non_string_keys: int | None
+    observations: int
+    coalesced: int
+
+
+class AnalysisResult(_Record):
+    """Everything derived at report time from the copied event log and state."""
+
+    attempts: tuple[ImportAttempt, ...]
+    events: tuple[MonitorEvent, ...]
     findings: tuple[Finding, ...]
+    explanations: tuple[CausalExplanation, ...]
     resolution_routes: tuple[ResolutionRoute, ...]
     route_comparisons: tuple[RouteComparison, ...]
+    standard_resolutions: tuple[StandardResolution, ...]
     finder_contracts: tuple[FinderContract, ...]
-    report_errors: tuple[ReportError, ...]
+    loader_inventory: LoaderInventory
+    skipped_finders: tuple[SkippedFinder, ...]
     summary: ReportSummary
-    sys_path_enabled: bool
     target_outcome: TargetOutcome | None
-    cwd: str | None
-    argv: tuple[str, ...]
+    report_errors: tuple[ReportError, ...]
     speculative_replay_enabled: bool = False
     speculative_replays: tuple[SpeculativeReplay, ...] = ()
     speculative_replays_omitted: int = 0
+
+
+class ReportDocument(_Record):
+    """One sequence-cutoff snapshot shared by all report renderers."""
+
+    process: ProcessInfo
+    capture: CaptureInfo
+    meta_path: MetaPathSnapshot
+    path_hooks: PathHooksSnapshot
+    importer_cache: ImporterCacheSnapshot
+    sys_path_enabled: bool
+    analysis: AnalysisResult

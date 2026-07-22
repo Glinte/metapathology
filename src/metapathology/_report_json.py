@@ -167,50 +167,60 @@ def _json_events(
 
 def json_document(document: ReportDocument) -> ReportJSON:
     """Project one report document onto the stable JSON schema."""
-    timeline, event_counts, internal_error_refs = _json_events(document.events)
-    report_status: ReportStatus = "partial" if document.report_errors or internal_error_refs else "complete"
+    timeline, event_counts, internal_error_refs = _json_events(document.analysis.events)
+    report_status: ReportStatus = "partial" if document.analysis.report_errors or internal_error_refs else "complete"
     version = sys.version_info
     mechanisms: list[MechanismJSON] = [
-        _mechanism("meta_path_mutations", document.monitor_enabled, event_counts["mutations"], "best_effort"),
+        _mechanism("meta_path_mutations", document.capture.monitor_enabled, event_counts["mutations"], "best_effort"),
         _mechanism(
-            "meta_path_reassignments", document.monitor_enabled, event_counts["reassignments"], "import_boundaries"
+            "meta_path_reassignments",
+            document.capture.monitor_enabled,
+            event_counts["reassignments"],
+            "import_boundaries",
         ),
-        _mechanism("import_audit_starts", document.monitor_enabled, event_counts["audit_starts"], "resolution_starts"),
-        _mechanism("finder_attribution", document.monitor_enabled, event_counts["calls"], "instrumented_finders"),
+        _mechanism(
+            "import_audit_starts", document.capture.monitor_enabled, event_counts["audit_starts"], "resolution_starts"
+        ),
+        _mechanism(
+            "finder_attribution", document.capture.monitor_enabled, event_counts["calls"], "instrumented_finders"
+        ),
         _mechanism(
             "finder_contracts",
-            document.monitor_enabled,
-            len(document.finder_contracts),
+            document.capture.monitor_enabled,
+            len(document.analysis.finder_contracts),
             "first_observation_per_identity",
         ),
         _mechanism(
-            "deep_diagnostics", bool(document.deep_diagnostics), event_counts["deep_calls"], "delegated_boundaries"
+            "deep_diagnostics",
+            bool(document.capture.deep_diagnostics),
+            event_counts["deep_calls"],
+            "delegated_boundaries",
         ),
         _mechanism(
             "deep_import_outcomes",
-            "import_outcomes" in document.deep_diagnostics,
+            "import_outcomes" in document.capture.deep_diagnostics,
             event_counts["deep_import_events"],
-            document.deep_import_outcomes_status,
+            document.capture.deep_import_outcomes_status,
         ),
         _mechanism(
             "deep_import_calls",
-            "import_calls" in document.deep_diagnostics,
+            "import_calls" in document.capture.deep_diagnostics,
             event_counts["import_calls"],
-            document.deep_import_calls_status,
+            document.capture.deep_import_calls_status,
         ),
         _mechanism(
             "standard_finder_aggregate",
-            document.standard_finder_status.startswith("active_"),
+            document.capture.standard_finder_status.startswith("active_"),
             event_counts["standard_finder_calls"],
-            document.standard_finder_status,
+            document.capture.standard_finder_status,
         ),
         _route_analysis_mechanism(document),
         _mechanism(
-            "path_hooks_mutations", document.path_hooks_enabled, event_counts["path_hook_mutations"], "best_effort"
+            "path_hooks_mutations", document.path_hooks.enabled, event_counts["path_hook_mutations"], "best_effort"
         ),
         _mechanism(
             "path_hooks_reassignments",
-            document.path_hooks_enabled,
+            document.path_hooks.enabled,
             event_counts["path_hook_reassignments"],
             "import_boundaries",
         ),
@@ -224,7 +234,7 @@ def json_document(document: ReportDocument) -> ReportJSON:
         _cache_snapshot_mechanism(document),
         _mechanism(
             "importer_cache_diffs",
-            document.importer_cache_enabled,
+            document.importer_cache.enabled,
             event_counts["importer_cache_diffs"],
             "passive_boundaries",
         ),
@@ -233,10 +243,10 @@ def json_document(document: ReportDocument) -> ReportJSON:
         "schema": {"major": _SCHEMA_MAJOR, "minor": _SCHEMA_MINOR, "name": _SCHEMA_NAME},
         "report_status": report_status,
         "tool": {"name": "metapathology", "version": __version__},
-        "generated_at": document.generated_at,
+        "generated_at": document.process.generated_at,
         "process": {
-            "argv": list(document.argv),
-            "cwd": document.cwd,
+            "argv": list(document.process.argv),
+            "cwd": document.process.cwd,
             "executable": sys.executable if isinstance(sys.executable, str) else None,
             "implementation": sys.implementation.name,
             "parent_pid": os.getppid(),
@@ -245,77 +255,79 @@ def json_document(document: ReportDocument) -> ReportJSON:
             "python_version": f"{version.major}.{version.minor}.{version.micro}",
         },
         "capture": {
-            "baseline_module_count": document.baseline_module_count,
-            "cutoff_seq": document.cutoff_seq,
-            "early_site_bootstrap": _json_early_site_bootstrap(document.early_site_bootstrap),
-            "frozen_bootstrap": _json_frozen_bootstrap(document.frozen_bootstrap),
-            "enabled": document.monitor_enabled,
+            "baseline_module_count": document.capture.baseline_module_count,
+            "cutoff_seq": document.capture.cutoff_seq,
+            "early_site_bootstrap": _json_early_site_bootstrap(document.capture.early_site_bootstrap),
+            "frozen_bootstrap": _json_frozen_bootstrap(document.capture.frozen_bootstrap),
+            "enabled": document.capture.monitor_enabled,
             "mechanisms": mechanisms,
             "modules_since_install": None
-            if document.modules_since_install is None
-            else list(document.modules_since_install),
+            if document.capture.modules_since_install is None
+            else list(document.capture.modules_since_install),
         },
         "snapshots": [
             {
-                "entries": list(document.initial_meta_path),
+                "entries": list(document.meta_path.initial),
                 "id": "snapshot:install",
                 "kind": "meta_path",
                 "phase": "install",
             },
             {
-                "entries": None if document.current_meta_path is None else list(document.current_meta_path),
+                "entries": None if document.meta_path.current is None else list(document.meta_path.current),
                 "id": "snapshot:report",
                 "kind": "meta_path",
                 "phase": "report",
             },
             {
-                "entries": [_json_import_object(reference) for reference in document.initial_path_hooks],
+                "entries": [_json_import_object(reference) for reference in document.path_hooks.initial],
                 "id": "snapshot:path-hooks:install",
                 "kind": "path_hooks",
                 "phase": "install",
             },
             {
                 "entries": None
-                if document.current_path_hooks is None
-                else [_json_import_object(reference) for reference in document.current_path_hooks],
+                if document.path_hooks.current is None
+                else [_json_import_object(reference) for reference in document.path_hooks.current],
                 "id": "snapshot:path-hooks:report",
                 "kind": "path_hooks",
                 "phase": "report",
             },
             {
-                "entries": [_json_importer_cache_entry(entry) for entry in document.initial_importer_cache],
+                "entries": [_json_importer_cache_entry(entry) for entry in document.importer_cache.initial],
                 "id": "snapshot:importer-cache:install",
                 "kind": "importer_cache",
-                "non_string_keys": document.initial_importer_cache_non_string_keys,
+                "non_string_keys": document.importer_cache.initial_non_string_keys,
                 "phase": "install",
             },
             {
                 "entries": None
-                if document.current_importer_cache is None
-                else [_json_importer_cache_entry(entry) for entry in document.current_importer_cache],
+                if document.importer_cache.current is None
+                else [_json_importer_cache_entry(entry) for entry in document.importer_cache.current],
                 "id": "snapshot:importer-cache:report",
                 "kind": "importer_cache",
-                "non_string_keys": document.current_importer_cache_non_string_keys,
+                "non_string_keys": document.importer_cache.current_non_string_keys,
                 "phase": "report",
             },
         ],
-        "loader_inventory": _json_loader_inventory(document.loader_inventory),
-        "finder_contracts": [_json_finder_contract(contract) for contract in document.finder_contracts],
-        "import_attempts": [_json_import_attempt(attempt) for attempt in document.attempts],
-        "standard_resolutions": [_json_standard_resolution(resolution) for resolution in document.standard_resolutions],
-        "resolution_routes": [_json_resolution_route(route) for route in document.resolution_routes],
-        "route_comparisons": [_json_route_comparison(comparison) for comparison in document.route_comparisons],
+        "loader_inventory": _json_loader_inventory(document.analysis.loader_inventory),
+        "finder_contracts": [_json_finder_contract(contract) for contract in document.analysis.finder_contracts],
+        "import_attempts": [_json_import_attempt(attempt) for attempt in document.analysis.attempts],
+        "standard_resolutions": [
+            _json_standard_resolution(resolution) for resolution in document.analysis.standard_resolutions
+        ],
+        "resolution_routes": [_json_resolution_route(route) for route in document.analysis.resolution_routes],
+        "route_comparisons": [_json_route_comparison(comparison) for comparison in document.analysis.route_comparisons],
         "timeline": timeline,
-        "findings": [_json_finding(finding) for finding in document.findings],
-        "explanations": [_json_explanation(explanation) for explanation in document.explanations],
-        "summary": _json_summary(document.summary),
+        "findings": [_json_finding(finding) for finding in document.analysis.findings],
+        "explanations": [_json_explanation(explanation) for explanation in document.analysis.explanations],
+        "summary": _json_summary(document.analysis.summary),
         "speculative_replay": _json_speculative_replay(document),
-        "target_outcome": _json_target_outcome(document.target_outcome),
+        "target_outcome": _json_target_outcome(document.analysis.target_outcome),
         "diagnostics": {
             "internal_error_refs": internal_error_refs,
             "report_errors": [
                 {"exception_type_name": error.exception_type_name, "where": error.where}
-                for error in document.report_errors
+                for error in document.analysis.report_errors
             ],
             "skipped_finders": [
                 {
@@ -323,7 +335,7 @@ def json_document(document: ReportDocument) -> ReportJSON:
                     "finder_type_name": skipped.finder_type_name,
                     "reason": skipped.reason,
                 }
-                for skipped in document.skipped_finders
+                for skipped in document.analysis.skipped_finders
             ],
         },
     }
@@ -369,13 +381,13 @@ def _json_finder_contract(contract: FinderContract) -> FinderContractJSON:
 def _route_analysis_mechanism(document: ReportDocument) -> MechanismJSON:
     return {
         "capacity": None,
-        "comparison_count": len(document.route_comparisons),
+        "comparison_count": len(document.analysis.route_comparisons),
         "completeness": "reported_custom_winners",
         "dropped": 0,
-        "enabled": document.monitor_enabled,
+        "enabled": document.capture.monitor_enabled,
         "name": "resolution_route_analysis",
         "overflow_policy": "retain_all",
-        "retained": len(document.resolution_routes),
+        "retained": len(document.analysis.resolution_routes),
         "shutdown": "synchronous_no_retry",
     }
 
@@ -383,14 +395,14 @@ def _route_analysis_mechanism(document: ReportDocument) -> MechanismJSON:
 def _cache_snapshot_mechanism(document: ReportDocument) -> MechanismJSON:
     return {
         "capacity": 2,
-        "coalesced": document.importer_cache_coalesced,
+        "coalesced": document.importer_cache.coalesced,
         "completeness": "passive_boundaries",
         "dropped": 0,
-        "enabled": document.importer_cache_enabled,
+        "enabled": document.importer_cache.enabled,
         "name": "importer_cache_snapshots",
-        "observations": document.importer_cache_observations,
+        "observations": document.importer_cache.observations,
         "overflow_policy": "replace_latest",
-        "retained": min(document.importer_cache_observations, 2),
+        "retained": min(document.importer_cache.observations, 2),
         "shutdown": "synchronous_no_retry",
     }
 
@@ -753,10 +765,10 @@ def _json_speculative_replay(document: ReportDocument) -> SpeculativeReplayInfoJ
     succeeded.
     """
     return {
-        "enabled": document.speculative_replay_enabled,
-        "omitted": document.speculative_replays_omitted,
+        "enabled": document.analysis.speculative_replay_enabled,
+        "omitted": document.analysis.speculative_replays_omitted,
         "probe_cap": MAX_SPECULATIVE_REPLAYS,
-        "replays": [_json_one_speculative_replay(replay) for replay in document.speculative_replays],
+        "replays": [_json_one_speculative_replay(replay) for replay in document.analysis.speculative_replays],
     }
 
 

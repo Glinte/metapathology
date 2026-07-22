@@ -108,7 +108,7 @@ class _RenderContext:
 
     def __init__(self, document: ReportDocument, *, color: bool) -> None:
         self.color = color
-        cwd = document.cwd
+        cwd = document.process.cwd
         if cwd:
             base = os.path.normcase(cwd).rstrip(os.sep)
             self._base: str | None = base
@@ -119,14 +119,14 @@ class _RenderContext:
 
         threads = {
             thread
-            for thread in (getattr(event, "thread_name", None) for event in document.events)
+            for thread in (getattr(event, "thread_name", None) for event in document.analysis.events)
             if thread is not None
         }
         self.only_thread: str | None = next(iter(threads)) if len(threads) == 1 else None
 
         finder_ids: dict[str, set[int]] = {}
         hook_ids: dict[str, set[int]] = {}
-        for event in document.events:
+        for event in document.analysis.events:
             if isinstance(event, FindSpecCall):
                 finder_ids.setdefault(event.finder_type_name, set()).add(event.finder_id)
             elif isinstance(event, PathHooksMutation):
@@ -135,20 +135,22 @@ class _RenderContext:
             elif isinstance(event, PathHooksReassignment):
                 for reference in (*event.old_contents, *event.new_contents):
                     _note_label(hook_ids, reference)
-        for reference in (*document.initial_path_hooks, *(document.current_path_hooks or ())):
+        for reference in (*document.path_hooks.initial, *(document.path_hooks.current or ())):
             _note_label(hook_ids, reference)
         self.finder_ambiguous = {label for label, ids in finder_ids.items() if len(ids) > 1}
         self.hook_ambiguous = {label for label, ids in hook_ids.items() if len(ids) > 1}
-        self.routes_by_id = {route.route_id: route for route in document.resolution_routes}
-        self.comparisons_by_id = {comparison.comparison_id: comparison for comparison in document.route_comparisons}
+        self.routes_by_id = {route.route_id: route for route in document.analysis.resolution_routes}
+        self.comparisons_by_id = {
+            comparison.comparison_id: comparison for comparison in document.analysis.route_comparisons
+        }
 
         relevant_cache_paths: set[str] = set()
-        for finding in document.findings:
+        for finding in document.analysis.findings:
             if finding.structural_comparison is not None:
                 relevant_cache_paths.update(
                     os.path.normcase(path) for path in finding.structural_comparison.importer_cache_changed_paths
                 )
-        for route in document.resolution_routes:
+        for route in document.analysis.resolution_routes:
             relevant_cache_paths.update(os.path.normcase(path) for path in route.search_path)
         self.relevant_cache_paths = relevant_cache_paths
 
@@ -232,40 +234,44 @@ def _ref_label(reference: ObjectRef) -> str:
 def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
     """Build the report body as a list of lines; the caller adds the trailing newline."""
     context = _RenderContext(document, color=color)
-    mutations = _events_of_type(document.events, MetaPathMutation)
-    reassignments = _events_of_type(document.events, MetaPathReassignment)
-    path_hook_mutations = _events_of_type(document.events, PathHooksMutation)
-    path_hook_reassignments = _events_of_type(document.events, PathHooksReassignment)
-    sys_path_mutations = _events_of_type(document.events, SysPathMutation)
-    sys_path_reassignments = _events_of_type(document.events, SysPathReassignment)
-    importer_cache_diffs = _events_of_type(document.events, ImporterCacheDiff)
-    calls = _events_of_type(document.events, FindSpecCall)
-    errors = _events_of_type(document.events, InternalError)
+    mutations = _events_of_type(document.analysis.events, MetaPathMutation)
+    reassignments = _events_of_type(document.analysis.events, MetaPathReassignment)
+    path_hook_mutations = _events_of_type(document.analysis.events, PathHooksMutation)
+    path_hook_reassignments = _events_of_type(document.analysis.events, PathHooksReassignment)
+    sys_path_mutations = _events_of_type(document.analysis.events, SysPathMutation)
+    sys_path_reassignments = _events_of_type(document.analysis.events, SysPathReassignment)
+    importer_cache_diffs = _events_of_type(document.analysis.events, ImporterCacheDiff)
+    calls = _events_of_type(document.analysis.events, FindSpecCall)
+    errors = _events_of_type(document.analysis.events, InternalError)
 
     lines = _header_lines(document, context)
 
     lines.append("")
     counts = {severity: 0 for severity in ("actionable", "warning", "informational")}
-    for finding in document.findings:
+    for finding in document.analysis.findings:
         counts[finding.severity] = counts.get(finding.severity, 0) + 1
     summary = ", ".join(
         f"{count} {context.severity(severity, severity)}" for severity, count in counts.items() if count
     )
     consumed_comparisons = {
-        finding.route_comparison_id for finding in document.findings if finding.route_comparison_id is not None
+        finding.route_comparison_id for finding in document.analysis.findings if finding.route_comparison_id is not None
     }
     divergent = tuple(
         comparison
-        for comparison in document.route_comparisons
+        for comparison in document.analysis.route_comparisons
         if _routes_differ(comparison) and comparison.comparison_id not in consumed_comparisons
     )
     if summary:
-        lines.append(f"{context.heading(f'-- findings ({len(document.findings)}:')} {summary}{context.heading(') --')}")
+        lines.append(
+            f"{context.heading(f'-- findings ({len(document.analysis.findings)}:')} {summary}{context.heading(') --')}"
+        )
     else:
-        lines.append(context.heading(f"-- findings ({len(document.findings)}) --"))
-    if not document.findings:
-        module_count = 0 if document.modules_since_install is None else len(document.modules_since_install)
-        if divergent or document.explanations:
+        lines.append(context.heading(f"-- findings ({len(document.analysis.findings)}) --"))
+    if not document.analysis.findings:
+        module_count = (
+            0 if document.capture.modules_since_install is None else len(document.capture.modules_since_install)
+        )
+        if divergent or document.analysis.explanations:
             lines.append("No problems were found. The comparisons below are informational.")
         else:
             lines.append(f"No import-hook interference detected across {module_count} monitored imports.")
@@ -297,18 +303,18 @@ def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
     else:
         empty_sections.append("finder calls")
 
-    contract_lines = _finder_contract_lines(document.finder_contracts, context)
+    contract_lines = _finder_contract_lines(document.analysis.finder_contracts, context)
     if contract_lines:
         lines.append("")
         lines.extend(contract_lines)
 
-    if document.standard_resolutions:
+    if document.analysis.standard_resolutions:
         lines.append("")
-        lines.extend(_standard_resolution_lines(document.standard_resolutions, context))
+        lines.extend(_standard_resolution_lines(document.analysis.standard_resolutions, context))
     else:
         empty_sections.append("imports attributed to standard finders")
 
-    if document.events:
+    if document.analysis.events:
         lines.append("")
         lines.extend(_timeline_lines(document, context))
     else:
@@ -370,7 +376,7 @@ def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
     else:
         empty_sections.append("sys.path_importer_cache changes")
 
-    if document.speculative_replay_enabled:
+    if document.analysis.speculative_replay_enabled:
         replay_lines = _speculative_replay_lines(document, context)
         if replay_lines:
             lines.append("")
@@ -378,12 +384,14 @@ def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
         else:
             empty_sections.append("speculative replays")
 
-    error_count = len(errors) + len(document.report_errors)
+    error_count = len(errors) + len(document.analysis.report_errors)
     if error_count:
         lines.append("")
         lines.append(context.negative(f"-- internal errors ({error_count}) --"))
         lines.extend(_internal_error_line(error) for error in errors)
-        lines.extend(f"during report in {error.where}: {error.exception_type_name}" for error in document.report_errors)
+        lines.extend(
+            f"during report in {error.where}: {error.exception_type_name}" for error in document.analysis.report_errors
+        )
     else:
         empty_sections.append("internal errors")
 
@@ -422,12 +430,14 @@ _SEVERITY_ORDER = {"actionable": 0, "warning": 1, "informational": 2}
 
 def _narrative_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
     """Render numbered problem blocks: explanations headline their cause finding's evidence."""
-    shown_explanations = _primary_explanations(document.explanations) if document.explanations else ()
+    shown_explanations = _primary_explanations(document.analysis.explanations) if document.analysis.explanations else ()
     explanations_by_cause: dict[str, list[CausalExplanation]] = {}
     for explanation in shown_explanations:
         if explanation.cause_finding_id is not None:
             explanations_by_cause.setdefault(explanation.cause_finding_id, []).append(explanation)
-    ordered = sorted(document.findings, key=lambda item: (_SEVERITY_ORDER.get(item.severity, 1), item.finding_id))
+    ordered = sorted(
+        document.analysis.findings, key=lambda item: (_SEVERITY_ORDER.get(item.severity, 1), item.finding_id)
+    )
     headline_findings = [finding for finding in ordered if finding.severity != "informational"]
     informational = [finding for finding in ordered if finding.severity == "informational"]
     numbers = _headline_finding_numbers(document)
@@ -466,7 +476,9 @@ def _narrative_lines(document: ReportDocument, context: _RenderContext) -> list[
     for explanation in orphan_explanations:
         number += 1
         block = _explanation_lines(
-            explanation, context, explanations_by_id={item.explanation_id: item for item in document.explanations}
+            explanation,
+            context,
+            explanations_by_id={item.explanation_id: item for item in document.analysis.explanations},
         )
         block[0] = f"[{number}] {block[0]}"
         block[0] = _style_leading_tag(block[0], "warning", context, count=2)
@@ -514,10 +526,10 @@ _MAX_UNRESOLVED_ATTEMPTS = 25
 
 def _unresolved_import_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
     """List imports that started but left no module, joining them to legacy-only finders."""
-    unresolved = unresolved_attempts(document.attempts)
+    unresolved = unresolved_attempts(document.analysis.attempts)
     if not unresolved:
         return []
-    missing = None if document.target_outcome is None else document.target_outcome.missing_module
+    missing = None if document.analysis.target_outcome is None else document.analysis.target_outcome.missing_module
     ordered = sorted(unresolved, key=lambda attempt: (attempt.fullname != missing, attempt.start_event_seq))
     lines = [context.heading(f"-- imports that started but produced no module ({len(unresolved)}) --")]
     lines.append("Failed optional imports are normal; an entry matters when your program needed the module.")
@@ -530,7 +542,7 @@ def _unresolved_import_lines(document: ReportDocument, context: _RenderContext) 
     if len(ordered) > _MAX_UNRESOLVED_ATTEMPTS:
         lines.append(f"... and {len(ordered) - _MAX_UNRESOLVED_ATTEMPTS} more; full list in the JSON report")
     numbers = _headline_finding_numbers(document)
-    legacy = [finding for finding in document.findings if finding.kind == "legacy_finder_contract"]
+    legacy = [finding for finding in document.analysis.findings if finding.kind == "legacy_finder_contract"]
     for finding in legacy:
         reference = f" — see [{numbers[finding.finding_id]}]" if finding.finding_id in numbers else ""
         lines.append(
@@ -542,7 +554,9 @@ def _unresolved_import_lines(document: ReportDocument, context: _RenderContext) 
 
 def _headline_finding_numbers(document: ReportDocument) -> dict[str, int]:
     """Visible block numbers assigned to non-informational findings in display order."""
-    ordered = sorted(document.findings, key=lambda item: (_SEVERITY_ORDER.get(item.severity, 1), item.finding_id))
+    ordered = sorted(
+        document.analysis.findings, key=lambda item: (_SEVERITY_ORDER.get(item.severity, 1), item.finding_id)
+    )
     return {
         finding.finding_id: number
         for number, finding in enumerate(
@@ -684,60 +698,60 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
     lines.extend(_verdict_lines(document, context))
     lines.append(f"report guide: {_REPORT_GUIDE_URL}")
     lines.append(_monitoring_line(document))
-    if document.deep_diagnostics:
+    if document.capture.deep_diagnostics:
         warning = context.warning("WARNING:")
         lines.append(
             f"{warning} opt-in deep diagnostics are enabled; they wrap import-machinery callables "
             "and may affect identity checks"
         )
-        lines.append(f"deep diagnostics enabled: {', '.join(document.deep_diagnostics)}")
-    if document.deep_import_outcomes_status != "disabled":
-        lines.append(f"import outcome observation: {_humanize(document.deep_import_outcomes_status)}")
-    if document.deep_import_calls_status != "disabled":
-        lines.append(f"import call observation: {_humanize(document.deep_import_calls_status)}")
-    if document.standard_finder_status != "disabled":
-        lines.append(f"PathFinder result capture: {_humanize(document.standard_finder_status)}")
-    bootstrap = document.early_site_bootstrap
+        lines.append(f"deep diagnostics enabled: {', '.join(document.capture.deep_diagnostics)}")
+    if document.capture.deep_import_outcomes_status != "disabled":
+        lines.append(f"import outcome observation: {_humanize(document.capture.deep_import_outcomes_status)}")
+    if document.capture.deep_import_calls_status != "disabled":
+        lines.append(f"import call observation: {_humanize(document.capture.deep_import_calls_status)}")
+    if document.capture.standard_finder_status != "disabled":
+        lines.append(f"PathFinder result capture: {_humanize(document.capture.standard_finder_status)}")
+    bootstrap = document.capture.early_site_bootstrap
     if bootstrap is not None:
         lines.append(f"early site bootstrap: {context.display_path(bootstrap.path)}")
         lines.append(f"bootstrap site-packages: {context.display_path(bootstrap.site_packages)}")
         lines.append(f"bootstrap activation: {bootstrap.activation_source}")
         earlier = _names_line(bootstrap.earlier_pth_files) if bootstrap.earlier_pth_files else "(none)"
         lines.append(f"earlier .pth files outside capture: {earlier}")
-    frozen_bootstrap = document.frozen_bootstrap
+    frozen_bootstrap = document.capture.frozen_bootstrap
     if frozen_bootstrap is not None:
         lines.append(f"frozen integration: {frozen_bootstrap.integration}")
         lines.append(f"frozen bootstrap: {context.display_path(frozen_bootstrap.path)}")
         lines.append(f"frozen observation boundary: {frozen_bootstrap.boundary}")
 
-    if document.current_meta_path == document.initial_meta_path:
-        lines.append(f"sys.meta_path (unchanged since install): {_names_line(document.initial_meta_path)}")
-        displayed_finders: tuple[str, ...] = document.initial_meta_path
+    if document.meta_path.current == document.meta_path.initial:
+        lines.append(f"sys.meta_path (unchanged since install): {_names_line(document.meta_path.initial)}")
+        displayed_finders: tuple[str, ...] = document.meta_path.initial
     else:
-        current_meta_path = ("<unavailable>",) if document.current_meta_path is None else document.current_meta_path
-        lines.append(f"sys.meta_path at install: {_names_line(document.initial_meta_path)}")
+        current_meta_path = ("<unavailable>",) if document.meta_path.current is None else document.meta_path.current
+        lines.append(f"sys.meta_path at install: {_names_line(document.meta_path.initial)}")
         lines.append(f"sys.meta_path now: {_names_line(current_meta_path)}")
-        displayed_finders = document.initial_meta_path + current_meta_path
+        displayed_finders = document.meta_path.initial + current_meta_path
     for name, annotation in _KNOWN_SHIM_ANNOTATIONS.items():
         if name in displayed_finders:
             lines.append(f"    {name} is {annotation}")
 
-    if document.path_hooks_enabled:
-        current_hooks = document.current_path_hooks
-        if current_hooks is not None and _ref_signatures(current_hooks) == _ref_signatures(document.initial_path_hooks):
-            lines.append(f"sys.path_hooks (unchanged since install): {context.hook_refs(document.initial_path_hooks)}")
+    if document.path_hooks.enabled:
+        current_hooks = document.path_hooks.current
+        if current_hooks is not None and _ref_signatures(current_hooks) == _ref_signatures(document.path_hooks.initial):
+            lines.append(f"sys.path_hooks (unchanged since install): {context.hook_refs(document.path_hooks.initial)}")
         else:
             now = "<unavailable>" if current_hooks is None else context.hook_refs(current_hooks)
-            lines.append(f"sys.path_hooks at install: {context.hook_refs(document.initial_path_hooks)}")
+            lines.append(f"sys.path_hooks at install: {context.hook_refs(document.path_hooks.initial)}")
             lines.append(f"sys.path_hooks now: {now}")
 
-    if document.importer_cache_enabled:
-        initial_count = len(document.initial_importer_cache)
-        cache = document.current_importer_cache
+    if document.importer_cache.enabled:
+        initial_count = len(document.importer_cache.initial)
+        cache = document.importer_cache.current
         current_count = "<unavailable>" if cache is None else str(len(cache))
         line = f"sys.path_importer_cache: {initial_count} -> {current_count} entries"
-        initial_non_string = document.initial_importer_cache_non_string_keys
-        current_non_string = document.current_importer_cache_non_string_keys or 0
+        initial_non_string = document.importer_cache.initial_non_string_keys
+        current_non_string = document.importer_cache.current_non_string_keys or 0
         if initial_non_string or current_non_string:
             if initial_non_string == current_non_string:
                 line += f" ({initial_non_string} non-string keys omitted)"
@@ -745,8 +759,8 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
                 line += f" ({initial_non_string} -> {current_non_string} non-string keys omitted)"
         lines.append(line)
 
-    standard_skipped = [item for item in document.skipped_finders if item.expected]
-    other_skipped = [item for item in document.skipped_finders if not item.expected]
+    standard_skipped = [item for item in document.analysis.skipped_finders if item.expected]
+    other_skipped = [item for item in document.analysis.skipped_finders if not item.expected]
     if standard_skipped:
         lines.append(
             "standard CPython finders left unwrapped (expected): "
@@ -756,18 +770,18 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
         lines.append("other finders observed but not instrumented (direct attribution unavailable):")
         lines.extend(f"    {item.finder_type_name}: {item.reason}" for item in other_skipped)
 
-    module_count = 0 if document.modules_since_install is None else len(document.modules_since_install)
+    module_count = 0 if document.capture.modules_since_install is None else len(document.capture.modules_since_install)
     lines.append(f"modules imported since install: {module_count}")
-    if document.cwd:
-        lines.append(f"paths shown relative to: {document.cwd} (that directory itself displays as <project>)")
+    if document.process.cwd:
+        lines.append(f"paths shown relative to: {document.process.cwd} (that directory itself displays as <project>)")
     return lines
 
 
 def _verdict_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
     """Lead with the target's outcome and a one-sentence reading of the evidence."""
     lines: list[str] = []
-    outcome = document.target_outcome
-    unresolved = unresolved_attempts(document.attempts)
+    outcome = document.analysis.target_outcome
+    unresolved = unresolved_attempts(document.analysis.attempts)
     if outcome is not None:
         if outcome.kind == "raised":
             what = outcome.exception_type_name or "an exception"
@@ -786,7 +800,7 @@ def _verdict_lines(document: ReportDocument, context: _RenderContext) -> list[st
         prefix = context.negative("target outcome:") if failed else context.positive("target outcome:")
         lines.append(prefix + line[len("target outcome:") :])
 
-    summary = document.summary
+    summary = document.analysis.summary
     counts = [
         f"{count} {context.severity(severity, severity)}"
         for severity, count in (
@@ -797,13 +811,15 @@ def _verdict_lines(document: ReportDocument, context: _RenderContext) -> list[st
         if count
     ]
     numbers = _headline_finding_numbers(document)
-    total = len(document.findings)
+    total = len(document.analysis.findings)
     breakdown = f"{total} finding{'' if total == 1 else 's'}"
     if len(counts) > 1:
         breakdown += f" ({', '.join(counts)})"
     elif counts:
         breakdown = f"{counts[0]} finding{'' if total == 1 else 's'}"
-    top = next((finding for finding in document.findings if finding.finding_id == summary.top_finding_id), None)
+    top = next(
+        (finding for finding in document.analysis.findings if finding.finding_id == summary.top_finding_id), None
+    )
     if top is not None:
         tag = top.kind.replace("_", "-")
         prefix = context.severity("verdict:", top.severity)
@@ -813,13 +829,15 @@ def _verdict_lines(document: ReportDocument, context: _RenderContext) -> list[st
     elif counts:
         severity = "warning" if summary.warning else "informational"
         lines.append(f"{context.severity('verdict:', severity)} {breakdown}")
-    elif any(_routes_differ(comparison) for comparison in document.route_comparisons):
+    elif any(_routes_differ(comparison) for comparison in document.analysis.route_comparisons):
         lines.append(
             f"{context.severity('verdict:', 'informational')} no problems found; some modules were found by a "
             "custom finder instead of the standard path search — listed below for review"
         )
     else:
-        module_count = 0 if document.modules_since_install is None else len(document.modules_since_install)
+        module_count = (
+            0 if document.capture.modules_since_install is None else len(document.capture.modules_since_install)
+        )
         lines.append(
             f"{context.positive('verdict:')} no import-hook interference detected across {module_count} monitored imports"
         )
@@ -828,13 +846,13 @@ def _verdict_lines(document: ReportDocument, context: _RenderContext) -> list[st
 
 def _monitoring_line(document: ReportDocument) -> str:
     """One-line mechanism summary replacing the per-mechanism enabled/disabled lines."""
-    if not document.monitor_enabled:
+    if not document.capture.monitor_enabled:
         return "monitoring: disabled"
     mechanisms = ["sys.meta_path"]
     notes: list[str] = []
     for name, enabled in (
-        ("sys.path_hooks", document.path_hooks_enabled),
-        ("sys.path_importer_cache", document.importer_cache_enabled),
+        ("sys.path_hooks", document.path_hooks.enabled),
+        ("sys.path_importer_cache", document.importer_cache.enabled),
     ):
         if enabled:
             mechanisms.append(name)
@@ -1055,7 +1073,7 @@ def _standard_resolution_lines(resolutions: tuple[StandardResolution, ...], cont
 
 def _timeline_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
     """Render the timeline with shared context hoisted into a preamble."""
-    events = document.events
+    events = document.analysis.events
     lines = [context.heading(f"-- event timeline ({len(events)}) --")]
     if context.only_thread is not None:
         lines.append(f"Events are numbered in the order they were recorded; all ran on thread {context.only_thread}.")
@@ -1146,13 +1164,13 @@ def _timeline_entries(
 def _protected_event_positions(document: ReportDocument, events: "tuple[MonitorEvent, ...]") -> set[int]:
     """Positions (by index, not seq) that must always render expanded, plus one neighbor each side."""
     referenced_seqs: set[int] = set()
-    for finding in document.findings:
+    for finding in document.analysis.findings:
         referenced_seqs.update(finding.supporting_event_seqs)
         if finding.claim is not None:
             referenced_seqs.add(finding.claim.seq)
         if finding.deep_call is not None:
             referenced_seqs.add(finding.deep_call.seq)
-    for explanation in document.explanations:
+    for explanation in document.analysis.explanations:
         referenced_seqs.update(explanation.event_seqs)
     position_by_seq = {event.seq: index for index, event in enumerate(events)}
     protected: set[int] = set()
@@ -1379,7 +1397,7 @@ def _loader_inventory_lines(document: ReportDocument, context: _RenderContext) -
     Text shows loader groups that participated in captured custom claims and
     any metadata disagreements; JSON retains the exhaustive inventory.
     """
-    inventory = document.loader_inventory
+    inventory = document.analysis.loader_inventory
     if not inventory.available:
         return [context.heading("-- loaders of imported modules --"), "(sys.modules snapshot unavailable)"]
     groups: dict[str | None, list[ModuleMetadata]] = {}
@@ -1390,16 +1408,16 @@ def _loader_inventory_lines(document: ReportDocument, context: _RenderContext) -
         groups.setdefault(label, []).append(entry)
     claimed_loaders = {
         event.loader_type_name
-        for event in document.events
+        for event in document.analysis.events
         if isinstance(event, FindSpecCall) and event.found and event.loader_type_name is not None
     }
     custom = sorted(label for label in groups if label is not None and label in claimed_loaders)
     disagreements = [
         entry for entry in inventory.entries if entry.inspection == "available" and entry.loader_agreement is False
     ]
-    relevant_names = set(document.modules_since_install or ())
+    relevant_names = set(document.capture.modules_since_install or ())
     relevant_names.update(
-        event.fullname for event in document.events if isinstance(event, FindSpecCall) and event.found
+        event.fullname for event in document.analysis.events if isinstance(event, FindSpecCall) and event.found
     )
     unavailable = sorted(
         (entry for entry in inventory.entries if entry.inspection != "available" and entry.name in relevant_names),
@@ -1605,8 +1623,8 @@ def _speculative_replay_lines(document: ReportDocument, context: _RenderContext)
     original import would have succeeded. A returned spec proves only current
     finder behavior, not historical resolution or loader success.
     """
-    replays = document.speculative_replays
-    if not replays and not document.speculative_replays_omitted:
+    replays = document.analysis.speculative_replays
+    if not replays and not document.analysis.speculative_replays_omitted:
         return []
     lines = [context.heading(f"-- speculative replays ({len(replays)}) --")]
     lines.append(
@@ -1629,9 +1647,9 @@ def _speculative_replay_lines(document: ReportDocument, context: _RenderContext)
             f"displaced {finder} for {where}, asked about {replay.fullname!r}: {outcome} "
             f"(cache change #{replay.diff_seq}; failed lookup #{replay.attempt_seq})"
         )
-    if document.speculative_replays_omitted:
+    if document.analysis.speculative_replays_omitted:
         lines.append(
-            f"    ... and {document.speculative_replays_omitted} more candidates omitted at the per-report cap"
+            f"    ... and {document.analysis.speculative_replays_omitted} more candidates omitted at the per-report cap"
         )
     return lines
 
