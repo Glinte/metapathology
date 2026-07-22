@@ -127,7 +127,7 @@ format or color mode. In `"auto"`, file paths and non-TTY streams remain plain;
 ### `render_report(*, format="text", color=False) -> str`
 
 Returns text or JSON, including its trailing newline. JSON uses the stable
-`metapathology.report` schema version 1.0. The bundled
+`metapathology.report` schema version 2.0. The bundled
 `metapathology/report.schema.json` file defines its language-neutral shape;
 `metapathology.ReportJSON` and `metapathology.ReportStatus` expose the Python
 typing contract without eagerly importing the reporting implementation.

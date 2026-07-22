@@ -374,7 +374,7 @@ relativized.
 The schema is versioned and stable:
 
 ```json
-{"name": "metapathology.report", "major": 1, "minor": 1}
+{"name": "metapathology.report", "major": 2, "minor": 0}
 ```
 
 The bundled `metapathology/report.schema.json` file is the contract. Minor
@@ -390,10 +390,15 @@ Conventions for consumers:
 - A field is *omitted* when the concept does not apply, `null` when it
   applies but was not captured, and an empty array when the collection is
   known to be empty.
-- `*_ref` fields resolve to IDs within the same document. Object identity
+- `*_ref` fields resolve to IDs within the same document (for example an
+  event's `data.attempt_ref` names an `import_attempts` entry). Object identity
   values are only meaningful within their originating process.
-- `timeline` is ordered by capture sequence; findings are in report priority
-  order.
+- `timeline` is ordered by capture sequence. Each event is an envelope
+  (`id`, `seq`, `kind`) whose `data` object holds the fields specific to that
+  `kind`.
+- `summary.counts` holds the per-severity finding totals (`actionable`,
+  `warning`, `informational`).
+- findings are in report priority order.
 - `report_status` is `complete`, `partial` (valid but some instrumentation
   or copy errors occurred), or `generation_failed` (a minimal fallback
   document).

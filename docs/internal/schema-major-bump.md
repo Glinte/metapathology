@@ -1,82 +1,73 @@
-# Deferred report-schema changes (next major bump)
+# Report-schema major bumps
 
-This collects schema changes that improve the machine-readable report but change
-its **output shape**, so they cannot ship under the frozen-output constraint of
-ordinary refactors. They require a major schema bump (`major: 1` → `2`) because
-they move or restructure existing fields. Do them together to spend the one
-breaking bump well.
+The report IR/rendering refactors held text and JSON byte-identical, so anything
+that alters the emitted JSON shape — even a strictly more precise structure —
+must ride a coordinated major bump. Each such bump changes `schema.major`,
+regenerates the bundled `src/metapathology/report.schema.json` (pinned by
+`test_bundled_json_schema_is_current`), and updates every consumer at once.
 
-## Why these are deferred
+## Shipped in 2.0
 
-The report IR/rendering refactor (2026-07) held text and JSON byte-identical.
-Anything that alters the emitted JSON — even a strictly more precise structure —
-changes `schema.major`/`minor` in every report and regenerates the bundled
-`src/metapathology/report.schema.json`, which `test_bundled_json_schema_is_current`
-pins. That is a deliberate, coordinated release, not an incidental cleanup.
+The `1.3` → `2.0` bump restructured the report for precise typing:
 
-## Change 1 — nest event-specific fields under `data`
+- **Timeline events nest their payload under `data`.** Each event is now an
+  envelope `{id, seq, kind, data}`; the kind-specific fields live in `data`.
+  `EventJSON` is the envelope and `EventDataJSON` is the discriminated union of
+  per-kind payload TypedDicts (`ImportAuditStartDataJSON`, …). Each
+  `_json_<kind>` builder returns its own fully-typed payload; `_json_event`
+  wraps it. `kind` is a real `Literal` (`EventKind`).
+- **Events reference their attempt by `data.attempt_ref`** (`"attempt:N"`),
+  replacing the raw int `attempt_id` — now uniform with every other `*_ref`.
+- **`summary.counts`** nests the per-severity totals (`actionable`, `warning`,
+  `informational`) so they cannot drift from the `FindingSeverity` vocabulary.
+- **Literal tightening.** Closed-vocabulary fields that were `str` are now
+  `Literal`s, mirrored at module scope in `_report_schema.py` (the generator
+  resolves them at runtime): event `kind`; snapshot `kind`/`phase`; module
+  `state`; spec `locations_state`; protocol `availability`; finding
+  `severity`/`kind`/`subject.kind`/evidence `level`; explanation
+  `kind`/`confidence`; resolution `category`/`state_phase`/`evidence_level`;
+  route `kind`/`purpose`/`status`/`evidence_level`; `search_path_kind`/`_phase`;
+  import `progress`/`presence`; deep `boundary`; mutation `op`; loader inventory
+  `evidence`/`phase`; mechanism `overflow_policy`/`shutdown`.
 
-**Today:** each timeline event flattens its envelope and its kind-specific
-fields into one object:
+## Still deferred (next major bump)
 
-```json
-{ "id": "event:12", "seq": 12, "kind": "find_spec_call",
-  "finder_id": "0x…", "found": true, "origin": "…", … }
-```
+These share the "base + optional grab-bag" shape but were left flat to keep the
+2.0 blast radius bounded. Bundle them when the next breaking window opens:
 
-This forces the kitchen-sink `EventJSON` TypedDict (`total=False`, every field
-optional), which cannot type-check which fields belong to which kind.
+- **`MechanismJSON`** — `MechanismBaseJSON` plus `total=False` extras
+  (`coalesced`, `comparison_count`, `observations`) that only apply to specific
+  mechanisms. A per-mechanism `data` payload (or discriminated union) would
+  type-check which extras belong where. Its `name` and `completeness` fields are
+  open-ended today; a closed vocabulary would let them become `Literal`s.
+- **`SnapshotJSON`** — `entries` is a `kind`-discriminated union and
+  `non_string_keys` only applies to `importer_cache`. The same envelope+`data`
+  nesting used for events would read more precisely.
+- **`FindingJSON` / `FindingEvidenceJSON`** — `total=False` grab-bags whose
+  members depend on `kind`; could be nested the same way.
+- **Remaining open `str` fields** — finder-contract `category`/`observation`,
+  loader-inventory `inspection`/`loader_source`, event `outcome`. Left as `str`
+  because their vocabularies are not confidently closed; tighten only alongside
+  a schema-validation test that checks real output against the bundled enums
+  (no such test exists yet — worth adding before more aggressive tightening).
 
-**Target:** nest the kind-specific payload under `data`:
+## Bump checklist (for the next one)
 
-```json
-{ "id": "event:12", "seq": 12, "kind": "find_spec_call",
-  "data": { "finder_id": "0x…", "found": true, "origin": "…", … } }
-```
-
-Then:
-
-- `EventJSON` becomes `EventEnvelopeJSON` (`id`, `seq`, `kind`, `data`) plus a
-  discriminated union of per-kind payload TypedDicts for `data`.
-- `kind` can become a real `Literal` discriminant (see `EVENT_KIND` in
-  `_report_events.py`, already the single source of truth).
-- Each builder in `_report_json.py` returns its own fully-typed payload
-  TypedDict — no shared-base merge, no `# type: ignore`, no kitchen sink. The
-  per-kind field groups already exist as the `_json_<kind>` builders and the
-  `_report_events` registry; lifting them into `data` is mechanical.
-
-## Implementation checklist
-
-- **`src/metapathology/_report_schema.py`** — replace the flat `EventJSON` with
-  `EventEnvelopeJSON` + per-kind payload TypedDicts (one per `EVENT_KIND` value)
-  + a `data` union. Consider narrowing `EventBaseJSON.kind` to a `Literal`.
-- **`src/metapathology/_report_json.py`** — each `_json_<kind>` builder returns
-  its payload TypedDict; the wrapper builds `{id, seq, kind, data: payload}`.
-  Payload builders drop the inlined base keys.
-- **Version bumps** (keep these three in lockstep):
-  - `_SCHEMA_MAJOR` / `_SCHEMA_MINOR` in `_report_json.py` (→ `2` / `0`).
-  - `schema_properties["major"|"minor"]` consts in
-    `scripts/generate_report_schema.py` (lines ~33–34).
-  - the `$id` URL in that generator (`…/schema/report-1.0.json` → `report-2.0.json`).
-- **Regenerate** the bundled schema: `python scripts/generate_report_schema.py`
-  (writes `src/metapathology/report.schema.json`), then confirm
-  `test_bundled_json_schema_is_current` passes.
-- **Consumers/tests** — update every JSON test that reads `event["<field>"]`
-  directly to `event["data"]["<field>"]` (e.g. `test_structured_report.py`,
-  `test_timeline.py`), and the schema docs in `docs/report.md` / `docs/api.md`.
-
-## Other candidates to bundle into the same major bump
-
-Evaluate these while the breaking window is open (each is optional):
-
-- Tighten now-`str` schema fields to `Literal`s where the vocabulary is closed
-  (e.g. event `kind`, `outcome`, `boundary`, resolution `category`,
-  finding `severity`/`kind`). Purely a schema-precision gain.
-- Reconsider any other flattened envelopes that share the same "base + optional
-  grab-bag" shape and would read more precisely nested.
+- **`_report_schema.py`** — restructure the TypedDicts; add any new module-level
+  `Literal` vocabularies (they must resolve at runtime for the generator).
+- **`_report_json.py`** — update the affected builders and **both** document
+  shapes: `_build_json_document` and the `failed_json_document` fallback (a
+  second literal copy of the schema shape — keep it in lockstep).
+- **Version bumps in lockstep:**
+  - `_SCHEMA_MAJOR` / `_SCHEMA_MINOR` in `_report_json.py`.
+  - `schema_properties["major"|"minor"]` in `scripts/generate_report_schema.py`.
+  - the `$id` URL in that generator (`…/schema/report-N.0.json`).
+- **Regenerate** `python scripts/generate_report_schema.py`; confirm
+  `test_bundled_json_schema_is_current`.
+- **Consumers/tests** — grep `event\["` and `["summary"]` across `tests/`
+  (2.0 touched ~11 files) plus `docs/report.md` and `docs/api.md`.
 
 ## References
 
 - Registry / single source of truth: `src/metapathology/_report_events.py`.
 - Per-kind builders: `_json_<kind>` in `src/metapathology/_report_json.py`.
-- Memory note: `future-nest-json-event-data`.
