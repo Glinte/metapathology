@@ -7,6 +7,7 @@ import time
 from metapathology._module_metadata import ModuleMetadata, inspect_module
 from metapathology._records import ObjectRef, SpeculativeReplay, type_name
 from metapathology._report_analysis import (
+    _AnalysisInputs,
     _causal_explanations,
     _IdAllocator,
     _import_attempts,
@@ -29,6 +30,7 @@ from metapathology._report_model import (
     ReportDocument,
     ReportError,
     SkippedFinder,
+    StandardResolution,
     TargetOutcome,
 )
 from metapathology._speculative_replay import replay_displaced_finders
@@ -38,6 +40,8 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     from metapathology._monitor import Monitor
     from metapathology._monitor_model import MonitorSnapshot
+    from metapathology._records import MonitorEvent
+    from metapathology._report_model import CausalExplanation, Finding, ResolutionRoute, RouteComparison
 
 
 _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
@@ -65,102 +69,30 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
         )
         for finder, reason in snapshot.skipped_finders
     )
-    finding_ids = _IdAllocator("finding")
-    with monitor._report_analysis():
-        findings, resolution_routes, route_comparisons = _suspicious_findings(
-            snapshot.baseline_modules,
-            events,
-            snapshot.initial_path_hooks,
-            current_path_hooks,
-            importer_cache.initial_entries,
-            importer_cache.latest_entries,
-            module_items,
-            loader_inventory.entries,
-            finder_contracts,
-            attempts,
-            report_errors,
-            finding_ids,
-            _IdAllocator("route"),
-            _IdAllocator("comparison"),
-        )
-    findings = (
-        *findings,
-        *_namespace_displacement_findings(attempts, standard_resolutions, events, finding_ids),
+    inputs = _AnalysisInputs(
+        baseline_modules=snapshot.baseline_modules,
+        events=events,
+        initial_path_hooks=snapshot.initial_path_hooks,
+        current_path_hooks=current_path_hooks,
+        initial_importer_cache=importer_cache.initial_entries,
+        current_importer_cache=importer_cache.latest_entries,
+        module_items=module_items,
+        module_metadata=loader_inventory.entries,
+        finder_contracts=finder_contracts,
+        attempts=attempts,
+        report_errors=report_errors,
     )
-    findings = (
-        *findings,
-        *_repeated_load_failure_findings(attempts, standard_resolutions, finding_ids),
+    findings, explanations, resolution_routes, route_comparisons = _derive_findings(
+        monitor, inputs, standard_resolutions
     )
-    explanations = _causal_explanations(
-        findings, attempts, standard_resolutions, route_comparisons, _IdAllocator("explanation"), events
-    )
-    speculative_replays: tuple[SpeculativeReplay, ...] = ()
-    speculative_replays_omitted = 0
-    if snapshot.speculative_replay_enabled:
-        # The single foreign find_spec() per candidate runs under the
-        # report-analysis guard so it records no monitor events and cannot
-        # re-enter the tool's own instrumentation.
-        with monitor._report_analysis():
-            speculative_replays, speculative_replays_omitted = replay_displaced_finders(monitor, events)
-    outcome_state = snapshot.target_outcome
-    target_outcome = (
-        None
-        if outcome_state is None
-        else TargetOutcome(
-            outcome_state.kind,
-            outcome_state.exception_type_name,
-            outcome_state.missing_module,
-            outcome_state.exit_code,
-        )
-    )
+    # Speculative replay and the process snapshot run after finding derivation
+    # so their report_errors keep their historical position in the log.
+    speculative_replays, speculative_replays_omitted = _speculative_replays(monitor, snapshot, events)
     summary = _report_summary(findings, explanations, attempts)
-    try:
-        cwd: str | None = os.getcwd()
-    except Exception as exc:
-        cwd = None
-        report_errors.append(ReportError("process.cwd", type_name(exc)))
-    argv: list[str] = []
-    try:
-        argv.extend(value if isinstance(value, str) else f"<{type_name(value)}>" for value in list(sys.argv))
-    except Exception as exc:
-        report_errors.append(ReportError("process.argv", type_name(exc)))
-    early_site_bootstrap = (
-        None
-        if snapshot.early_site_bootstrap is None
-        else EarlySiteBootstrap(
-            snapshot.early_site_bootstrap.path,
-            snapshot.early_site_bootstrap.site_packages,
-            snapshot.early_site_bootstrap.activation_source,
-            snapshot.early_site_bootstrap.earlier_pth_files,
-        )
-    )
-    frozen_bootstrap = (
-        None
-        if snapshot.frozen_bootstrap is None
-        else FrozenBootstrap(
-            snapshot.frozen_bootstrap.integration,
-            snapshot.frozen_bootstrap.path,
-            snapshot.frozen_bootstrap.boundary,
-        )
-    )
+    process = _capture_process(report_errors)
     return ReportDocument(
-        process=ProcessInfo(
-            generated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            cwd=cwd,
-            argv=tuple(argv),
-        ),
-        capture=CaptureInfo(
-            cutoff_seq=snapshot.cutoff_seq,
-            monitor_enabled=snapshot.enabled,
-            baseline_module_count=len(snapshot.baseline_modules),
-            modules_since_install=modules_since_install,
-            early_site_bootstrap=early_site_bootstrap,
-            frozen_bootstrap=frozen_bootstrap,
-            deep_diagnostics=snapshot.deep_diagnostics,
-            deep_import_outcomes_status=snapshot.deep_import_outcomes_status,
-            deep_import_calls_status=snapshot.deep_import_calls_status,
-            standard_finder_status=snapshot.standard_finder_status,
-        ),
+        process=process,
+        capture=_capture_info(snapshot, modules_since_install),
         meta_path=MetaPathSnapshot(
             initial=snapshot.initial_meta_path,
             current=current_meta_path,
@@ -192,12 +124,121 @@ def capture_document(monitor: "Monitor") -> ReportDocument:
             loader_inventory=loader_inventory,
             skipped_finders=skipped_finders,
             summary=summary,
-            target_outcome=target_outcome,
+            target_outcome=_target_outcome(snapshot),
             report_errors=tuple(report_errors),
             speculative_replay_enabled=snapshot.speculative_replay_enabled,
             speculative_replays=speculative_replays,
             speculative_replays_omitted=speculative_replays_omitted,
         ),
+    )
+
+
+def _derive_findings(
+    monitor: "Monitor",
+    inputs: _AnalysisInputs,
+    standard_resolutions: tuple[StandardResolution, ...],
+) -> "tuple[tuple[Finding, ...], tuple[CausalExplanation, ...], tuple[ResolutionRoute, ...], tuple[RouteComparison, ...]]":
+    """Run the finding/route/explanation pipeline under the report-analysis guard.
+
+    One allocator per element kind numbers ids in creation order; the shared
+    ``finding`` allocator carries across the corroborated-route, namespace, and
+    repeated-load passes so the numbering stays contiguous.
+    """
+    finding_ids = _IdAllocator("finding")
+    with monitor._report_analysis():
+        findings, resolution_routes, route_comparisons = _suspicious_findings(
+            inputs, finding_ids, _IdAllocator("route"), _IdAllocator("comparison")
+        )
+    findings = (
+        *findings,
+        *_namespace_displacement_findings(inputs.attempts, standard_resolutions, inputs.events, finding_ids),
+    )
+    findings = (*findings, *_repeated_load_failure_findings(inputs.attempts, standard_resolutions, finding_ids))
+    explanations = _causal_explanations(
+        findings, inputs.attempts, standard_resolutions, route_comparisons, _IdAllocator("explanation"), inputs.events
+    )
+    return findings, explanations, resolution_routes, route_comparisons
+
+
+def _speculative_replays(
+    monitor: "Monitor", snapshot: "MonitorSnapshot", events: list["MonitorEvent"]
+) -> tuple[tuple[SpeculativeReplay, ...], int]:
+    """Replay displaced importer-cache finders when the mechanism is enabled.
+
+    The single foreign ``find_spec()`` per candidate runs under the
+    report-analysis guard so it records no monitor events and cannot re-enter
+    the tool's own instrumentation.
+    """
+    if not snapshot.speculative_replay_enabled:
+        return (), 0
+    with monitor._report_analysis():
+        return replay_displaced_finders(monitor, events)
+
+
+def _target_outcome(snapshot: "MonitorSnapshot") -> TargetOutcome | None:
+    """Reduce how the monitored target finished to report-safe plain data."""
+    outcome_state = snapshot.target_outcome
+    if outcome_state is None:
+        return None
+    return TargetOutcome(
+        outcome_state.kind,
+        outcome_state.exception_type_name,
+        outcome_state.missing_module,
+        outcome_state.exit_code,
+    )
+
+
+def _capture_process(report_errors: list[ReportError]) -> ProcessInfo:
+    """Snapshot the host process identity, recording any inaccessible field."""
+    try:
+        cwd: str | None = os.getcwd()
+    except Exception as exc:
+        cwd = None
+        report_errors.append(ReportError("process.cwd", type_name(exc)))
+    argv: list[str] = []
+    try:
+        argv.extend(value if isinstance(value, str) else f"<{type_name(value)}>" for value in list(sys.argv))
+    except Exception as exc:
+        report_errors.append(ReportError("process.argv", type_name(exc)))
+    return ProcessInfo(
+        generated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        cwd=cwd,
+        argv=tuple(argv),
+    )
+
+
+def _capture_info(snapshot: "MonitorSnapshot", modules_since_install: tuple[str, ...] | None) -> CaptureInfo:
+    """Reduce monitor-lifetime facts and bootstrap provenance to report data."""
+    early_site_bootstrap = (
+        None
+        if snapshot.early_site_bootstrap is None
+        else EarlySiteBootstrap(
+            snapshot.early_site_bootstrap.path,
+            snapshot.early_site_bootstrap.site_packages,
+            snapshot.early_site_bootstrap.activation_source,
+            snapshot.early_site_bootstrap.earlier_pth_files,
+        )
+    )
+    frozen_bootstrap = (
+        None
+        if snapshot.frozen_bootstrap is None
+        else FrozenBootstrap(
+            snapshot.frozen_bootstrap.integration,
+            snapshot.frozen_bootstrap.path,
+            snapshot.frozen_bootstrap.boundary,
+        )
+    )
+    return CaptureInfo(
+        cutoff_seq=snapshot.cutoff_seq,
+        monitor_enabled=snapshot.enabled,
+        baseline_module_count=len(snapshot.baseline_modules),
+        modules_since_install=modules_since_install,
+        early_site_bootstrap=early_site_bootstrap,
+        frozen_bootstrap=frozen_bootstrap,
+        deep_diagnostics=snapshot.deep_diagnostics,
+        deep_import_outcomes_status=snapshot.deep_import_outcomes_status,
+        deep_import_calls_status=snapshot.deep_import_calls_status,
+        standard_finder_status=snapshot.standard_finder_status,
     )
 
 

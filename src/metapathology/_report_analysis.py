@@ -84,6 +84,56 @@ class _IdAllocator:
         return f"{self._prefix}:{self._count}"
 
 
+class _AnalysisInputs:
+    """Copied evidence and state shared by the finding/route producers.
+
+    Bundles the report-time inputs so the wide producer entry points take one
+    argument instead of a dozen positionals. ``report_errors`` is a live
+    accumulator: probes append to it during analysis.
+    """
+
+    __slots__ = (
+        "attempts",
+        "baseline_modules",
+        "current_importer_cache",
+        "current_path_hooks",
+        "events",
+        "finder_contracts",
+        "initial_importer_cache",
+        "initial_path_hooks",
+        "module_items",
+        "module_metadata",
+        "report_errors",
+    )
+
+    def __init__(
+        self,
+        *,
+        baseline_modules: frozenset[str],
+        events: list[MonitorEvent],
+        initial_path_hooks: tuple[ObjectRef, ...],
+        current_path_hooks: tuple[ObjectRef, ...] | None,
+        initial_importer_cache: tuple[ImporterCacheEntry, ...],
+        current_importer_cache: tuple[ImporterCacheEntry, ...] | None,
+        module_items: list[tuple[object, object]] | None,
+        module_metadata: tuple[ModuleMetadata, ...],
+        finder_contracts: list[FinderContract],
+        attempts: tuple[ImportAttempt, ...],
+        report_errors: list[ReportError],
+    ) -> None:
+        self.baseline_modules = baseline_modules
+        self.events = events
+        self.initial_path_hooks = initial_path_hooks
+        self.current_path_hooks = current_path_hooks
+        self.initial_importer_cache = initial_importer_cache
+        self.current_importer_cache = current_importer_cache
+        self.module_items = module_items
+        self.module_metadata = module_metadata
+        self.finder_contracts = finder_contracts
+        self.attempts = attempts
+        self.report_errors = report_errors
+
+
 class _StructuralContext:
     """One report's primitive-only index for per-finding comparisons."""
 
@@ -314,22 +364,23 @@ def _standard_spec_classification(
 
 
 def _suspicious_findings(
-    baseline_modules: frozenset[str],
-    events: list[MonitorEvent],
-    initial_path_hooks: tuple[ObjectRef, ...],
-    current_path_hooks: tuple[ObjectRef, ...] | None,
-    initial_importer_cache: tuple[ImporterCacheEntry, ...],
-    current_importer_cache: tuple[ImporterCacheEntry, ...] | None,
-    module_items: list[tuple[object, object]] | None,
-    module_metadata: tuple[ModuleMetadata, ...],
-    finder_contracts: list[FinderContract],
-    attempts: tuple[ImportAttempt, ...],
-    report_errors: list[ReportError],
+    inputs: _AnalysisInputs,
     finding_ids: _IdAllocator,
     route_ids: _IdAllocator,
     comparison_ids: _IdAllocator,
 ) -> tuple[tuple[Finding, ...], tuple[ResolutionRoute, ...], tuple[RouteComparison, ...]]:
     """Build neutral resolution routes, then promote only corroborated effects."""
+    baseline_modules = inputs.baseline_modules
+    events = inputs.events
+    initial_path_hooks = inputs.initial_path_hooks
+    current_path_hooks = inputs.current_path_hooks
+    initial_importer_cache = inputs.initial_importer_cache
+    current_importer_cache = inputs.current_importer_cache
+    module_items = inputs.module_items
+    module_metadata = inputs.module_metadata
+    finder_contracts = inputs.finder_contracts
+    attempts = inputs.attempts
+    report_errors = inputs.report_errors
     winners = {event.fullname: event for event in events if isinstance(event, FindSpecCall) and event.found}
     structural_context = _structural_context(
         events,
