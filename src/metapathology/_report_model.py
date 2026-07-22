@@ -1,5 +1,7 @@
 """Immutable data model shared by report capture, analysis, and rendering."""
 
+import os
+
 from metapathology._module_metadata import ModuleMetadata
 from metapathology._record import _Record
 from metapathology._records import (
@@ -181,6 +183,68 @@ class ResolutionRoute(_Record):
     search_path_phase: "SearchPathPhase"
     signals: tuple[str, ...] = ()
 
+    @classmethod
+    def _for_comparison(
+        cls,
+        route_id: str,
+        summary: SpecSummary | None,
+        *,
+        status: "RouteStatus" = "found",
+    ) -> "ResolutionRoute":
+        """Construct the minimal synthetic route used by focused value tests."""
+        return cls(
+            route_id=route_id,
+            module="test",
+            kind="captured_claim",
+            purpose="record_selected_custom_meta_path_route",
+            limitations=(),
+            evidence_level="captured",
+            state_phase="import",
+            predicts_alternative_winner=False,
+            finder_type_name="test",
+            finder_id=None,
+            status=status,
+            spec_summary=summary,
+            exception_type_name=None,
+            event_seq=None,
+            search_path=(),
+            search_path_kind="sys_path",
+            search_path_phase="import",
+        )
+
+    def compare(
+        self,
+        other: "ResolutionRoute",
+        *,
+        comparison_id: str,
+        structural_comparison: "StructuralComparison",
+    ) -> "RouteComparison":
+        """Compare two independent routes without assigning either authority."""
+        left = self.spec_summary
+        right = other.spec_summary
+        if left is None or right is None:
+            return _incomplete_route_comparison(comparison_id, self, other, structural_comparison)
+        location_difference = _compare_locations(left, right)
+        return RouteComparison(
+            comparison_id=comparison_id,
+            left_route_id=self.route_id,
+            right_route_id=other.route_id,
+            status_differs=self.status != other.status,
+            complete=_comparison_is_complete(left, right),
+            loader_type_differs=_loader_difference(left, right),
+            origin_differs=_safe_path_value_changed(left.origin, right.origin),
+            cached_differs=_safe_path_value_changed(left.cached, right.cached),
+            package_status_differs=(
+                None if left.is_package is None or right.is_package is None else left.is_package != right.is_package
+            ),
+            only_in_left_route=location_difference[0],
+            only_in_right_route=location_difference[1],
+            locations_reordered=location_difference[2],
+            left_locations_state=left.locations_state,
+            right_locations_state=right.locations_state,
+            structural_comparison=structural_comparison,
+        )
+
 
 class StructuralComparison(_Record):
     """Identity-only comparison of install and report-time import structure."""
@@ -210,6 +274,121 @@ class RouteComparison(_Record):
     left_locations_state: "LocationsComparisonState"
     right_locations_state: "LocationsComparisonState"
     structural_comparison: StructuralComparison
+
+    def has_differences(self) -> bool:
+        """Return whether the comparison contains any observed difference."""
+        return any(
+            (
+                self.status_differs,
+                self.loader_type_differs is True,
+                self.origin_differs is True,
+                self.cached_differs is True,
+                self.package_status_differs is True,
+                bool(self.only_in_left_route),
+                bool(self.only_in_right_route),
+                self.locations_reordered is True,
+            )
+        )
+
+
+def _incomplete_route_comparison(
+    comparison_id: str,
+    left: ResolutionRoute,
+    right: ResolutionRoute,
+    structural_comparison: StructuralComparison,
+) -> RouteComparison:
+    return RouteComparison(
+        comparison_id,
+        left.route_id,
+        right.route_id,
+        left.status != right.status,
+        False,
+        None,
+        None,
+        None,
+        None,
+        (),
+        (),
+        None,
+        "unavailable" if left.spec_summary is None else left.spec_summary.locations_state,
+        "unavailable" if right.spec_summary is None else right.spec_summary.locations_state,
+        structural_comparison,
+    )
+
+
+def _loader_difference(left: SpecSummary, right: SpecSummary) -> bool | None:
+    if "loader:missing" in left.unavailable_fields or "loader:missing" in right.unavailable_fields:
+        return None
+    left_type = None if left.loader is None else left.loader.type_name
+    right_type = None if right.loader is None else right.loader.type_name
+    return left_type != right_type
+
+
+def _safe_path_value_changed(
+    left: str | ObjectRef | None,
+    right: str | ObjectRef | None,
+) -> bool | None:
+    if type(left) is str and type(right) is str:
+        return _path_key(left) != _path_key(right)
+    if left is None and right is None:
+        return False
+    if isinstance(left, ObjectRef) or isinstance(right, ObjectRef):
+        return None
+    return True
+
+
+def _comparison_is_complete(left: SpecSummary, right: SpecSummary) -> bool:
+    incomplete_location_states = ("deferred", "failed")
+    locations_complete = not (left.is_package is True and left.locations_state in incomplete_location_states)
+    locations_complete = locations_complete and not (
+        right.is_package is True and right.locations_state in incomplete_location_states
+    )
+    return not left.unavailable_fields and not right.unavailable_fields and locations_complete
+
+
+def _compare_locations(
+    left: SpecSummary,
+    right: SpecSummary,
+) -> tuple[tuple[str, ...], tuple[str, ...], bool | None]:
+    left_locations = _string_locations(left)
+    right_locations = _string_locations(right)
+    if left_locations is None or right_locations is None:
+        return (), (), None
+    left_keys = tuple(_path_key(path) for path in left_locations)
+    right_keys = tuple(_path_key(path) for path in right_locations)
+    only_in_right, only_in_left = _location_delta(left_locations, left_keys, right_locations, right_keys)
+    reordered = not only_in_right and not only_in_left and left_keys != right_keys
+    return only_in_left, only_in_right, reordered
+
+
+def _string_locations(summary: SpecSummary) -> tuple[str, ...] | None:
+    locations = summary.submodule_search_locations
+    if locations is None or any(type(location) is not str for location in locations):
+        return None
+    return tuple(location for location in locations if type(location) is str)
+
+
+def _location_delta(
+    left: tuple[str, ...],
+    left_keys: tuple[str, ...],
+    right: tuple[str, ...],
+    right_keys: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return right-only then left-only multiset differences in display order."""
+    unmatched_left = list(zip(left_keys, left, strict=True))
+    only_in_right: list[str] = []
+    for right_key, right_path in zip(right_keys, right, strict=True):
+        for index, (left_key, _left_path) in enumerate(unmatched_left):
+            if right_key == left_key:
+                del unmatched_left[index]
+                break
+        else:
+            only_in_right.append(right_path)
+    return tuple(only_in_right), tuple(path for _key, path in unmatched_left)
+
+
+def _path_key(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
 
 
 class Finding(_Record):

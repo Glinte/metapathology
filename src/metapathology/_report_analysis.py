@@ -52,6 +52,7 @@ if TYPE_CHECKING:
 
     from metapathology._records import DeepOutcome, SearchPathKind
     from metapathology._report_model import (
+        ImportPresence,
         ImportProgress,
         ResolutionCategory,
         RouteStatus,
@@ -134,8 +135,8 @@ class _AnalysisInputs:
         self.report_errors = report_errors
 
 
-class _StructuralContext:
-    """One report's primitive-only index for per-finding comparisons."""
+class _ImportStructureComparator:
+    """Coordinate report snapshots while keeping external state off value records."""
 
     __slots__ = (
         "cache_event_seqs_by_path",
@@ -155,6 +156,55 @@ class _StructuralContext:
         self.initial_importer_cache = initial_importer_cache
         self.current_importer_cache = current_importer_cache
         self.cache_event_seqs_by_path = cache_event_seqs_by_path
+
+    @classmethod
+    def from_snapshots(
+        cls,
+        events: list[MonitorEvent],
+        initial_path_hooks: tuple[ObjectRef, ...],
+        current_path_hooks: tuple[ObjectRef, ...] | None,
+        initial_importer_cache: tuple[ImporterCacheEntry, ...],
+        current_importer_cache: tuple[ImporterCacheEntry, ...] | None,
+    ) -> "_ImportStructureComparator":
+        path_hooks_changed = (
+            None
+            if current_path_hooks is None
+            else _import_object_signatures(initial_path_hooks) != _import_object_signatures(current_path_hooks)
+        )
+        return cls(
+            path_hooks_changed,
+            _cache_signatures(initial_importer_cache),
+            None if current_importer_cache is None else _cache_signatures(current_importer_cache),
+            _cache_event_index(events),
+        )
+
+    def compare(self, search_path: tuple[str, ...]) -> StructuralComparison:
+        """Compare captured identities without calling historical import objects."""
+        importer_cache_changed, changed_paths = _changed_cache_paths(
+            search_path,
+            self.initial_importer_cache,
+            self.current_importer_cache,
+        )
+        event_seqs = tuple(sorted({seq for path in search_path for seq in self.cache_event_seqs_by_path.get(path, ())}))
+        return StructuralComparison(self.path_hooks_changed, importer_cache_changed, changed_paths, event_seqs)
+
+
+class _RepeatedLoadCandidate:
+    """Validated earlier load and later same-route failures."""
+
+    __slots__ = ("earlier", "earlier_attempt", "failures", "first_failure_seq")
+
+    def __init__(
+        self,
+        first_failure_seq: int,
+        earlier: StandardResolution,
+        earlier_attempt: ImportAttempt,
+        failures: tuple[tuple[StandardResolution, ImportAttempt], ...],
+    ) -> None:
+        self.first_failure_seq = first_failure_seq
+        self.earlier = earlier
+        self.earlier_attempt = earlier_attempt
+        self.failures = failures
 
 
 _SEVERITY_RANK = {"actionable": 0, "warning": 1, "informational": 2}
@@ -201,77 +251,102 @@ def _report_summary(
     )
 
 
-def _import_attempts(
-    events: list[MonitorEvent], module_items: list[tuple[object, object]] | None
-) -> tuple[ImportAttempt, ...]:
-    """Join calls only to the matching latest audit start on their thread."""
-    present = None if module_items is None else {name for name, _module in module_items if type(name) is str}
-    starts: dict[int, tuple[str, int, int, str]] = {}
-    order: list[int] = []
-    latest_by_thread: dict[int, tuple[int, str]] = {}
-    linked: dict[int, list[FindSpecCall | DeepDiagnosticCall | DeepImportEvent | StandardFinderCall]] = {}
-    for event in events:
+class _ImportAttemptBuilder:
+    """Index starts, link evidence, and derive conservative attempt outcomes."""
+
+    def __init__(self, module_items: list[tuple[object, object]] | None) -> None:
+        self._present = None if module_items is None else {name for name, _ in module_items if type(name) is str}
+        self._starts: dict[int, tuple[str, int, int, str]] = {}
+        self._order: list[int] = []
+        self._latest_by_thread: dict[int, tuple[int, str]] = {}
+        self._linked: dict[int, list[FindSpecCall | DeepDiagnosticCall | DeepImportEvent | StandardFinderCall]] = {}
+
+    def build(self, events: list[MonitorEvent]) -> tuple[ImportAttempt, ...]:
+        for event in events:
+            self._index_event(event)
+        return tuple(self._build_attempt(attempt_id) for attempt_id in self._order)
+
+    def _index_event(self, event: MonitorEvent) -> None:
         if isinstance(event, DeepImportEvent):
-            if event.outcome == "started":
-                if event.attempt_id not in starts:
-                    starts[event.attempt_id] = (event.fullname, event.seq, event.thread_id, event.thread_name)
-                    order.append(event.attempt_id)
-                    linked[event.attempt_id] = []
-                latest_by_thread[event.thread_id] = (event.attempt_id, event.fullname)
-                linked[event.attempt_id].append(event)
-            elif event.attempt_id in linked:
-                linked[event.attempt_id].append(event)
+            self._index_deep_import(event)
         elif isinstance(event, ImportAuditStart):
-            if event.attempt_id not in starts:
-                starts[event.attempt_id] = (event.fullname, event.seq, event.thread_id, event.thread_name)
-                order.append(event.attempt_id)
-                linked[event.attempt_id] = []
-            else:
-                fullname, _seq, thread_id, thread_name = starts[event.attempt_id]
-                starts[event.attempt_id] = (fullname, event.seq, thread_id, thread_name)
-            latest_by_thread[event.thread_id] = (event.attempt_id, event.fullname)
+            self._index_audit_start(event)
         elif isinstance(event, (FindSpecCall, DeepDiagnosticCall)):
-            latest = latest_by_thread.get(event.thread_id)
-            if latest is not None and event.fullname == latest[1]:
-                linked[latest[0]].append(event)
-        elif isinstance(event, StandardFinderCall) and event.attempt_id in linked:
-            linked[event.attempt_id].append(event)
-    attempts: list[ImportAttempt] = []
-    for attempt_id in order:
-        fullname, start_seq, thread_id, thread_name = starts[attempt_id]
-        evidence = linked[attempt_id]
+            self._link_thread_event(event)
+        elif isinstance(event, StandardFinderCall) and event.attempt_id in self._linked:
+            self._linked[event.attempt_id].append(event)
+
+    def _add_start(self, attempt_id: int, fullname: str, seq: int, thread_id: int, thread_name: str) -> None:
+        if attempt_id in self._starts:
+            return
+        self._starts[attempt_id] = (fullname, seq, thread_id, thread_name)
+        self._order.append(attempt_id)
+        self._linked[attempt_id] = []
+
+    def _index_deep_import(self, event: DeepImportEvent) -> None:
+        if event.outcome == "started":
+            self._add_start(event.attempt_id, event.fullname, event.seq, event.thread_id, event.thread_name)
+            self._latest_by_thread[event.thread_id] = (event.attempt_id, event.fullname)
+        if event.attempt_id in self._linked:
+            self._linked[event.attempt_id].append(event)
+
+    def _index_audit_start(self, event: ImportAuditStart) -> None:
+        self._add_start(event.attempt_id, event.fullname, event.seq, event.thread_id, event.thread_name)
+        fullname, _seq, thread_id, thread_name = self._starts[event.attempt_id]
+        self._starts[event.attempt_id] = (fullname, event.seq, thread_id, thread_name)
+        self._latest_by_thread[event.thread_id] = (event.attempt_id, event.fullname)
+
+    def _link_thread_event(self, event: FindSpecCall | DeepDiagnosticCall) -> None:
+        latest = self._latest_by_thread.get(event.thread_id)
+        if latest is not None and event.fullname == latest[1]:
+            self._linked[latest[0]].append(event)
+
+    def _build_attempt(self, attempt_id: int) -> ImportAttempt:
+        fullname, start_seq, thread_id, thread_name = self._starts[attempt_id]
+        evidence = self._linked[attempt_id]
+        return ImportAttempt(
+            attempt_id,
+            fullname,
+            start_seq,
+            tuple(event.seq for event in evidence if event.seq != start_seq),
+            thread_id,
+            thread_name,
+            self._progress(evidence),
+            self._presence(fullname),
+        )
+
+    def _presence(self, fullname: str) -> "ImportPresence":
+        if self._present is None:
+            return "unknown"
+        return "present_at_report" if fullname in self._present else "absent_at_report"
+
+    @staticmethod
+    def _progress(
+        evidence: list[FindSpecCall | DeepDiagnosticCall | DeepImportEvent | StandardFinderCall],
+    ) -> "ImportProgress":
         exact: DeepOutcome | None = None
         for event in reversed(evidence):
             if isinstance(event, DeepImportEvent) and event.outcome != "started":
                 exact = event.outcome
                 break
+        if exact is not None:
+            return exact
         claimed = any(isinstance(event, FindSpecCall) and event.found for event in evidence)
         raised = any(isinstance(event, FindSpecCall) and event.exception_type_name is not None for event in evidence)
-        progress: ImportProgress
-        if exact is not None:
-            progress = exact
-        elif claimed and raised:
-            progress = "unknown"
-        elif claimed:
-            progress = "finder_claimed"
-        elif raised:
-            progress = "finder_raised"
-        else:
-            progress = "started"
-        presence = "unknown" if present is None else "present_at_report" if fullname in present else "absent_at_report"
-        attempts.append(
-            ImportAttempt(
-                attempt_id,
-                fullname,
-                start_seq,
-                tuple(event.seq for event in evidence if event.seq != start_seq),
-                thread_id,
-                thread_name,
-                progress,
-                presence,
-            )
-        )
-    return tuple(attempts)
+        if claimed and raised:
+            return "unknown"
+        if claimed:
+            return "finder_claimed"
+        if raised:
+            return "finder_raised"
+        return "started"
+
+
+def _import_attempts(
+    events: list[MonitorEvent], module_items: list[tuple[object, object]] | None
+) -> tuple[ImportAttempt, ...]:
+    """Join calls only to the matching latest audit start on their thread."""
+    return _ImportAttemptBuilder(module_items).build(events)
 
 
 def _standard_resolutions(
@@ -382,7 +457,7 @@ def _suspicious_findings(
     attempts = inputs.attempts
     report_errors = inputs.report_errors
     winners = {event.fullname: event for event in events if isinstance(event, FindSpecCall) and event.found}
-    structural_context = _structural_context(
+    structural_context = _ImportStructureComparator.from_snapshots(
         events,
         initial_path_hooks,
         current_path_hooks,
@@ -479,6 +554,292 @@ def _finder_contract_findings(contracts: list[FinderContract], finding_ids: _IdA
     return findings
 
 
+class _CausalExplanationBuilder:
+    """Build each causal explanation family independently in stable order."""
+
+    def __init__(
+        self,
+        findings: tuple[Finding, ...],
+        attempts: tuple[ImportAttempt, ...],
+        standard_resolutions: tuple[StandardResolution, ...],
+        route_comparisons: tuple[RouteComparison, ...],
+        explanation_ids: _IdAllocator,
+        events: list[MonitorEvent] | None,
+    ) -> None:
+        self.findings = findings
+        self.attempts = attempts
+        self.standard_resolutions = standard_resolutions
+        self.comparisons = {item.comparison_id: item for item in route_comparisons}
+        self.ids = explanation_ids
+        self.events_by_seq = {} if events is None else {event.seq: event for event in events}
+        self.displacement_findings = {
+            finding.module: finding for finding in findings if finding.kind == "regular_module_shadows_namespace"
+        }
+
+    def build(self) -> tuple[CausalExplanation, ...]:
+        explanations = self._namespace_truncation_explanations()
+        explanations.extend(self._standard_resolution_explanations())
+        explanations.extend(self._finding_explanations())
+        return _append_ambiguous_explanations(tuple(explanations), self.ids)
+
+    def _namespace_truncation_explanations(self) -> list[CausalExplanation]:
+        explanations: list[CausalExplanation] = []
+        for finding in self.findings:
+            comparison = self.comparisons.get(finding.route_comparison_id or "")
+            if finding.kind != "namespace_truncation" or comparison is None or finding.claim is None:
+                continue
+            explanations.extend(self._truncation_failures(finding, comparison))
+        return explanations
+
+    def _truncation_failures(self, finding: Finding, comparison: RouteComparison) -> list[CausalExplanation]:
+        claim = finding.claim
+        if claim is None:
+            return []
+        prefix = finding.module + "."
+        groups: dict[str, list[ImportAttempt]] = {}
+        for attempt in self.attempts:
+            if attempt.fullname.startswith(prefix) and attempt.presence != "present_at_report":
+                groups.setdefault(attempt.fullname, []).append(attempt)
+        descendants = [
+            next((attempt for attempt in group if attempt.progress == "failed"), group[0])
+            for group in groups.values()
+            if not any(attempt.progress == "loaded" for attempt in group)
+        ]
+        return [
+            explanation
+            for attempt in descendants
+            if (explanation := self._truncation_failure(finding, comparison, claim, prefix, attempt)) is not None
+        ]
+
+    def _truncation_failure(
+        self,
+        finding: Finding,
+        comparison: RouteComparison,
+        claim: FindSpecCall,
+        prefix: str,
+        attempt: ImportAttempt,
+    ) -> CausalExplanation | None:
+        if attempt.progress != "failed" or not any(seq > claim.seq for seq in attempt.event_seqs):
+            return None
+        match = _omitted_module_candidate(comparison.only_in_right_route, attempt.fullname[len(prefix) :].split("."))
+        if match is None:
+            return None
+        omitted_location, candidate_path = match
+        event_seqs = (claim.seq, *(seq for seq in attempt.event_seqs if seq > claim.seq))
+        return CausalExplanation(
+            self.ids.next_id(),
+            "namespace_truncation_failure",
+            "correlated",
+            attempt.fullname,
+            "failed",
+            finding.finding_id,
+            claim.finder_type_name,
+            omitted_location,
+            candidate_path,
+            tuple(dict.fromkeys(event_seqs)),
+            None,
+        )
+
+    def _standard_resolution_explanations(self) -> list[CausalExplanation]:
+        explanations: list[CausalExplanation] = []
+        for resolution in self.standard_resolutions:
+            explanations.extend(self._namespace_candidate_explanations(resolution))
+            precedence = self._standard_precedence_explanation(resolution)
+            if precedence is not None:
+                explanations.append(precedence)
+        return explanations
+
+    def _namespace_candidate_explanations(self, resolution: StandardResolution) -> list[CausalExplanation]:
+        if resolution.category == "namespace" or resolution.origin is None:
+            return []
+        components = [
+            event
+            for seq in resolution.component_event_seqs
+            if isinstance((event := self.events_by_seq.get(seq)), DeepDiagnosticCall)
+            and event.boundary == "path_entry_finder"
+            and event.outcome == "found"
+            and event.path is not None
+        ]
+        selected_index = next(
+            (
+                index
+                for index in range(len(components) - 1, -1, -1)
+                if _path_contains(components[index].path, resolution.origin)
+            ),
+            None,
+        )
+        if selected_index is None or selected_index == 0:
+            return []
+        displacement = self.displacement_findings.get(resolution.fullname)
+        descendants = () if displacement is None else _failed_descendants_after(resolution, self.attempts)
+        return [
+            self._namespace_candidate_explanation(
+                resolution, components[0], components[selected_index], displacement, item
+            )
+            for item in (descendants or (None,))
+        ]
+
+    def _namespace_candidate_explanation(
+        self,
+        resolution: StandardResolution,
+        candidate: DeepDiagnosticCall,
+        selected: DeepDiagnosticCall,
+        finding: Finding | None,
+        descendant: ImportAttempt | None,
+    ) -> CausalExplanation:
+        event_seqs = tuple(
+            dict.fromkeys(
+                (
+                    *((resolution.event_seq,) if resolution.event_seq is not None else ()),
+                    candidate.seq,
+                    selected.seq,
+                    *(() if descendant is None else descendant.event_seqs),
+                )
+            )
+        )
+        return CausalExplanation(
+            explanation_id=self.ids.next_id(),
+            kind="namespace_candidate_displaced",
+            confidence="captured" if descendant is None else "correlated",
+            subject=resolution.fullname if descendant is None else descendant.fullname,
+            effect_status="regular_module_selected" if descendant is None else "descendant_failed",
+            cause_finding_id=None if finding is None else finding.finding_id,
+            finder_type_name=resolution.finder_type_name,
+            omitted_location="",
+            candidate_path=candidate.path or "",
+            event_seqs=event_seqs,
+            next_observation=None,
+            origin=resolution.origin,
+        )
+
+    def _standard_precedence_explanation(self, resolution: StandardResolution) -> CausalExplanation | None:
+        if not resolution.later_finders:
+            return None
+        event_seqs = (() if resolution.event_seq is None else (resolution.event_seq,)) + resolution.component_event_seqs
+        return CausalExplanation(
+            explanation_id=self.ids.next_id(),
+            kind="standard_winner_precedence",
+            confidence="captured" if resolution.evidence_level == "captured" else "inferred",
+            subject=resolution.fullname,
+            effect_status=resolution.category,
+            cause_finding_id=None,
+            finder_type_name=resolution.finder_type_name,
+            omitted_location="",
+            candidate_path="",
+            event_seqs=event_seqs,
+            next_observation=None if resolution.evidence_level == "captured" else "enable_deep_import_outcomes",
+            origin=resolution.origin,
+            standard_attempt_id=resolution.attempt_id,
+            later_finders=resolution.later_finders,
+        )
+
+    def _finding_explanations(self) -> list[CausalExplanation]:
+        explanations: list[CausalExplanation] = []
+        for finding in self.findings:
+            explanation = self._finding_explanation(finding)
+            if explanation is not None:
+                explanations.append(explanation)
+        return explanations
+
+    def _finding_explanation(self, finding: Finding) -> CausalExplanation | None:
+        if finding.kind == "finder_side_effect" and finding.claim is not None:
+            return self._finder_side_effect_explanation(finding, finding.claim)
+        if finding.kind in ("module_replacement", "repeated_loader_execution") and finding.deep_call is not None:
+            return self._module_identity_explanation(finding, finding.deep_call)
+        if finding.kind == "repeated_load_failure":
+            return self._repeated_load_explanation(finding)
+        return None
+
+    def _finder_side_effect_explanation(self, finding: Finding, claim: FindSpecCall) -> CausalExplanation:
+        outcome = "finder_raised" if claim.exception_type_name is not None else "finder_returned_none"
+        return CausalExplanation(
+            self.ids.next_id(),
+            "finder_side_effect",
+            "captured",
+            finding.module,
+            outcome,
+            finding.finding_id,
+            claim.finder_type_name,
+            "",
+            "",
+            (claim.seq,),
+            None,
+            boundary="find_spec",
+            state_before=claim.module_state_before,
+            state_after=claim.module_state_after,
+        )
+
+    def _module_identity_explanation(self, finding: Finding, call: DeepDiagnosticCall) -> CausalExplanation:
+        baseline = finding.module_state_baseline or call.module_state_before
+        target_diverged = _target_identity_diverged(finding, call, baseline)
+        kind = "module_replacement" if finding.kind == "module_replacement" else "repeated_loader_execution"
+        return CausalExplanation(
+            explanation_id=self.ids.next_id(),
+            kind=kind,
+            confidence="captured",
+            subject=finding.module,
+            effect_status="separate_module_executed" if target_diverged else "module_identity_replaced",
+            cause_finding_id=finding.finding_id,
+            finder_type_name=call.object_type_name,
+            omitted_location="",
+            candidate_path="",
+            event_seqs=tuple(dict.fromkeys((*finding.supporting_event_seqs, call.seq))),
+            next_observation=None,
+            boundary=call.boundary,
+            state_before=baseline,
+            state_after=call.target_state if target_diverged else call.module_state_after,
+        )
+
+    def _repeated_load_explanation(self, finding: Finding) -> CausalExplanation | None:
+        matched = [
+            resolution
+            for resolution in self.standard_resolutions
+            if resolution.fullname == finding.module
+            and resolution.event_seq is not None
+            and resolution.event_seq in finding.supporting_event_seqs
+        ]
+        if len(matched) < 2:
+            return None
+        later = matched[-1]
+        return CausalExplanation(
+            explanation_id=self.ids.next_id(),
+            kind="repeated_load_failure",
+            confidence="correlated",
+            subject=finding.module,
+            effect_status="later_import_failed",
+            cause_finding_id=finding.finding_id,
+            finder_type_name=later.loader_type_name or later.finder_type_name,
+            omitted_location="",
+            candidate_path="",
+            event_seqs=finding.supporting_event_seqs,
+            next_observation=None,
+            origin=later.origin,
+            standard_attempt_id=later.attempt_id,
+        )
+
+
+def _target_identity_diverged(
+    finding: Finding,
+    call: DeepDiagnosticCall,
+    baseline: ModuleCacheState | None,
+) -> bool:
+    if (
+        baseline is None
+        or baseline.state != "object"
+        or call.target_state is None
+        or call.target_state.state != "object"
+    ):
+        return False
+    if baseline.object_id == call.target_state.object_id:
+        return False
+    cache_replaced = (
+        call.module_state_after is not None
+        and call.module_state_after.state == "object"
+        and baseline.object_id != call.module_state_after.object_id
+    )
+    return finding.module_state_baseline is not None or not cache_replaced
+
+
 def _causal_explanations(
     findings: tuple[Finding, ...],
     attempts: tuple[ImportAttempt, ...],
@@ -488,214 +849,9 @@ def _causal_explanations(
     events: list[MonitorEvent] | None = None,
 ) -> tuple[CausalExplanation, ...]:
     """Join namespace loss to descendant attempts and report-time path evidence."""
-    explanations: list[CausalExplanation] = []
-    events_by_seq = {} if events is None else {event.seq: event for event in events}
-    comparisons_by_id = {comparison.comparison_id: comparison for comparison in route_comparisons}
-    displacement_findings = {
-        finding.module: finding for finding in findings if finding.kind == "regular_module_shadows_namespace"
-    }
-    for finding in findings:
-        comparison = None if finding.route_comparison_id is None else comparisons_by_id.get(finding.route_comparison_id)
-        if finding.kind != "namespace_truncation" or comparison is None or finding.claim is None:
-            continue
-        prefix = finding.module + "."
-        descendant_groups: dict[str, list[ImportAttempt]] = {}
-        for attempt in attempts:
-            if attempt.fullname.startswith(prefix) and attempt.presence != "present_at_report":
-                descendant_groups.setdefault(attempt.fullname, []).append(attempt)
-        descendants = [
-            next((attempt for attempt in group if attempt.progress == "failed"), group[0])
-            for group in descendant_groups.values()
-            if not any(attempt.progress == "loaded" for attempt in group)
-        ]
-        for attempt in descendants:
-            relative_parts = attempt.fullname[len(prefix) :].split(".")
-            if attempt.progress != "failed" or not any(seq > finding.claim.seq for seq in attempt.event_seqs):
-                continue
-            match = _omitted_module_candidate(comparison.only_in_right_route, relative_parts)
-            if match is None:
-                continue
-            omitted_location, candidate_path = match
-            event_seqs = (
-                finding.claim.seq,
-                *(seq for seq in attempt.event_seqs if seq > finding.claim.seq),
-            )
-            explanations.append(
-                CausalExplanation(
-                    explanation_id=explanation_ids.next_id(),
-                    kind="namespace_truncation_failure",
-                    confidence="correlated",
-                    subject=attempt.fullname,
-                    effect_status="failed",
-                    cause_finding_id=finding.finding_id,
-                    finder_type_name=finding.claim.finder_type_name,
-                    omitted_location=omitted_location,
-                    candidate_path=candidate_path,
-                    event_seqs=tuple(dict.fromkeys(event_seqs)),
-                    next_observation=None,
-                )
-            )
-    for resolution in standard_resolutions:
-        if resolution.category != "namespace" and resolution.origin is not None:
-            components = [
-                event
-                for seq in resolution.component_event_seqs
-                if isinstance((event := events_by_seq.get(seq)), DeepDiagnosticCall)
-                and event.boundary == "path_entry_finder"
-                and event.outcome == "found"
-                and event.path is not None
-            ]
-            selected_index = next(
-                (
-                    index
-                    for index in range(len(components) - 1, -1, -1)
-                    if _path_contains(components[index].path, resolution.origin)
-                ),
-                None,
-            )
-            if selected_index is not None and selected_index > 0:
-                candidate = components[0]
-                selected = components[selected_index]
-                displacement_finding = displacement_findings.get(resolution.fullname)
-                descendants = () if displacement_finding is None else _failed_descendants_after(resolution, attempts)
-                subjects: tuple[ImportAttempt | None, ...] = descendants or (None,)
-                for descendant in subjects:
-                    event_seqs = tuple(
-                        dict.fromkeys(
-                            (
-                                *((resolution.event_seq,) if resolution.event_seq is not None else ()),
-                                candidate.seq,
-                                selected.seq,
-                                *(() if descendant is None else descendant.event_seqs),
-                            )
-                        )
-                    )
-                    explanations.append(
-                        CausalExplanation(
-                            explanation_id=explanation_ids.next_id(),
-                            kind="namespace_candidate_displaced",
-                            confidence="captured" if descendant is None else "correlated",
-                            subject=resolution.fullname if descendant is None else descendant.fullname,
-                            effect_status="regular_module_selected" if descendant is None else "descendant_failed",
-                            cause_finding_id=(
-                                None if displacement_finding is None else displacement_finding.finding_id
-                            ),
-                            finder_type_name=resolution.finder_type_name,
-                            omitted_location="",
-                            candidate_path=candidate.path or "",
-                            event_seqs=event_seqs,
-                            next_observation=None,
-                            origin=resolution.origin,
-                        )
-                    )
-        if not resolution.later_finders:
-            continue
-        event_seqs = (() if resolution.event_seq is None else (resolution.event_seq,)) + resolution.component_event_seqs
-        explanations.append(
-            CausalExplanation(
-                explanation_id=explanation_ids.next_id(),
-                kind="standard_winner_precedence",
-                confidence="captured" if resolution.evidence_level == "captured" else "inferred",
-                subject=resolution.fullname,
-                effect_status=resolution.category,
-                cause_finding_id=None,
-                finder_type_name=resolution.finder_type_name,
-                omitted_location="",
-                candidate_path="",
-                event_seqs=event_seqs,
-                next_observation=(None if resolution.evidence_level == "captured" else "enable_deep_import_outcomes"),
-                origin=resolution.origin,
-                standard_attempt_id=resolution.attempt_id,
-                later_finders=resolution.later_finders,
-            )
-        )
-    for finding in findings:
-        if finding.kind == "finder_side_effect" and finding.claim is not None:
-            claim = finding.claim
-            outcome = "finder_raised" if claim.exception_type_name is not None else "finder_returned_none"
-            explanations.append(
-                CausalExplanation(
-                    explanation_id=explanation_ids.next_id(),
-                    kind="finder_side_effect",
-                    confidence="captured",
-                    subject=finding.module,
-                    effect_status=outcome,
-                    cause_finding_id=finding.finding_id,
-                    finder_type_name=claim.finder_type_name,
-                    omitted_location="",
-                    candidate_path="",
-                    event_seqs=(claim.seq,),
-                    next_observation=None,
-                    boundary="find_spec",
-                    state_before=claim.module_state_before,
-                    state_after=claim.module_state_after,
-                )
-            )
-        elif finding.kind in ("module_replacement", "repeated_loader_execution") and finding.deep_call is not None:
-            call = finding.deep_call
-            baseline = finding.module_state_baseline or call.module_state_before
-            target_diverged = (
-                baseline is not None
-                and baseline.state == "object"
-                and call.target_state is not None
-                and call.target_state.state == "object"
-                and baseline.object_id != call.target_state.object_id
-                and (
-                    finding.module_state_baseline is not None
-                    or not (
-                        call.module_state_after is not None
-                        and call.module_state_after.state == "object"
-                        and baseline.object_id != call.module_state_after.object_id
-                    )
-                )
-            )
-            explanations.append(
-                CausalExplanation(
-                    explanation_id=explanation_ids.next_id(),
-                    kind=finding.kind,
-                    confidence="captured",
-                    subject=finding.module,
-                    effect_status="separate_module_executed" if target_diverged else "module_identity_replaced",
-                    cause_finding_id=finding.finding_id,
-                    finder_type_name=call.object_type_name,
-                    omitted_location="",
-                    candidate_path="",
-                    event_seqs=tuple(dict.fromkeys((*finding.supporting_event_seqs, call.seq))),
-                    next_observation=None,
-                    boundary=call.boundary,
-                    state_before=baseline,
-                    state_after=call.target_state if target_diverged else call.module_state_after,
-                )
-            )
-        elif finding.kind == "repeated_load_failure":
-            matched = [
-                resolution
-                for resolution in standard_resolutions
-                if resolution.fullname == finding.module
-                and resolution.event_seq is not None
-                and resolution.event_seq in finding.supporting_event_seqs
-            ]
-            if len(matched) < 2:
-                continue
-            later = matched[-1]
-            explanations.append(
-                CausalExplanation(
-                    explanation_id=explanation_ids.next_id(),
-                    kind="repeated_load_failure",
-                    confidence="correlated",
-                    subject=finding.module,
-                    effect_status="later_import_failed",
-                    cause_finding_id=finding.finding_id,
-                    finder_type_name=later.loader_type_name or later.finder_type_name,
-                    omitted_location="",
-                    candidate_path="",
-                    event_seqs=finding.supporting_event_seqs,
-                    next_observation=None,
-                    origin=later.origin,
-                    standard_attempt_id=later.attempt_id,
-                )
-            )
-    return _append_ambiguous_explanations(tuple(explanations), explanation_ids)
+    return _CausalExplanationBuilder(
+        findings, attempts, standard_resolutions, route_comparisons, explanation_ids, events
+    ).build()
 
 
 def _failed_descendants_after(
@@ -781,9 +937,18 @@ def _repeated_load_failure_findings(
     finding_ids: _IdAllocator,
 ) -> tuple[Finding, ...]:
     """Correlate a later failure with an earlier load from the same origin."""
+    groups = _captured_load_groups(attempts, standard_resolutions)
+    candidates = sorted(_repeated_load_candidates(groups), key=lambda item: item.first_failure_seq)
+    return tuple(_repeated_load_finding(candidate, attempts, finding_ids) for candidate in candidates)
+
+
+def _captured_load_groups(
+    attempts: tuple[ImportAttempt, ...],
+    standard_resolutions: tuple[StandardResolution, ...],
+) -> dict[tuple[str, str, str], list[tuple[StandardResolution, ImportAttempt]]]:
+    """Extract captured loaded/failed attempts grouped by semantic route."""
     attempts_by_id = {attempt.attempt_id: attempt for attempt in attempts}
     groups: dict[tuple[str, str, str], list[tuple[StandardResolution, ImportAttempt]]] = {}
-    findings: list[Finding] = []
     ordered = sorted(
         standard_resolutions,
         key=lambda resolution: -1 if resolution.event_seq is None else resolution.event_seq,
@@ -802,14 +967,14 @@ def _repeated_load_failure_findings(
         if attempt.progress in ("loaded", "failed"):
             key = (resolution.fullname, resolution.loader_type_name, _path_key(resolution.origin))
             groups.setdefault(key, []).append((resolution, attempt))
-    candidates: list[
-        tuple[
-            int,
-            StandardResolution,
-            ImportAttempt,
-            list[tuple[StandardResolution, ImportAttempt]],
-        ]
-    ] = []
+    return groups
+
+
+def _repeated_load_candidates(
+    groups: dict[tuple[str, str, str], list[tuple[StandardResolution, ImportAttempt]]],
+) -> list[_RepeatedLoadCandidate]:
+    """Validate groups containing an earlier load and at least one later failure."""
+    candidates: list[_RepeatedLoadCandidate] = []
     for group in groups.values():
         earlier_pair = next((pair for pair in group if pair[1].progress == "loaded"), None)
         if earlier_pair is None:
@@ -828,45 +993,51 @@ def _repeated_load_failure_findings(
         first_failure_seq = min(
             max(attempt.event_seqs, default=resolution.event_seq or 0) for resolution, attempt in failures
         )
-        candidates.append((first_failure_seq, earlier, earlier_attempt, failures))
-    for _failure_seq, earlier, earlier_attempt, failures in sorted(candidates, key=lambda item: item[0]):
-        earlier_event_seq = earlier.event_seq
-        if earlier_event_seq is None:
-            continue
-        failed_attempts = [
-            attempt
-            for attempt in attempts
-            if attempt.fullname == earlier.fullname
-            and attempt.progress == "failed"
-            and any(seq > earlier_event_seq for seq in attempt.event_seqs)
-        ]
-        event_seqs = tuple(
-            dict.fromkeys(
-                (
-                    earlier_event_seq,
-                    *earlier_attempt.event_seqs,
-                    *(resolution.event_seq for resolution, _attempt in failures if resolution.event_seq is not None),
-                    *(seq for attempt in failed_attempts for seq in attempt.event_seqs),
-                )
-            )
-        )
-        findings.append(
-            Finding(
-                finding_ids.next_id(),
-                "repeated_load_failure",
-                earlier.fullname,
-                evidence_level="correlated",
-                limitations=("exception_message_not_captured",),
-                attempt_ids=(
-                    earlier_attempt.attempt_id,
-                    *(attempt.attempt_id for attempt in failed_attempts),
+        candidates.append(_RepeatedLoadCandidate(first_failure_seq, earlier, earlier_attempt, tuple(failures)))
+    return candidates
+
+
+def _repeated_load_finding(
+    candidate: _RepeatedLoadCandidate,
+    attempts: tuple[ImportAttempt, ...],
+    finding_ids: _IdAllocator,
+) -> Finding:
+    """Construct one finding from a validated repeated-load candidate."""
+    earlier = candidate.earlier
+    earlier_event_seq = earlier.event_seq
+    assert earlier_event_seq is not None
+    failed_attempts = [
+        attempt
+        for attempt in attempts
+        if attempt.fullname == earlier.fullname
+        and attempt.progress == "failed"
+        and any(seq > earlier_event_seq for seq in attempt.event_seqs)
+    ]
+    event_seqs = tuple(
+        dict.fromkeys(
+            (
+                earlier_event_seq,
+                *candidate.earlier_attempt.event_seqs,
+                *(
+                    resolution.event_seq
+                    for resolution, _attempt in candidate.failures
+                    if resolution.event_seq is not None
                 ),
-                supporting_event_seqs=event_seqs,
-                severity="actionable",
-                signals=("same_loader", "same_origin", "earlier_attempt_loaded", "later_attempt_failed"),
+                *(seq for attempt in failed_attempts for seq in attempt.event_seqs),
             )
         )
-    return tuple(findings)
+    )
+    return Finding(
+        finding_ids.next_id(),
+        "repeated_load_failure",
+        earlier.fullname,
+        evidence_level="correlated",
+        limitations=("exception_message_not_captured",),
+        attempt_ids=(candidate.earlier_attempt.attempt_id, *(attempt.attempt_id for attempt in failed_attempts)),
+        supporting_event_seqs=event_seqs,
+        severity="actionable",
+        signals=("same_loader", "same_origin", "earlier_attempt_loaded", "later_attempt_failed"),
+    )
 
 
 def _path_contains(directory: str | None, path: str) -> bool:
@@ -1063,9 +1234,7 @@ def _finder_side_effect_findings(events: list[MonitorEvent], finding_ids: _IdAll
 
 def _module_state_changed(before: ModuleCacheState, after: ModuleCacheState) -> bool:
     """Compare available identity states without conflating unavailable evidence."""
-    if before.state == "unavailable" or after.state == "unavailable":
-        return False
-    return before.state != after.state or before.object_id != after.object_id or before.type_name != after.type_name
+    return before.compare(after) == "different"
 
 
 def _resolution_routes(
@@ -1074,7 +1243,7 @@ def _resolution_routes(
     winner: FindSpecCall,
     route_ids: _IdAllocator,
     comparison_ids: _IdAllocator,
-    structural_context: _StructuralContext,
+    structural_context: _ImportStructureComparator,
     meta_short_circuit: bool,
     report_errors: list[ReportError],
 ) -> tuple[ResolutionRoute, ResolutionRoute, RouteComparison, StructuralComparison]:
@@ -1082,7 +1251,7 @@ def _resolution_routes(
     observed = winner.spec_summary
     if observed is not None:
         observed = _post_hoc_spec_summary(module, observed)
-    structural_comparison = _structural_comparison(winner.search_path, structural_context)
+    structural_comparison = structural_context.compare(winner.search_path)
     captured_route = ResolutionRoute(
         route_id=route_ids.next_id(),
         module=name,
@@ -1122,15 +1291,10 @@ def _resolution_routes(
     )
     if standard_route.status == "failed":
         report_errors.append(ReportError("standard_path_probe", standard_route.exception_type_name or "Exception"))
-    comparison = _compare_routes(
-        comparison_ids.next_id(),
-        captured_route.route_id,
-        standard_route.route_id,
-        observed,
-        standard_route.spec_summary,
-        structural_comparison,
-        left_status=captured_route.status,
-        right_status=standard_route.status,
+    comparison = captured_route.compare(
+        standard_route,
+        comparison_id=comparison_ids.next_id(),
+        structural_comparison=structural_comparison,
     )
     return captured_route, standard_route, comparison, structural_comparison
 
@@ -1211,88 +1375,14 @@ def _post_hoc_spec_summary(module: object, observed: SpecSummary) -> SpecSummary
         return observed
 
 
-def _compare_routes(
-    comparison_id: str,
-    left_route_id: str,
-    right_route_id: str,
-    left: SpecSummary | None,
-    right: SpecSummary | None,
-    structural_comparison: StructuralComparison,
-    *,
-    left_status: str = "found",
-    right_status: str = "found",
-) -> RouteComparison:
-    """Compare two independent routes without assigning either one authority."""
-    if left is None or right is None:
-        return RouteComparison(
-            comparison_id,
-            left_route_id,
-            right_route_id,
-            left_status != right_status,
-            False,
-            None,
-            None,
-            None,
-            None,
-            (),
-            (),
-            None,
-            "unavailable" if left is None else left.locations_state,
-            "unavailable" if right is None else right.locations_state,
-            structural_comparison,
-        )
-    loader_differs = (
-        None
-        if "loader:missing" in left.unavailable_fields or "loader:missing" in right.unavailable_fields
-        else _loader_type(left) != _loader_type(right)
-    )
-    origin_differs = _safe_path_value_changed(left.origin, right.origin)
-    cached_differs = _safe_path_value_changed(left.cached, right.cached)
-    package_differs = (
-        None if left.is_package is None or right.is_package is None else left.is_package != right.is_package
-    )
-    left_locations = _string_locations(left)
-    right_locations = _string_locations(right)
-    only_in_right: tuple[str, ...] = ()
-    only_in_left: tuple[str, ...] = ()
-    reordered: bool | None = None
-    if left_locations is not None and right_locations is not None:
-        left_keys = tuple(_path_key(path) for path in left_locations)
-        right_keys = tuple(_path_key(path) for path in right_locations)
-        only_in_right, only_in_left = _location_delta(left_locations, left_keys, right_locations, right_keys)
-        reordered = not only_in_right and not only_in_left and left_keys != right_keys
-    locations_complete = not (left.is_package is True and left.locations_state in ("deferred", "failed")) and not (
-        right.is_package is True and right.locations_state in ("deferred", "failed")
-    )
-    complete = not left.unavailable_fields and not right.unavailable_fields and locations_complete
-    return RouteComparison(
-        comparison_id,
-        left_route_id,
-        right_route_id,
-        left_status != right_status,
-        complete,
-        loader_differs,
-        origin_differs,
-        cached_differs,
-        package_differs,
-        only_in_left,
-        only_in_right,
-        reordered,
-        left.locations_state,
-        right.locations_state,
-        structural_comparison,
-    )
-
-
 def _compare_specs(left: SpecSummary, right: SpecSummary) -> RouteComparison:
     """Compatibility helper for focused unit tests of neutral spec comparison."""
-    return _compare_routes(
-        "comparison:test",
-        "route:left",
-        "route:right",
-        left,
-        right,
-        StructuralComparison(None, None, (), ()),
+    left_route = ResolutionRoute._for_comparison("route:left", left)
+    right_route = ResolutionRoute._for_comparison("route:right", right)
+    return left_route.compare(
+        right_route,
+        comparison_id="comparison:test",
+        structural_comparison=StructuralComparison(None, None, (), ()),
     )
 
 
@@ -1309,135 +1399,80 @@ def _module_replacement_findings(events: list[MonitorEvent], finding_ids: _IdAll
         prior = previous_exec.get(event.fullname or "")
         if event.boundary == "loader_exec_module" and event.fullname is not None:
             previous_exec[event.fullname] = event
-        cache_replaced = (
-            before is not None
-            and after is not None
-            and before.state == "object"
-            and after.state == "object"
-            and before.object_id != after.object_id
-        )
-        target_diverged = (
-            event.boundary == "loader_exec_module"
-            and before is not None
-            and before.state == "object"
-            and target is not None
-            and target.state == "object"
-            and before.object_id != target.object_id
-        )
         prior_state = None if prior is None else (prior.target_state or prior.module_state_after)
-        prior_diverged = (
-            prior_state is not None
-            and prior is not None
-            and prior.object_id == event.object_id
-            and prior_state.state == "object"
-            and target is not None
-            and target.state == "object"
-            and prior_state.object_id != target.object_id
-        )
-        if event.fullname is None or not (cache_replaced or target_diverged or prior_diverged):
+        prior_diverged = _prior_loader_target_diverged(event, prior, prior_state, target)
+        if event.fullname is None or not _is_module_replacement(event, before, after, target, prior_diverged):
             continue
-        kind = "repeated_loader_execution" if prior_diverged else "module_replacement"
-        findings.append(
-            Finding(
-                finding_ids.next_id(),
-                kind,
-                event.fullname,
-                deep_call=event,
-                module_state_baseline=prior_state if prior_diverged else None,
-                supporting_event_seqs=((prior.seq,) if prior_diverged and prior is not None else ()),
-                evidence_level="captured",
-                limitations=("boundary_delta_does_not_reconstruct_intermediate_states",),
-                severity="actionable",
-            )
-        )
+        findings.append(_module_replacement_finding(event, prior, prior_state, prior_diverged, finding_ids))
     return findings
 
 
-def _location_delta(
-    observed: tuple[str, ...],
-    observed_keys: tuple[str, ...],
-    replayed: tuple[str, ...],
-    replayed_keys: tuple[str, ...],
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Return multiset differences while preserving each side's display order."""
-    unmatched_observed = list(zip(observed_keys, observed, strict=True))
-    omitted: list[str] = []
-    for replayed_key, replayed_path in zip(replayed_keys, replayed, strict=True):
-        for index, (observed_key, _observed_path) in enumerate(unmatched_observed):
-            if replayed_key == observed_key:
-                del unmatched_observed[index]
-                break
-        else:
-            omitted.append(replayed_path)
-    return tuple(omitted), tuple(path for _key, path in unmatched_observed)
+def _prior_loader_target_diverged(
+    event: DeepDiagnosticCall,
+    prior: DeepDiagnosticCall | None,
+    prior_state: ModuleCacheState | None,
+    target: ModuleCacheState | None,
+) -> bool:
+    return bool(
+        prior_state is not None
+        and prior is not None
+        and prior.object_id == event.object_id
+        and prior_state.state == "object"
+        and target is not None
+        and target.state == "object"
+        and prior_state.object_id != target.object_id
+    )
 
 
-def _loader_type(summary: SpecSummary) -> str | None:
-    return None if summary.loader is None else summary.loader.type_name
+def _is_module_replacement(
+    event: DeepDiagnosticCall,
+    before: ModuleCacheState | None,
+    after: ModuleCacheState | None,
+    target: ModuleCacheState | None,
+    prior_diverged: bool,
+) -> bool:
+    cache_replaced = (
+        before is not None
+        and after is not None
+        and before.state == "object"
+        and after.state == "object"
+        and before.object_id != after.object_id
+    )
+    target_diverged = (
+        event.boundary == "loader_exec_module"
+        and before is not None
+        and before.state == "object"
+        and target is not None
+        and target.state == "object"
+        and before.object_id != target.object_id
+    )
+    return cache_replaced or target_diverged or prior_diverged
 
 
-def _safe_path_value_changed(
-    observed: str | ObjectRef | None,
-    replayed: str | ObjectRef | None,
-) -> bool | None:
-    if type(observed) is str and type(replayed) is str:
-        return not _same_path(observed, replayed)
-    if observed is None and replayed is None:
-        return False
-    if isinstance(observed, ObjectRef) or isinstance(replayed, ObjectRef):
-        return None
-    return True
-
-
-def _string_locations(summary: SpecSummary) -> tuple[str, ...] | None:
-    locations = summary.submodule_search_locations
-    if locations is None or any(type(location) is not str for location in locations):
-        return None
-    return tuple(location for location in locations if type(location) is str)
+def _module_replacement_finding(
+    event: DeepDiagnosticCall,
+    prior: DeepDiagnosticCall | None,
+    prior_state: ModuleCacheState | None,
+    prior_diverged: bool,
+    finding_ids: _IdAllocator,
+) -> Finding:
+    assert event.fullname is not None
+    kind = "repeated_loader_execution" if prior_diverged else "module_replacement"
+    return Finding(
+        finding_ids.next_id(),
+        kind,
+        event.fullname,
+        deep_call=event,
+        module_state_baseline=prior_state if prior_diverged else None,
+        supporting_event_seqs=((prior.seq,) if prior_diverged and prior is not None else ()),
+        evidence_level="captured",
+        limitations=("boundary_delta_does_not_reconstruct_intermediate_states",),
+        severity="actionable",
+    )
 
 
 def _path_key(path: str) -> str:
     return os.path.normcase(os.path.abspath(path))
-
-
-def _structural_context(
-    events: list[MonitorEvent],
-    initial_path_hooks: tuple[ObjectRef, ...],
-    current_path_hooks: tuple[ObjectRef, ...] | None,
-    initial_importer_cache: tuple[ImporterCacheEntry, ...],
-    current_importer_cache: tuple[ImporterCacheEntry, ...] | None,
-) -> _StructuralContext:
-    """Index captured structure once so per-finding analysis remains linear."""
-    path_hooks_changed = (
-        None
-        if current_path_hooks is None
-        else _import_object_signatures(initial_path_hooks) != _import_object_signatures(current_path_hooks)
-    )
-    return _StructuralContext(
-        path_hooks_changed,
-        _cache_signatures(initial_importer_cache),
-        None if current_importer_cache is None else _cache_signatures(current_importer_cache),
-        _cache_event_index(events),
-    )
-
-
-def _structural_comparison(
-    search_path: tuple[str, ...],
-    context: _StructuralContext,
-) -> StructuralComparison:
-    """Compare captured identities without calling historical import objects."""
-    importer_cache_changed, changed_paths = _changed_cache_paths(
-        search_path,
-        context.initial_importer_cache,
-        context.current_importer_cache,
-    )
-    event_seqs = tuple(sorted({seq for path in search_path for seq in context.cache_event_seqs_by_path.get(path, ())}))
-    return StructuralComparison(
-        context.path_hooks_changed,
-        importer_cache_changed,
-        changed_paths,
-        event_seqs,
-    )
 
 
 def _cache_event_index(events: list[MonitorEvent]) -> dict[str, tuple[int, ...]]:
@@ -1559,10 +1594,3 @@ def _standard_path_route(
         search_path_kind=search_path_kind,
         search_path_phase="import",
     )
-
-
-def _same_path(a: str | None, b: str | None) -> bool:
-    """Compare filesystem paths after absolutization and case normalization."""
-    if a is None or b is None:
-        return a == b
-    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))

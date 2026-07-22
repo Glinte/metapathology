@@ -9,6 +9,7 @@ from pathlib import Path
 
 from metapathology import ObjectRef, SpecSummary
 from metapathology._report_analysis import _compare_specs, _post_hoc_spec_summary
+from metapathology._report_model import ResolutionRoute, StructuralComparison
 from metapathology._spec import summarize_spec
 
 RunPython = Callable[..., "subprocess.CompletedProcess[str]"]
@@ -68,6 +69,22 @@ def test_route_comparison_preserves_package_origin_and_namespace_differences() -
     base = _summary(["a"])
     extension_comparison = _compare_specs(extended, base)
     assert extension_comparison.only_in_left_route == ("b",)
+
+
+def test_route_value_comparison_reports_status_partial_evidence_and_differences() -> None:
+    left = ResolutionRoute._for_comparison("route:left", _summary(["a"]))
+    right = ResolutionRoute._for_comparison("route:right", None, status="not_found")
+
+    comparison = left.compare(
+        right,
+        comparison_id="comparison:status",
+        structural_comparison=StructuralComparison(False, False, (), ()),
+    )
+
+    assert comparison.status_differs is True
+    assert comparison.complete is False
+    assert comparison.right_locations_state == "unavailable"
+    assert comparison.has_differences()
 
 
 def test_deferred_locations_are_attempted_only_from_the_same_post_hoc_spec() -> None:

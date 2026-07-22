@@ -137,6 +137,14 @@ class ModuleCacheState(_Record):
     object_id: int | None = None
     type_name: str | None = None
 
+    def compare(self, other: "ModuleCacheState") -> 'Literal["same", "different", "unavailable"]':
+        """Compare two captured cache states without inventing missing evidence."""
+        if self.state == "unavailable" or other.state == "unavailable":
+            return "unavailable"
+        if self.state == other.state and self.object_id == other.object_id and self.type_name == other.type_name:
+            return "same"
+        return "different"
+
 
 class ImporterCacheEntry(_Record):
     """One string-keyed ``sys.path_importer_cache`` entry.

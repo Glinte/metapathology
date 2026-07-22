@@ -94,7 +94,13 @@ select = [
     "RET",
     "SIM",
     "PERF",
+    "C901",
+    "PLR0912",
+    "PLR0915",
 ]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

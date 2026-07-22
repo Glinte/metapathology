@@ -38,13 +38,10 @@ from metapathology._report_model import (
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable
     from traceback import StackSummary
-    from typing import TypeVar
 
     from metapathology._module_metadata import ModuleMetadata
-
-    _EventT = TypeVar("_EventT")
 
 
 # This package's own directory, normcased for comparison: used to drop our
@@ -256,139 +253,219 @@ def _emit_event_section(
         empty_sections.append(label)
 
 
-def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
-    """Build the report body as a list of lines; the caller adds the trailing newline."""
-    context = _RenderContext(document, color=color)
-    mutations = _events_of_type(document.analysis.events, MetaPathMutation)
-    reassignments = _events_of_type(document.analysis.events, MetaPathReassignment)
-    path_hook_mutations = _events_of_type(document.analysis.events, PathHooksMutation)
-    path_hook_reassignments = _events_of_type(document.analysis.events, PathHooksReassignment)
-    sys_path_mutations = _events_of_type(document.analysis.events, SysPathMutation)
-    sys_path_reassignments = _events_of_type(document.analysis.events, SysPathReassignment)
-    importer_cache_diffs = _events_of_type(document.analysis.events, ImporterCacheDiff)
-    calls = _events_of_type(document.analysis.events, FindSpecCall)
-    errors = _events_of_type(document.analysis.events, InternalError)
+class _TextEventBuckets:
+    """Classify the exhaustive event log once for all text report sections."""
 
-    lines = _header_lines(document, context)
+    def __init__(self, events: tuple[MonitorEvent, ...]) -> None:
+        self.meta_path_mutations: list[MetaPathMutation] = []
+        self.meta_path_reassignments: list[MetaPathReassignment] = []
+        self.path_hook_mutations: list[PathHooksMutation] = []
+        self.path_hook_reassignments: list[PathHooksReassignment] = []
+        self.sys_path_mutations: list[SysPathMutation] = []
+        self.sys_path_reassignments: list[SysPathReassignment] = []
+        self.importer_cache_diffs: list[ImporterCacheDiff] = []
+        self.finder_calls: list[FindSpecCall] = []
+        self.internal_errors: list[InternalError] = []
+        for event in events:
+            self._add(event)
 
-    lines.append("")
-    counts = {severity: 0 for severity in ("actionable", "warning", "informational")}
-    for finding in document.analysis.findings:
-        counts[finding.severity] = counts.get(finding.severity, 0) + 1
-    summary = ", ".join(
-        f"{count} {context.severity(severity, severity)}" for severity, count in counts.items() if count
-    )
-    consumed_comparisons = {
-        finding.route_comparison_id for finding in document.analysis.findings if finding.route_comparison_id is not None
-    }
-    divergent = tuple(
-        comparison
-        for comparison in document.analysis.route_comparisons
-        if _routes_differ(comparison) and comparison.comparison_id not in consumed_comparisons
-    )
-    if summary:
+    def _add(self, event: MonitorEvent) -> None:
+        if isinstance(event, MetaPathMutation):
+            self.meta_path_mutations.append(event)
+        elif isinstance(event, MetaPathReassignment):
+            self.meta_path_reassignments.append(event)
+        elif isinstance(event, PathHooksMutation):
+            self.path_hook_mutations.append(event)
+        elif isinstance(event, PathHooksReassignment):
+            self.path_hook_reassignments.append(event)
+        elif isinstance(event, SysPathMutation):
+            self.sys_path_mutations.append(event)
+        elif isinstance(event, SysPathReassignment):
+            self.sys_path_reassignments.append(event)
+        elif isinstance(event, ImporterCacheDiff):
+            self.importer_cache_diffs.append(event)
+        elif isinstance(event, FindSpecCall):
+            self.finder_calls.append(event)
+        elif isinstance(event, InternalError):
+            self.internal_errors.append(event)
+
+
+class _TextReportRenderer:
+    """Own one text rendering pass and its pre-indexed display state."""
+
+    def __init__(self, document: ReportDocument, *, color: bool) -> None:
+        self.document = document
+        self.context = _RenderContext(document, color=color)
+        buckets = _TextEventBuckets(document.analysis.events)
+        self.mutations = buckets.meta_path_mutations
+        self.calls = buckets.finder_calls
+        self.errors = buckets.internal_errors
+        self.event_log_sections: tuple[tuple[list, str, Callable[..., list[str]], bool], ...] = (
+            (self.mutations, "sys.meta_path mutations", _mutation_lines, True),
+            (buckets.meta_path_reassignments, "sys.meta_path reassignments", _reassignment_lines, True),
+            (buckets.path_hook_mutations, "sys.path_hooks mutations", _path_hooks_mutation_lines, True),
+            (buckets.path_hook_reassignments, "sys.path_hooks reassignments", _path_hooks_reassignment_lines, True),
+            (buckets.sys_path_mutations, "sys.path mutations", _sys_path_mutation_lines, document.sys_path_enabled),
+            (
+                buckets.sys_path_reassignments,
+                "sys.path reassignments",
+                _sys_path_reassignment_lines,
+                document.sys_path_enabled,
+            ),
+            (buckets.importer_cache_diffs, "sys.path_importer_cache changes", _importer_cache_diff_lines, True),
+        )
+
+    def render_lines(self) -> list[str]:
+        lines: list[str] = []
+        self._render_header(lines)
+        lines.append("")
+        divergent = self._render_findings(lines)
+        self._render_comparisons(lines, divergent)
+        self._render_evidence(lines)
+        empty_sections = self._render_observation_sections(lines)
+        self._render_errors(lines, empty_sections)
+        self._render_inventory(lines)
+        if empty_sections:
+            lines.extend(("", f"Nothing was recorded for: {', '.join(empty_sections)}."))
+        lines.append("")
+        return lines
+
+    def _render_header(self, lines: list[str]) -> None:
+        lines.append(self.context.heading("== metapathology report =="))
+        lines.extend(_verdict_lines(self.document, self.context))
+        lines.extend((f"report guide: {_REPORT_GUIDE_URL}", _monitoring_line(self.document)))
+        lines.extend(_mechanism_header_lines(self.document, self.context))
+        lines.extend(_snapshot_header_lines(self.document, self.context))
+        lines.extend(_inventory_header_lines(self.document))
+        modules = self.document.capture.modules_since_install
+        lines.append(f"modules imported since install: {0 if modules is None else len(modules)}")
+        if self.document.process.cwd:
+            lines.append(
+                f"paths shown relative to: {self.document.process.cwd} (that directory itself displays as <project>)"
+            )
+
+    def _render_findings(self, lines: list[str]) -> tuple[RouteComparison, ...]:
+        findings = self.document.analysis.findings
+        counts = {severity: 0 for severity in ("actionable", "warning", "informational")}
+        for finding in findings:
+            counts[finding.severity] = counts.get(finding.severity, 0) + 1
+        summary = ", ".join(
+            f"{count} {self.context.severity(severity, severity)}" for severity, count in counts.items() if count
+        )
+        title = f"-- findings ({len(findings)}"
         lines.append(
-            f"{context.heading(f'-- findings ({len(document.analysis.findings)}:')} {summary}{context.heading(') --')}"
+            f"{self.context.heading(title + ':')} {summary}{self.context.heading(') --')}"
+            if summary
+            else self.context.heading(title + ") --")
         )
-    else:
-        lines.append(context.heading(f"-- findings ({len(document.analysis.findings)}) --"))
-    if not document.analysis.findings:
-        module_count = (
-            0 if document.capture.modules_since_install is None else len(document.capture.modules_since_install)
+        consumed = {item.route_comparison_id for item in findings if item.route_comparison_id is not None}
+        divergent = tuple(
+            item
+            for item in self.document.analysis.route_comparisons
+            if _routes_differ(item) and item.comparison_id not in consumed
         )
-        if divergent or document.analysis.explanations:
+        if not findings:
+            self._render_empty_finding_message(lines, divergent)
+        lines.extend(_narrative_lines(self.document, self.context))
+        return divergent
+
+    def _render_empty_finding_message(self, lines: list[str], divergent: tuple[RouteComparison, ...]) -> None:
+        modules = self.document.capture.modules_since_install
+        if divergent or self.document.analysis.explanations:
             lines.append("No problems were found. The comparisons below are informational.")
         else:
-            lines.append(f"No import-hook interference detected across {module_count} monitored imports.")
-    lines.extend(_narrative_lines(document, context))
+            lines.append(
+                f"No import-hook interference detected across {0 if modules is None else len(modules)} monitored imports."
+            )
 
-    if divergent:
-        lines.append("")
-        lines.append(context.heading(f"-- modules found by a custom finder ({len(divergent)}) --"))
-        lines.append(
-            "For each module, the recorded result is compared with a fresh PathFinder search over the same"
-            " path, run at report time. The fresh search reflects current state; it does not show which finder"
-            " would have won during the run."
+    def _render_comparisons(self, lines: list[str], divergent: tuple[RouteComparison, ...]) -> None:
+        if not divergent:
+            return
+        lines.extend(
+            (
+                "",
+                self.context.heading(f"-- modules found by a custom finder ({len(divergent)}) --"),
+                "For each module, the recorded result is compared with a fresh PathFinder search over the same"
+                " path, run at report time. The fresh search reflects current state; it does not show which finder"
+                " would have won during the run.",
+            )
         )
         for comparison in divergent:
-            lines.extend(_route_comparison_lines(comparison, context, mutations))
+            lines.extend(_route_comparison_lines(comparison, self.context, self.mutations))
 
-    unresolved_lines = _unresolved_import_lines(document, context)
-    if unresolved_lines:
-        lines.append("")
-        lines.extend(unresolved_lines)
+    def _render_evidence(self, lines: list[str]) -> None:
+        unresolved = _unresolved_import_lines(self.document, self.context)
+        if unresolved:
+            lines.append("")
+            lines.extend(unresolved)
 
-    empty_sections: list[str] = []
+    def _render_observation_sections(self, lines: list[str]) -> list[str]:
+        empty: list[str] = []
+        if self.calls:
+            lines.extend(
+                (
+                    "",
+                    self.context.heading("-- finder calls --"),
+                    "Standard CPython finders are not wrapped, so their calls do not appear here.",
+                )
+            )
+            lines.extend(_attribution_lines(self.calls, self.context))
+        else:
+            empty.append("finder calls")
+        self._render_contracts_and_timeline(lines, empty)
+        for items, label, renderer, record_empty in self.event_log_sections:
+            _emit_event_section(lines, empty, items, label, renderer, self.context, record_empty=record_empty)
+        self._render_replays(lines, empty)
+        return empty
 
-    if calls:
-        lines.append("")
-        lines.append(context.heading("-- finder calls --"))
-        lines.append("Standard CPython finders are not wrapped, so their calls do not appear here.")
-        lines.extend(_attribution_lines(calls, context))
-    else:
-        empty_sections.append("finder calls")
+    def _render_contracts_and_timeline(self, lines: list[str], empty: list[str]) -> None:
+        contracts = _finder_contract_lines(self.document.analysis.finder_contracts, self.context)
+        if contracts:
+            lines.append("")
+            lines.extend(contracts)
+        if self.document.analysis.standard_resolutions:
+            lines.append("")
+            lines.extend(_standard_resolution_lines(self.document.analysis.standard_resolutions, self.context))
+        else:
+            empty.append("imports attributed to standard finders")
+        if self.document.analysis.events:
+            lines.append("")
+            lines.extend(_timeline_lines(self.document, self.context))
+        else:
+            empty.append("timeline events")
 
-    contract_lines = _finder_contract_lines(document.analysis.finder_contracts, context)
-    if contract_lines:
-        lines.append("")
-        lines.extend(contract_lines)
-
-    if document.analysis.standard_resolutions:
-        lines.append("")
-        lines.extend(_standard_resolution_lines(document.analysis.standard_resolutions, context))
-    else:
-        empty_sections.append("imports attributed to standard finders")
-
-    if document.analysis.events:
-        lines.append("")
-        lines.extend(_timeline_lines(document, context))
-    else:
-        empty_sections.append("timeline events")
-
-    # These monitored-list sections share one shape: a "-- label (N) --"
-    # heading over per-item lines, or the label recorded as empty. The sys.path
-    # sections only note emptiness when that opt-in mechanism is enabled.
-    event_log_sections: list[tuple[list, str, Callable[..., list[str]], bool]] = [
-        (mutations, "sys.meta_path mutations", _mutation_lines, True),
-        (reassignments, "sys.meta_path reassignments", _reassignment_lines, True),
-        (path_hook_mutations, "sys.path_hooks mutations", _path_hooks_mutation_lines, True),
-        (path_hook_reassignments, "sys.path_hooks reassignments", _path_hooks_reassignment_lines, True),
-        (sys_path_mutations, "sys.path mutations", _sys_path_mutation_lines, document.sys_path_enabled),
-        (sys_path_reassignments, "sys.path reassignments", _sys_path_reassignment_lines, document.sys_path_enabled),
-        (importer_cache_diffs, "sys.path_importer_cache changes", _importer_cache_diff_lines, True),
-    ]
-    for items, label, render_item, record_empty in event_log_sections:
-        _emit_event_section(lines, empty_sections, items, label, render_item, context, record_empty=record_empty)
-
-    if document.analysis.speculative_replay_enabled:
-        replay_lines = _speculative_replay_lines(document, context)
+    def _render_replays(self, lines: list[str], empty: list[str]) -> None:
+        if not self.document.analysis.speculative_replay_enabled:
+            return
+        replay_lines = _speculative_replay_lines(self.document, self.context)
         if replay_lines:
             lines.append("")
             lines.extend(replay_lines)
         else:
-            empty_sections.append("speculative replays")
+            empty.append("speculative replays")
 
-    error_count = len(errors) + len(document.analysis.report_errors)
-    if error_count:
-        lines.append("")
-        lines.append(context.negative(f"-- internal errors ({error_count}) --"))
-        lines.extend(_internal_error_line(error) for error in errors)
+    def _render_errors(self, lines: list[str], empty: list[str]) -> None:
+        error_count = len(self.errors) + len(self.document.analysis.report_errors)
+        if not error_count:
+            empty.append("internal errors")
+            return
+        lines.extend(("", self.context.negative(f"-- internal errors ({error_count}) --")))
+        lines.extend(_internal_error_line(error) for error in self.errors)
         lines.extend(
-            f"during report in {error.where}: {error.exception_type_name}" for error in document.analysis.report_errors
+            f"during report in {error.where}: {error.exception_type_name}"
+            for error in self.document.analysis.report_errors
         )
-    else:
-        empty_sections.append("internal errors")
 
-    inventory_lines = _loader_inventory_lines(document, context)
-    if inventory_lines:
-        lines.append("")
-        lines.extend(inventory_lines)
+    def _render_inventory(self, lines: list[str]) -> None:
+        inventory = _loader_inventory_lines(self.document, self.context)
+        if inventory:
+            lines.append("")
+            lines.extend(inventory)
 
-    if empty_sections:
-        lines.append("")
-        lines.append(f"Nothing was recorded for: {', '.join(empty_sections)}.")
-    lines.append("")
-    return lines
+
+def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
+    """Build the report body as a list of lines; the caller adds the trailing newline."""
+    return _TextReportRenderer(document, color=color).render_lines()
 
 
 # One static consequence sentence per finding kind, stating only what the
@@ -565,88 +642,126 @@ def _explanation_lines(
     explanations_by_id: "dict[str, CausalExplanation] | None" = None,
 ) -> list[str]:
     """Render one deterministic evidence join before its atomic findings."""
-    if explanation.kind == "namespace_truncation_failure":
-        status = "failed" if explanation.effect_status == "failed" else "was attempted with outcome unknown"
-        lines = [
-            f"[{explanation.confidence}] '{explanation.subject}' {status} after {explanation.finder_type_name} truncated its parent namespace",
-            f"    omitted location {context.quoted_path(explanation.omitted_location)} contains {context.quoted_path(explanation.candidate_path)}",
-            ("    supporting events: " if nested else f"    cause: {explanation.cause_finding_id}; supporting events: ")
-            + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
-        ]
-        if explanation.next_observation == "enable_deep_import_outcomes":
-            lines.append(
-                "    next step: rerun with --deep-import-outcomes to confirm whether the submodule import failed"
-            )
-        return lines
-    if explanation.kind == "standard_winner_precedence":
-        later = ", ".join(explanation.later_finders)
-        qualifier = "produced" if explanation.confidence == "captured" else "likely produced"
-        lines = [
-            f"[{explanation.confidence}] {explanation.finder_type_name} {qualifier} {explanation.effect_status} for '{explanation.subject}' before later finders",
-            f"    later unreachable finders: {later}; origin: {_origin_display(explanation.origin, context)}",
-        ]
-        if explanation.standard_attempt_id is not None:
-            lines.append(f"    attempt: attempt:{explanation.standard_attempt_id}")
-        if explanation.next_observation == "enable_deep_import_outcomes":
-            lines.append("    next step: rerun with --deep-import-outcomes to record the actual PathFinder result")
-        return lines
-    if explanation.kind == "namespace_candidate_displaced":
-        lines = [
-            f"[{explanation.confidence}] '{explanation.subject}': "
-            f"{explanation.finder_type_name} found a namespace candidate from "
-            f"{context.quoted_path(explanation.candidate_path)}",
-            "    it continued searching and selected the regular module at "
-            f"{_origin_display(explanation.origin, context)}",
-            "    supporting events: " + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
-        ]
-        if explanation.effect_status == "descendant_failed":
-            lines.insert(2, "    the selected module was not a package, and the descendant import then failed")
-        return lines
-    if explanation.kind == "repeated_load_failure":
-        return [
-            f"[correlated] the same origin was selected again for '{explanation.subject}' by "
-            f"{explanation.finder_type_name}",
-            f"    origin: {_origin_display(explanation.origin, context)}",
-            "    the earlier import loaded, but the later import failed; the exception message was not captured",
-            "    supporting events: " + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
-        ]
-    if explanation.kind == "finder_side_effect":
-        outcome = "raised" if explanation.effect_status == "finder_raised" else "returned None"
-        return [
-            f"[captured] {explanation.finder_type_name} {outcome} after changing sys.modules['{explanation.subject}']",
-            f"    during {_bare_boundary_label(explanation.boundary)}: {_module_transition(explanation.state_before, explanation.state_after)}",
-            "    nested activity was not observed; the boundary delta does not identify the internal cause",
-        ]
-    if explanation.kind in ("module_replacement", "repeated_loader_execution"):
-        if explanation.kind == "repeated_loader_execution":
-            return [
-                f"[captured] {explanation.finder_type_name} executed '{explanation.subject}' again with a different module object",
-                f"    during {_bare_boundary_label(explanation.boundary)}: "
-                f"{_module_transition(explanation.state_before, explanation.state_after)}",
-                "    this is not an ordinary reload, which normally reuses the existing module object",
-            ]
-        action = (
-            "executed a separate module object for"
-            if explanation.effect_status == "separate_module_executed"
-            else "replaced the module identity for"
-        )
-        return [
-            f"[captured] {explanation.finder_type_name} {action} '{explanation.subject}'",
-            f"    during {_bare_boundary_label(explanation.boundary)}: {_module_transition(explanation.state_before, explanation.state_after)}",
-            "    both endpoint identities are exact; intermediate steps remain unknown",
-        ]
-    if explanation.kind == "ambiguous_contention":
-        alternatives = []
-        for alternative_id in explanation.alternatives:
-            alternative = None if explanations_by_id is None else explanations_by_id.get(alternative_id)
-            alternatives.append(alternative_id if alternative is None else _humanize(alternative.kind))
-        return [
-            f"[unknown] competing explanations remain for '{explanation.subject}'",
-            f"    alternatives: {', '.join(alternatives)}; supporting events: "
-            + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
-            "    next observation: capture a more specific boundary before selecting a cause",
-        ]
+    renderer = _EXPLANATION_RENDERERS.get(explanation.kind)
+    if renderer is not None:
+        return renderer(explanation, context, nested, explanations_by_id)
     return [f"[{explanation.confidence}] {explanation.kind}: '{explanation.subject}'"]
+
+
+def _render_namespace_truncation_explanation(
+    explanation: CausalExplanation, context: _RenderContext, nested: bool, _by_id: object
+) -> list[str]:
+    status = "failed" if explanation.effect_status == "failed" else "was attempted with outcome unknown"
+    lines = [
+        f"[{explanation.confidence}] '{explanation.subject}' {status} after {explanation.finder_type_name} truncated its parent namespace",
+        f"    omitted location {context.quoted_path(explanation.omitted_location)} contains {context.quoted_path(explanation.candidate_path)}",
+        ("    supporting events: " if nested else f"    cause: {explanation.cause_finding_id}; supporting events: ")
+        + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
+    ]
+    if explanation.next_observation == "enable_deep_import_outcomes":
+        lines.append("    next step: rerun with --deep-import-outcomes to confirm whether the submodule import failed")
+    return lines
+
+
+def _render_standard_precedence_explanation(
+    explanation: CausalExplanation, context: _RenderContext, _nested: bool, _by_id: object
+) -> list[str]:
+    qualifier = "produced" if explanation.confidence == "captured" else "likely produced"
+    lines = [
+        f"[{explanation.confidence}] {explanation.finder_type_name} {qualifier} {explanation.effect_status} for '{explanation.subject}' before later finders",
+        f"    later unreachable finders: {', '.join(explanation.later_finders)}; origin: {_origin_display(explanation.origin, context)}",
+    ]
+    if explanation.standard_attempt_id is not None:
+        lines.append(f"    attempt: attempt:{explanation.standard_attempt_id}")
+    if explanation.next_observation == "enable_deep_import_outcomes":
+        lines.append("    next step: rerun with --deep-import-outcomes to record the actual PathFinder result")
+    return lines
+
+
+def _render_namespace_candidate_explanation(
+    explanation: CausalExplanation, context: _RenderContext, _nested: bool, _by_id: object
+) -> list[str]:
+    lines = [
+        f"[{explanation.confidence}] '{explanation.subject}': {explanation.finder_type_name} found a namespace candidate from {context.quoted_path(explanation.candidate_path)}",
+        f"    it continued searching and selected the regular module at {_origin_display(explanation.origin, context)}",
+        "    supporting events: " + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
+    ]
+    if explanation.effect_status == "descendant_failed":
+        lines.insert(2, "    the selected module was not a package, and the descendant import then failed")
+    return lines
+
+
+def _render_repeated_load_explanation(
+    explanation: CausalExplanation, context: _RenderContext, _nested: bool, _by_id: object
+) -> list[str]:
+    return [
+        f"[correlated] the same origin was selected again for '{explanation.subject}' by {explanation.finder_type_name}",
+        f"    origin: {_origin_display(explanation.origin, context)}",
+        "    the earlier import loaded, but the later import failed; the exception message was not captured",
+        "    supporting events: " + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
+    ]
+
+
+def _render_finder_side_effect_explanation(
+    explanation: CausalExplanation, _context: _RenderContext, _nested: bool, _by_id: object
+) -> list[str]:
+    outcome = "raised" if explanation.effect_status == "finder_raised" else "returned None"
+    return [
+        f"[captured] {explanation.finder_type_name} {outcome} after changing sys.modules['{explanation.subject}']",
+        f"    during {_bare_boundary_label(explanation.boundary)}: {_module_transition(explanation.state_before, explanation.state_after)}",
+        "    nested activity was not observed; the boundary delta does not identify the internal cause",
+    ]
+
+
+def _render_module_identity_explanation(
+    explanation: CausalExplanation, _context: _RenderContext, _nested: bool, _by_id: object
+) -> list[str]:
+    if explanation.kind == "repeated_loader_execution":
+        return [
+            f"[captured] {explanation.finder_type_name} executed '{explanation.subject}' again with a different module object",
+            f"    during {_bare_boundary_label(explanation.boundary)}: {_module_transition(explanation.state_before, explanation.state_after)}",
+            "    this is not an ordinary reload, which normally reuses the existing module object",
+        ]
+    action = (
+        "executed a separate module object for"
+        if explanation.effect_status == "separate_module_executed"
+        else "replaced the module identity for"
+    )
+    return [
+        f"[captured] {explanation.finder_type_name} {action} '{explanation.subject}'",
+        f"    during {_bare_boundary_label(explanation.boundary)}: {_module_transition(explanation.state_before, explanation.state_after)}",
+        "    both endpoint identities are exact; intermediate steps remain unknown",
+    ]
+
+
+def _render_ambiguous_explanation(
+    explanation: CausalExplanation,
+    _context: _RenderContext,
+    _nested: bool,
+    explanations_by_id: "dict[str, CausalExplanation] | None",
+) -> list[str]:
+    alternatives = []
+    for alternative_id in explanation.alternatives:
+        alternative = None if explanations_by_id is None else explanations_by_id.get(alternative_id)
+        alternatives.append(alternative_id if alternative is None else _humanize(alternative.kind))
+    return [
+        f"[unknown] competing explanations remain for '{explanation.subject}'",
+        f"    alternatives: {', '.join(alternatives)}; supporting events: "
+        + ", ".join(f"#{seq}" for seq in explanation.event_seqs),
+        "    next observation: capture a more specific boundary before selecting a cause",
+    ]
+
+
+_EXPLANATION_RENDERERS: "dict[str, Callable[..., list[str]]]" = {
+    "namespace_truncation_failure": _render_namespace_truncation_explanation,
+    "standard_winner_precedence": _render_standard_precedence_explanation,
+    "namespace_candidate_displaced": _render_namespace_candidate_explanation,
+    "repeated_load_failure": _render_repeated_load_explanation,
+    "finder_side_effect": _render_finder_side_effect_explanation,
+    "module_replacement": _render_module_identity_explanation,
+    "repeated_loader_execution": _render_module_identity_explanation,
+    "ambiguous_contention": _render_ambiguous_explanation,
+}
 
 
 def _primary_explanations(explanations: tuple[CausalExplanation, ...]) -> tuple[CausalExplanation, ...]:
@@ -676,12 +791,8 @@ def _deep_effective_module_state(call: DeepDiagnosticCall) -> ModuleCacheState |
     return call.module_state_after
 
 
-def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
-    """Summarize mechanism status and interpreter state, collapsing unchanged snapshots."""
-    lines = [context.heading("== metapathology report ==")]
-    lines.extend(_verdict_lines(document, context))
-    lines.append(f"report guide: {_REPORT_GUIDE_URL}")
-    lines.append(_monitoring_line(document))
+def _mechanism_header_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
+    lines: list[str] = []
     if document.capture.deep_diagnostics:
         warning = context.warning("WARNING:")
         lines.append(
@@ -707,7 +818,11 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
         lines.append(f"frozen integration: {frozen_bootstrap.integration}")
         lines.append(f"frozen bootstrap: {context.display_path(frozen_bootstrap.path)}")
         lines.append(f"frozen observation boundary: {frozen_bootstrap.boundary}")
+    return lines
 
+
+def _snapshot_header_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
+    lines: list[str] = []
     if document.meta_path.current == document.meta_path.initial:
         lines.append(f"sys.meta_path (unchanged since install): {_names_line(document.meta_path.initial)}")
         displayed_finders: tuple[str, ...] = document.meta_path.initial
@@ -742,7 +857,11 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
             else:
                 line += f" ({initial_non_string} -> {current_non_string} non-string keys omitted)"
         lines.append(line)
+    return lines
 
+
+def _inventory_header_lines(document: ReportDocument) -> list[str]:
+    lines: list[str] = []
     standard_skipped = [item for item in document.analysis.skipped_finders if item.expected]
     other_skipped = [item for item in document.analysis.skipped_finders if not item.expected]
     if standard_skipped:
@@ -753,11 +872,6 @@ def _header_lines(document: ReportDocument, context: _RenderContext) -> list[str
     if other_skipped:
         lines.append("other finders observed but not instrumented (direct attribution unavailable):")
         lines.extend(f"    {item.finder_type_name}: {item.reason}" for item in other_skipped)
-
-    module_count = 0 if document.capture.modules_since_install is None else len(document.capture.modules_since_install)
-    lines.append(f"modules imported since install: {module_count}")
-    if document.process.cwd:
-        lines.append(f"paths shown relative to: {document.process.cwd} (that directory itself displays as <project>)")
     return lines
 
 
@@ -966,11 +1080,6 @@ def _ref_signatures(references: tuple[ObjectRef, ...]) -> tuple[tuple[int, str, 
     return tuple((reference.object_id, reference.type_name, reference.name) for reference in references)
 
 
-def _events_of_type(events: "Iterable[object]", event_type: "type[_EventT]") -> "list[_EventT]":
-    """Return only events of ``event_type``, preserving that concrete type for callers."""
-    return [event for event in events if isinstance(event, event_type)]
-
-
 def _internal_error_line(error: InternalError) -> str:
     """Format an internal error without requiring captured foreign exception text."""
     line = f"#{error.seq} in {error.where}: {error.exception_type_name}"
@@ -1066,7 +1175,7 @@ def _timeline_lines(document: ReportDocument, context: _RenderContext) -> list[s
             "Events are numbered in the order they were recorded; concurrent threads have no exact wall-clock order."
         )
 
-    audits = _events_of_type(events, ImportAuditStart)
+    audits = [event for event in events if isinstance(event, ImportAuditStart)]
     meta_path_stable = len({(audit.meta_path_id, audit.meta_path_type_names) for audit in audits}) <= 1
     path_hooks_stable = len({audit.path_hooks_id for audit in audits}) <= 1
     importer_cache_stable = len({audit.importer_cache_id for audit in audits}) <= 1
@@ -1833,16 +1942,7 @@ def _origin_display(origin: str | None, context: _RenderContext) -> str:
 
 def _routes_differ(comparison: RouteComparison) -> bool:
     """Return whether two route outcomes have any comparable difference."""
-    return bool(
-        comparison.status_differs
-        or comparison.loader_type_differs
-        or comparison.origin_differs
-        or comparison.cached_differs
-        or comparison.package_status_differs
-        or comparison.only_in_left_route
-        or comparison.only_in_right_route
-        or comparison.locations_reordered
-    )
+    return comparison.has_differences()
 
 
 def _route_comparison_lines(

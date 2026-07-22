@@ -166,6 +166,23 @@ class _ImportThreadState(_ThreadState):
     pending_import_attempt: "tuple[int, str] | None" = None
 
 
+class _FinderAttribution:
+    """Coordinate finder inspection, instance shadows, wrappers, and restoration."""
+
+    def __init__(self, monitor: "Monitor") -> None:
+        self._monitor = monitor
+
+    def instrument(self, finder: object) -> None:
+        self._monitor._instrument_finder_impl(finder)
+
+    def observe_contract(self, finder: object, position: int, observation: str, seq: int | None) -> None:
+        self._monitor._observe_finder_contract_impl(finder, position, observation, seq)
+
+    def restore_patches(self) -> None:
+        for patch in list(self._monitor._patched.values()):
+            self._monitor._restore_finder_patch(patch)
+
+
 def _capture_stack(frame: "FrameType") -> traceback.StackSummary:
     """Capture a stack summary from ``frame`` outward without reading source lines.
 
@@ -244,6 +261,7 @@ class Monitor:
         # imports still run normally, but our instrumentation delegates without
         # trying to observe itself recursively.
         self._local = _ImportThreadState()
+        self._finder_attribution = _FinderAttribution(self)
         self._deep = _DeepDiagnostics(self)
         self._importer_cache = _ImporterCacheObserver(self)
         # Opt-in, independent of --deep: enables report-time replay of displaced
@@ -695,8 +713,7 @@ class Monitor:
                 self._sys_path_enabled = False
                 self._instrumented_sys_path = None
                 self._sys_path_lease = None
-            for patch in list(self._patched.values()):
-                self._restore_finder_patch(patch)
+            self._finder_attribution.restore_patches()
             with self._record_lock:
                 self._patched.clear()
                 self._skipped.clear()
@@ -844,66 +861,75 @@ class Monitor:
             args: The ``import`` audit event arguments, used to attribute the
                 detection to the import that was in flight.
         """
-        meta_data: tuple[tuple[str, ...], tuple[str, ...]] | None = None
-        path_hooks_data: tuple[tuple[ObjectRef, ...], tuple[ObjectRef, ...]] | None = None
-        sys_path_data: tuple[tuple[str, ...], tuple[str, ...]] | None = None
         with self._reinstall_lock:
             if not self._enabled or self._transition_generation is not None:
                 return
-            current_meta_path = sys.meta_path
-            expected_meta_path = self._instrumented
-            if current_meta_path is not expected_meta_path and expected_meta_path is not None:
-                # expected_meta_path is our own now-orphaned instrumented list
-                # (a third party replaced sys.meta_path), so it cannot be
-                # mutated concurrently and needs no defensive copy;
-                # current_meta_path is the foreign replacement, snapshot once.
-                old_contents = tuple(type_name(finder) for finder in expected_meta_path)
-                new_contents = tuple(type_name(finder) for finder in list(current_meta_path))
-                replacement = _InstrumentedMetaPath(current_meta_path, self)
-                for position, finder in enumerate(list(replacement)):
-                    self._observe_finder_contract(finder, position, "reassignment", None)
-                    self._instrument_finder(finder)
-                self._instrumented = replacement
-                self._meta_path_lease = _OwnedValue(current_meta_path, replacement)
-                sys.meta_path = replacement
-                meta_data = (old_contents, new_contents)
-
-            current_path_hooks = sys.path_hooks
-            expected_path_hooks = self._instrumented_path_hooks
-            if (
-                self._path_hooks_enabled
-                and current_path_hooks is not expected_path_hooks
-                and expected_path_hooks is not None
-            ):
-                old_hooks = tuple(expected_path_hooks)
-                new_hooks = tuple(current_path_hooks)
-                old_hook_contents = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in old_hooks)
-                new_hook_contents = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in new_hooks)
-                path_replacement = _InstrumentedPathHooks(new_hooks, self)
-                self._instrumented_path_hooks = path_replacement
-                self._path_hooks_lease = _OwnedValue(current_path_hooks, path_replacement)
-                sys.path_hooks = path_replacement
-                with self._record_lock:
-                    self._observed_path_hooks.update((id(hook), hook) for hook in (*old_hooks, *new_hooks))
-                path_hooks_data = (old_hook_contents, new_hook_contents)
-
-            current_sys_path = sys.path
-            expected_sys_path = self._instrumented_sys_path
-            if self._sys_path_enabled and current_sys_path is not expected_sys_path and expected_sys_path is not None:
-                # expected_sys_path is our orphaned instrumented list (no
-                # concurrent mutation); current_sys_path is foreign, snapshot once.
-                old_paths = tuple(_path_item_name(item) for item in expected_sys_path)
-                new_paths = tuple(_path_item_name(item) for item in list(current_sys_path))
-                sys_path_replacement = _InstrumentedSysPath(current_sys_path, self)
-                self._instrumented_sys_path = sys_path_replacement
-                self._sys_path_lease = _OwnedValue(current_sys_path, sys_path_replacement)
-                sys.path = sys_path_replacement
-                sys_path_data = (old_paths, new_paths)
+            meta_data = self._recover_meta_path()
+            path_hooks_data = self._recover_path_hooks()
+            sys_path_data = self._recover_sys_path()
         if meta_data is None and path_hooks_data is None and sys_path_data is None:
             return
         fullname = args[0] if args and isinstance(args[0], str) else "<unknown>"
         stack = _capture_stack(sys._getframe())
         thread_name = threading.current_thread().name
+        self._record_reassignments(fullname, stack, thread_name, meta_data, path_hooks_data, sys_path_data)
+
+    def _recover_meta_path(self) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+        current = sys.meta_path
+        expected = self._instrumented
+        if current is expected or expected is None:
+            return None
+        old_contents = tuple(type_name(finder) for finder in expected)
+        new_contents = tuple(type_name(finder) for finder in list(current))
+        replacement = _InstrumentedMetaPath(current, self)
+        for position, finder in enumerate(list(replacement)):
+            self._observe_finder_contract(finder, position, "reassignment", None)
+            self._instrument_finder(finder)
+        self._instrumented = replacement
+        self._meta_path_lease = _OwnedValue(current, replacement)
+        sys.meta_path = replacement
+        return old_contents, new_contents
+
+    def _recover_path_hooks(self) -> tuple[tuple[ObjectRef, ...], tuple[ObjectRef, ...]] | None:
+        current = sys.path_hooks
+        expected = self._instrumented_path_hooks
+        if not self._path_hooks_enabled or current is expected or expected is None:
+            return None
+        old_hooks = tuple(expected)
+        new_hooks = tuple(current)
+        old_contents = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in old_hooks)
+        new_contents = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in new_hooks)
+        replacement = _InstrumentedPathHooks(new_hooks, self)
+        self._instrumented_path_hooks = replacement
+        self._path_hooks_lease = _OwnedValue(current, replacement)
+        sys.path_hooks = replacement
+        with self._record_lock:
+            self._observed_path_hooks.update((id(hook), hook) for hook in (*old_hooks, *new_hooks))
+        return old_contents, new_contents
+
+    def _recover_sys_path(self) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+        current = sys.path
+        expected = self._instrumented_sys_path
+        if not self._sys_path_enabled or current is expected or expected is None:
+            return None
+        old_contents = tuple(_path_item_name(item) for item in expected)
+        new_contents = tuple(_path_item_name(item) for item in list(current))
+        replacement = _InstrumentedSysPath(current, self)
+        self._instrumented_sys_path = replacement
+        self._sys_path_lease = _OwnedValue(current, replacement)
+        sys.path = replacement
+        return old_contents, new_contents
+
+    def _record_reassignments(
+        self,
+        fullname: str,
+        stack: traceback.StackSummary,
+        thread_name: str,
+        meta_data: tuple[tuple[str, ...], tuple[str, ...]] | None,
+        path_hooks_data: tuple[tuple[ObjectRef, ...], tuple[ObjectRef, ...]] | None,
+        sys_path_data: tuple[tuple[str, ...], tuple[str, ...]] | None,
+    ) -> None:
+        """Append only plain reassignment evidence after releasing the reinstall lock."""
         with self._record_lock:
             if meta_data is not None:
                 self._seq += 1
@@ -943,6 +969,10 @@ class Monitor:
                 )
 
     def _instrument_finder(self, finder: object) -> None:
+        """Delegate finder shadow ownership to the attribution component."""
+        self._finder_attribution.instrument(finder)
+
+    def _instrument_finder_impl(self, finder: object) -> None:
         """Shadow ``finder.find_spec`` with a recording wrapper in the instance dict (layer 3).
 
         Instance-dict shadowing keeps third-party ``isinstance`` scans of
@@ -959,25 +989,14 @@ class Monitor:
                 return
             # Claim the id before touching the finder so concurrent callers don't double-wrap.
             self._patched[finder_id] = _FinderPatch(finder, None, _MISSING, _MISSING)
-        if isinstance(finder, type):
+        class_reason = self._class_finder_skip_reason(finder)
+        if class_reason is not None:
             # Class entries (PathFinder and friends) are shared stdlib state; never mutate them.
-            reason = (
-                _STANDARD_CLASS_FINDER_REASON
-                if finder in _STANDARD_CLASS_FINDERS
-                else "class entry; instance-dict shadowing not applicable"
-            )
-            self._skip_finder(finder_id, finder, reason)
+            self._skip_finder(finder_id, finder, class_reason)
             return
-        try:
-            original = getattr(finder, "find_spec", None)
-        except Exception as exc:
-            self._skip_finder(finder_id, finder, "find_spec lookup raised")
-            self._record_internal_error("instrument_finder", exc)
+        typed_original = self._finder_find_spec(finder_id, finder)
+        if typed_original is None:
             return
-        if not callable(original):
-            self._skip_finder(finder_id, finder, "no callable find_spec")
-            return
-        typed_original = _cast("_FindSpec", original)
         try:
             # Deliberately bypass custom __getattribute__ only for __dict__:
             # finder.__dict__ could import, raise, or re-enter us while merely
@@ -1029,6 +1048,26 @@ class Monitor:
             # either order.
             self._restore_attribute(finder, "find_spec", previous, wrapper)
 
+    @staticmethod
+    def _class_finder_skip_reason(finder: object) -> str | None:
+        if not isinstance(finder, type):
+            return None
+        if finder in _STANDARD_CLASS_FINDERS:
+            return _STANDARD_CLASS_FINDER_REASON
+        return "class entry; instance-dict shadowing not applicable"
+
+    def _finder_find_spec(self, finder_id: int, finder: object) -> "_FindSpec | None":
+        try:
+            original = getattr(finder, "find_spec", None)
+        except Exception as exc:
+            self._skip_finder(finder_id, finder, "find_spec lookup raised")
+            self._record_internal_error("instrument_finder", exc)
+            return None
+        if callable(original):
+            return _cast("_FindSpec", original)
+        self._skip_finder(finder_id, finder, "no callable find_spec")
+        return None
+
     def _skip_finder(self, finder_id: int, finder: object, reason: str) -> None:
         """Mark a finder as uninstrumentable, releasing any claim taken by ``_instrument_finder``.
 
@@ -1045,6 +1084,16 @@ class Monitor:
                 self._skipped[finder_id] = (finder, reason)
 
     def _observe_finder_contract(
+        self,
+        finder: object,
+        position: int,
+        observation: str,
+        observation_seq: int | None,
+    ) -> None:
+        """Delegate finder inspection to the attribution component."""
+        self._finder_attribution.observe_contract(finder, position, observation, observation_seq)
+
+    def _observe_finder_contract_impl(
         self,
         finder: object,
         position: int,

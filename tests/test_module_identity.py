@@ -5,6 +5,7 @@ from collections.abc import Iterator
 import pytest
 
 from metapathology._module_metadata import module_cache_state
+from metapathology._records import ModuleCacheState
 
 
 class HostileDict(dict[str, object]):
@@ -82,3 +83,12 @@ def test_module_cache_state_is_read_only() -> None:
 
     with pytest.raises(AttributeError):
         state.state = "object"  # type: ignore[misc]
+
+
+def test_module_cache_state_comparison_distinguishes_evidence_and_identity() -> None:
+    state = ModuleCacheState("object", 1, "module")
+
+    assert state.compare(ModuleCacheState("object", 1, "module")) == "same"
+    assert state.compare(ModuleCacheState("object", 2, "module")) == "different"
+    assert ModuleCacheState("missing").compare(ModuleCacheState("none")) == "different"
+    assert state.compare(ModuleCacheState("unavailable")) == "unavailable"

@@ -48,6 +48,7 @@ from metapathology._report_model import (
     ResolutionRoute,
     RouteComparison,
     StandardResolution,
+    StructuralComparison,
     TargetOutcome,
 )
 from metapathology._report_schema import (
@@ -78,6 +79,7 @@ from metapathology._report_schema import (
     SpeculativeReplayJSON,
     SpecValueJSON,
     StandardResolutionJSON,
+    StructuralComparisonJSON,
     SummaryInfo,
     TargetOutcomeJSON,
 )
@@ -128,7 +130,22 @@ def _json_events(
     return timeline, counts, internal_error_refs
 
 
+class _JSONDocumentBuilder:
+    """Own one stable-schema projection pass for a captured report document."""
+
+    def __init__(self, document: ReportDocument) -> None:
+        self.document = document
+
+    def build(self) -> ReportJSON:
+        return _build_json_document(self.document)
+
+
 def json_document(document: ReportDocument) -> ReportJSON:
+    """Project one report document onto the stable JSON schema."""
+    return _JSONDocumentBuilder(document).build()
+
+
+def _build_json_document(document: ReportDocument) -> ReportJSON:
     """Project one report document onto the stable JSON schema."""
     timeline, event_counts, internal_error_refs = _json_events(document.analysis.events)
     report_status: ReportStatus = "partial" if document.analysis.report_errors or internal_error_refs else "complete"
@@ -899,22 +916,7 @@ def _json_frame(frame: "FrameSummary") -> FrameJSON:
 
 def _json_finding(finding: Finding) -> FindingJSON:
     """Serialize mechanics; human wording is deliberately not contractual."""
-    event_refs: list[str] = []
-    if finding.claim is not None:
-        event_refs.append(f"event:{finding.claim.seq}")
-    if finding.deep_call is not None:
-        event_refs.append(f"event:{finding.deep_call.seq}")
-    if finding.finder_contract is not None and finding.finder_contract.observation_seq is not None:
-        event_refs.append(f"event:{finding.finder_contract.observation_seq}")
-    event_refs.extend(f"event:{seq}" for seq in finding.supporting_event_seqs)
-    if finding.structural_comparison is not None:
-        event_refs.extend(f"event:{seq}" for seq in finding.structural_comparison.importer_cache_event_seqs)
-    event_refs = list(dict.fromkeys(event_refs))
-    evidence: FindingEvidenceJSON = {
-        "event_refs": event_refs,
-        "level": finding.evidence_level,
-        "limitations": list(finding.limitations),
-    }
+    evidence = _json_finding_evidence(finding)
     result: FindingJSON = {
         "evidence": evidence,
         "id": finding.finding_id,
@@ -925,10 +927,47 @@ def _json_finding(finding: Finding) -> FindingJSON:
         "signals": list(finding.signals),
         "subject": {"kind": finding.subject_kind, "value": finding.module},
     }
+    _add_finding_references(result, finding)
+    _add_finding_claim(result, evidence, finding)
+    _add_finding_deep_call(result, finding)
+    if finding.structural_comparison is not None:
+        result["structural_comparison"] = _json_structural_comparison(finding.structural_comparison)
+    if finding.kind == "no_spec":
+        evidence["finder_claim"] = "not_recorded"
+        evidence["module_spec"] = "missing"
+    return result
+
+
+def _json_finding_evidence(finding: Finding) -> FindingEvidenceJSON:
+    event_refs: list[str] = []
+    if finding.claim is not None:
+        event_refs.append(f"event:{finding.claim.seq}")
+    if finding.deep_call is not None:
+        event_refs.append(f"event:{finding.deep_call.seq}")
+    if finding.finder_contract is not None and finding.finder_contract.observation_seq is not None:
+        event_refs.append(f"event:{finding.finder_contract.observation_seq}")
+    event_refs.extend(f"event:{seq}" for seq in finding.supporting_event_seqs)
+    if finding.structural_comparison is not None:
+        event_refs.extend(f"event:{seq}" for seq in finding.structural_comparison.importer_cache_event_seqs)
+    return {
+        "event_refs": list(dict.fromkeys(event_refs)),
+        "level": finding.evidence_level,
+        "limitations": list(finding.limitations),
+    }
+
+
+def _add_finding_references(result: FindingJSON, finding: Finding) -> None:
     if finding.attempt_ids:
         result["attempt_refs"] = [f"attempt:{attempt_id}" for attempt_id in finding.attempt_ids]
     if finding.finder_contract is not None:
         result["finder_contract_ref"] = _finder_contract_id(finding.finder_contract)
+    if finding.route_ids:
+        result["route_refs"] = list(finding.route_ids)
+    if finding.route_comparison_id is not None:
+        result["route_comparison_ref"] = finding.route_comparison_id
+
+
+def _add_finding_claim(result: FindingJSON, evidence: FindingEvidenceJSON, finding: Finding) -> None:
     if finding.claim is not None:
         result["claim"] = {
             "event_ref": f"event:{finding.claim.seq}",
@@ -948,6 +987,9 @@ def _json_finding(finding: Finding) -> FindingJSON:
                 if finding.claim.exception_type_name is not None
                 else "declined"
             )
+
+
+def _add_finding_deep_call(result: FindingJSON, finding: Finding) -> None:
     if finding.deep_call is not None:
         result["deep_call"] = {
             "boundary": finding.deep_call.boundary,
@@ -957,31 +999,24 @@ def _json_finding(finding: Finding) -> FindingJSON:
             "outcome": finding.deep_call.outcome,
             "target_state": _json_module_state(finding.deep_call.target_state),
         }
-    if finding.route_ids:
-        result["route_refs"] = list(finding.route_ids)
-    if finding.route_comparison_id is not None:
-        result["route_comparison_ref"] = finding.route_comparison_id
-    if finding.structural_comparison is not None:
-        comparison = finding.structural_comparison
-        result["structural_comparison"] = {
-            "evidence_level": comparison.evidence_level,
-            "importer_cache": {
-                "changed": comparison.importer_cache_changed,
-                "changed_paths": list(comparison.importer_cache_changed_paths),
-                "change_event_refs": [f"event:{seq}" for seq in comparison.importer_cache_event_seqs],
-                "install_snapshot_ref": "snapshot:importer-cache:install",
-                "report_snapshot_ref": "snapshot:importer-cache:report",
-            },
-            "path_hooks": {
-                "changed": comparison.path_hooks_changed,
-                "install_snapshot_ref": "snapshot:path-hooks:install",
-                "report_snapshot_ref": "snapshot:path-hooks:report",
-            },
-        }
-    if finding.kind == "no_spec":
-        evidence["finder_claim"] = "not_recorded"
-        evidence["module_spec"] = "missing"
-    return result
+
+
+def _json_structural_comparison(comparison: StructuralComparison) -> StructuralComparisonJSON:
+    return {
+        "evidence_level": comparison.evidence_level,
+        "importer_cache": {
+            "changed": comparison.importer_cache_changed,
+            "changed_paths": list(comparison.importer_cache_changed_paths),
+            "change_event_refs": [f"event:{seq}" for seq in comparison.importer_cache_event_seqs],
+            "install_snapshot_ref": "snapshot:importer-cache:install",
+            "report_snapshot_ref": "snapshot:importer-cache:report",
+        },
+        "path_hooks": {
+            "changed": comparison.path_hooks_changed,
+            "install_snapshot_ref": "snapshot:path-hooks:install",
+            "report_snapshot_ref": "snapshot:path-hooks:report",
+        },
+    }
 
 
 def _json_explanation(explanation: CausalExplanation) -> ExplanationJSON:

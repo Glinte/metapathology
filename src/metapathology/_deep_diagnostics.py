@@ -461,152 +461,132 @@ class _DeepDiagnostics:
         if loader is None or not self._deep_loaders or id(loader) in self._deep_loader_patches:
             return
         patches: list[_OwnedAttribute] = []
-        instance_dict: dict[str, object] | None = None
         try:
             raw_instance_dict = object.__getattribute__(loader, "__dict__")
             if type(raw_instance_dict) is not dict:
                 raise TypeError("loader instance dictionary is unavailable")
-            instance_dict = raw_instance_dict
-            loader_id = id(loader)
-            loader_name = type_name(loader)
-
-            try:
-                original_create = getattr(loader, "create_module")
-            except AttributeError:
-                original_create = None
-            if callable(original_create):
-                previous_create = instance_dict.get("create_module", _MISSING)
-
-                @functools.wraps(original_create, assigned=(), updated=())
-                def wrapped_create(spec: object) -> object:
-                    fullname = safe_spec_name(spec)
-                    if not self._enabled or self._local.report_analysis:
-                        return original_create(spec)
-                    if self._deep_local.active:
-                        self._record_deep_call(
-                            "loader_create_module",
-                            loader_id,
-                            loader_name,
-                            fullname,
-                            None,
-                            "unobserved_reentrant",
-                            None,
-                        )
-                        return original_create(spec)
-                    state_before = None if fullname is None else module_cache_state(sys.modules, fullname)
-                    self._deep_local.active = True
-                    try:
-                        try:
-                            result = original_create(spec)
-                        except BaseException as exc:
-                            state_after = None if fullname is None else module_cache_state(sys.modules, fullname)
-                            self._record_deep_call(
-                                "loader_create_module",
-                                loader_id,
-                                loader_name,
-                                fullname,
-                                None,
-                                "raised",
-                                type(exc).__name__,
-                                state_before,
-                                state_after,
-                            )
-                            raise
-                        state_after = None if fullname is None else module_cache_state(sys.modules, fullname)
-                        self._record_deep_call(
-                            "loader_create_module",
-                            loader_id,
-                            loader_name,
-                            fullname,
-                            None,
-                            "returned",
-                            None,
-                            state_before,
-                            state_after,
-                        )
-                        return result
-                    finally:
-                        self._deep_local.active = False
-
-                instance_dict["create_module"] = wrapped_create
-                patches.append(_OwnedAttribute(loader, "create_module", previous_create, wrapped_create))
-
-            try:
-                original_exec = getattr(loader, "exec_module")
-            except AttributeError:
-                original_exec = None
-            if callable(original_exec):
-                previous_exec = instance_dict.get("exec_module", _MISSING)
-
-                @functools.wraps(original_exec, assigned=(), updated=())
-                def wrapped_exec(module: object) -> object:
-                    fullname = safe_module_name(module)
-                    target_state = ModuleCacheState("object", id(module), type_name(module))
-                    if not self._enabled or self._local.report_analysis:
-                        return original_exec(module)
-                    if self._deep_local.active:
-                        self._record_deep_call(
-                            "loader_exec_module",
-                            loader_id,
-                            loader_name,
-                            fullname,
-                            None,
-                            "unobserved_reentrant",
-                            None,
-                            target_state=target_state,
-                        )
-                        return original_exec(module)
-                    state_before = None if fullname is None else module_cache_state(sys.modules, fullname)
-                    self._deep_local.active = True
-                    try:
-                        try:
-                            result = original_exec(module)
-                        except BaseException as exc:
-                            state_after = None if fullname is None else module_cache_state(sys.modules, fullname)
-                            self._record_deep_call(
-                                "loader_exec_module",
-                                loader_id,
-                                loader_name,
-                                fullname,
-                                None,
-                                "raised",
-                                type(exc).__name__,
-                                state_before,
-                                state_after,
-                                target_state,
-                            )
-                            raise
-                        state_after = None if fullname is None else module_cache_state(sys.modules, fullname)
-                        self._record_deep_call(
-                            "loader_exec_module",
-                            loader_id,
-                            loader_name,
-                            fullname,
-                            None,
-                            "returned",
-                            None,
-                            state_before,
-                            state_after,
-                            target_state,
-                        )
-                        return result
-                    finally:
-                        self._deep_local.active = False
-
-                instance_dict["exec_module"] = wrapped_exec
-                patches.append(_OwnedAttribute(loader, "exec_module", previous_exec, wrapped_exec))
-
+            mechanisms: tuple[tuple[str, DeepBoundary], ...] = (
+                ("create_module", "loader_create_module"),
+                ("exec_module", "loader_exec_module"),
+            )
+            for name, boundary in mechanisms:
+                patch = self._install_loader_patch(loader, raw_instance_dict, name, boundary)
+                if patch is not None:
+                    patches.append(patch)
             if patches:
                 self._deep_loader_patches[id(loader)] = tuple(patches)
         except BaseException as exc:
-            for patch in reversed(patches):
-                self._restore_owned_attribute(patch)
+            self._rollback_loader_patches(patches)
             # Record even a KeyboardInterrupt/SystemExit, but reraise control-flow
             # exceptions after undoing the partial patches; only swallow our own
             # bugs (ordinary Exception) so instrumentation never perturbs the program.
             self._record_internal_error("deep_loader", exc)
             if not isinstance(exc, Exception):
                 raise
+
+    def _install_loader_patch(
+        self,
+        loader: object,
+        instance_dict: dict[str, object],
+        name: str,
+        boundary: "DeepBoundary",
+    ) -> _OwnedAttribute | None:
+        try:
+            original = getattr(loader, name)
+        except AttributeError:
+            return None
+        if not callable(original):
+            return None
+        previous = instance_dict.get(name, _MISSING)
+        wrapped = self._make_loader_wrapper(id(loader), type_name(loader), boundary, original)
+        instance_dict[name] = wrapped
+        return _OwnedAttribute(loader, name, previous, wrapped)
+
+    def _make_loader_wrapper(
+        self,
+        loader_id: int,
+        loader_name: str,
+        boundary: "DeepBoundary",
+        original: "Callable[[object], object]",
+    ) -> "Callable[[object], object]":
+        @functools.wraps(original, assigned=(), updated=())
+        def wrapped(argument: object) -> object:
+            fullname = safe_spec_name(argument) if boundary == "loader_create_module" else safe_module_name(argument)
+            target_state = (
+                None
+                if boundary == "loader_create_module"
+                else ModuleCacheState("object", id(argument), type_name(argument))
+            )
+            if not self._enabled or self._local.report_analysis:
+                return original(argument)
+            if self._deep_local.active:
+                self._record_deep_call(
+                    boundary,
+                    loader_id,
+                    loader_name,
+                    fullname,
+                    None,
+                    "unobserved_reentrant",
+                    None,
+                    target_state=target_state,
+                )
+                return original(argument)
+            return self._run_loader_wrapper(
+                boundary, loader_id, loader_name, fullname, target_state, original, argument
+            )
+
+        return wrapped
+
+    def _run_loader_wrapper(
+        self,
+        boundary: "DeepBoundary",
+        loader_id: int,
+        loader_name: str,
+        fullname: str | None,
+        target_state: ModuleCacheState | None,
+        original: "Callable[[object], object]",
+        argument: object,
+    ) -> object:
+        state_before = None if fullname is None else module_cache_state(sys.modules, fullname)
+        self._deep_local.active = True
+        try:
+            try:
+                result = original(argument)
+            except BaseException as exc:
+                state_after = None if fullname is None else module_cache_state(sys.modules, fullname)
+                self._record_deep_call(
+                    boundary,
+                    loader_id,
+                    loader_name,
+                    fullname,
+                    None,
+                    "raised",
+                    type(exc).__name__,
+                    state_before,
+                    state_after,
+                    target_state,
+                )
+                raise
+            state_after = None if fullname is None else module_cache_state(sys.modules, fullname)
+            self._record_deep_call(
+                boundary,
+                loader_id,
+                loader_name,
+                fullname,
+                None,
+                "returned",
+                None,
+                state_before,
+                state_after,
+                target_state,
+            )
+            return result
+        finally:
+            self._deep_local.active = False
+
+    def _rollback_loader_patches(self, patches: list[_OwnedAttribute]) -> None:
+        for patch in reversed(patches):
+            self._restore_owned_attribute(patch)
 
     def _record_deep_call(
         self,
@@ -648,6 +628,14 @@ class _DeepDiagnostics:
 
     def uninstall(self) -> None:
         """Release every deep mechanism still owned by this monitor."""
+        self._uninstall_import_outcomes()
+        self._uninstall_import_calls()
+        self._uninstall_callable_patches()
+        self._deep_path_hooks = False
+        self._deep_path_entry_finders = False
+        self._deep_loaders = False
+
+    def _uninstall_import_outcomes(self) -> None:
         if self._deep_import_outcomes:
             sys_profile_lease = self._sys_profile_lease
             if sys_profile_lease is not None and sys.getprofile() is sys_profile_lease.installed:
@@ -662,6 +650,8 @@ class _DeepDiagnostics:
             self._path_finder_code = None
             self._deep_import_outcomes_status = "inactive_after_uninstall"
             self._standard_finder_status = "inactive_after_uninstall"
+
+    def _uninstall_import_calls(self) -> None:
         if self._deep_import_calls:
             import_lease = self._import_wrapper_lease
             # Chain-safe restore: only unwind if our wrapper is still current, so
@@ -671,6 +661,8 @@ class _DeepDiagnostics:
             self._import_wrapper_lease = None
             self._deep_import_calls = False
             self._deep_import_calls_status = "inactive_after_uninstall"
+
+    def _uninstall_callable_patches(self) -> None:
         for patch in list(self._deep_finder_patches.values()):
             self._restore_owned_attribute(patch)
         for patches in list(self._deep_loader_patches.values()):
@@ -688,9 +680,6 @@ class _DeepDiagnostics:
         self._deep_hook_wrappers.clear()
         self._deep_finder_patches.clear()
         self._deep_loader_patches.clear()
-        self._deep_path_hooks = False
-        self._deep_path_entry_finders = False
-        self._deep_loaders = False
 
 
 class _DeepPathHook:

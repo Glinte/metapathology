@@ -9,6 +9,7 @@ import argparse
 import sys
 
 import metapathology
+from metapathology._record import _Record
 
 TYPE_CHECKING = False
 
@@ -57,6 +58,48 @@ class _Arguments(argparse.Namespace):
         self.is_module = False
         self.target: str | None = None
         self.target_args: list[str] = []
+
+    def invocation(self) -> "_Invocation":
+        """Freeze parsed launch settings before target execution mutates process state."""
+        return _Invocation(
+            self.target,
+            tuple(self.target_args),
+            self.is_module,
+            self.report_destination,
+            self.report_format,
+            self.report_color,
+            self.monitor_path_hooks,
+            self.monitor_importer_cache,
+            self.monitor_sys_path,
+            self.deep,
+            self.deep_path_hooks,
+            self.deep_path_entry_finders,
+            self.deep_loaders,
+            self.deep_import_outcomes,
+            self.deep_import_calls,
+            self.speculative_replay,
+        )
+
+
+class _Invocation(_Record):
+    """Immutable CLI target and monitor configuration."""
+
+    target: str | None
+    target_args: tuple[str, ...]
+    is_module: bool
+    report_destination: str | None
+    report_format: "Literal['text', 'json'] | None"
+    report_color: "Literal['auto', 'always', 'never'] | None"
+    monitor_path_hooks: bool | None
+    monitor_importer_cache: bool | None
+    monitor_sys_path: bool | None
+    deep: bool | None
+    deep_path_hooks: bool | None
+    deep_path_entry_finders: bool | None
+    deep_loaders: bool | None
+    deep_import_outcomes: bool | None
+    deep_import_calls: bool | None
+    speculative_replay: bool | None
 
 
 def _make_parser() -> _ArgumentParser:
@@ -172,87 +215,14 @@ def main(argv: list[str] | None = None) -> int:
         if parsed.target_args:
             _PARSER._print_error("arguments require a TARGET")
             return 2
-    if parsed.is_module:
-        return _run(
-            parsed.target,
-            parsed.target_args,
-            is_module=True,
-            report_destination=parsed.report_destination,
-            report_format=parsed.report_format,
-            report_color=parsed.report_color,
-            monitor_path_hooks=parsed.monitor_path_hooks,
-            monitor_importer_cache=parsed.monitor_importer_cache,
-            monitor_sys_path=parsed.monitor_sys_path,
-            deep=parsed.deep,
-            deep_path_hooks=parsed.deep_path_hooks,
-            deep_path_entry_finders=parsed.deep_path_entry_finders,
-            deep_loaders=parsed.deep_loaders,
-            deep_import_outcomes=parsed.deep_import_outcomes,
-            deep_import_calls=parsed.deep_import_calls,
-            speculative_replay=parsed.speculative_replay,
-        )
-    return _run(
-        parsed.target,
-        parsed.target_args,
-        is_module=False,
-        report_destination=parsed.report_destination,
-        report_format=parsed.report_format,
-        report_color=parsed.report_color,
-        monitor_path_hooks=parsed.monitor_path_hooks,
-        monitor_importer_cache=parsed.monitor_importer_cache,
-        monitor_sys_path=parsed.monitor_sys_path,
-        deep=parsed.deep,
-        deep_path_hooks=parsed.deep_path_hooks,
-        deep_path_entry_finders=parsed.deep_path_entry_finders,
-        deep_loaders=parsed.deep_loaders,
-        deep_import_outcomes=parsed.deep_import_outcomes,
-        deep_import_calls=parsed.deep_import_calls,
-        speculative_replay=parsed.speculative_replay,
-    )
+    return _run(parsed.invocation())
 
 
-def _run(
-    target: str | None,
-    target_args: list[str],
-    *,
-    is_module: bool,
-    report_destination: str | None,
-    report_format: "Literal['text', 'json'] | None",
-    report_color: "Literal['auto', 'always', 'never'] | None",
-    monitor_path_hooks: bool | None,
-    monitor_importer_cache: bool | None,
-    monitor_sys_path: bool | None,
-    deep: bool | None,
-    deep_path_hooks: bool | None,
-    deep_path_entry_finders: bool | None,
-    deep_loaders: bool | None,
-    deep_import_outcomes: bool | None,
-    deep_import_calls: bool | None,
-    speculative_replay: bool | None,
-) -> int:
+def _run(invocation: _Invocation) -> int:
     """Install the monitor, run the target via runpy, and always write the report.
 
     Args:
-        target: Script path, or module name when ``is_module`` is true; None
-            starts a monitored interactive interpreter instead.
-        target_args: Arguments the target sees as ``sys.argv[1:]``.
-        is_module: Select ``python -m``-style execution instead of a script path.
-        report_destination: Explicit automatic report path, or None.
-        report_format: Explicit report format, or None for environment/default resolution.
-        report_color: Explicit automatic text-report color mode, or None for
-            environment/default resolution.
-        monitor_path_hooks: Whether to instrument ``sys.path_hooks``.
-        monitor_importer_cache: Whether to observe
-            ``sys.path_importer_cache``.
-        monitor_sys_path: Whether to instrument ``sys.path``.
-        deep: Whether to enable every deep mechanism.
-        deep_path_hooks: Capture path-hook calls through replacement delegates.
-        deep_path_entry_finders: Capture path-entry finder calls.
-        deep_loaders: Capture modern loader creation and execution.
-        deep_import_outcomes: Capture exact CPython import invocation outcomes.
-        deep_import_calls: Capture ``builtins.__import__`` calls, including cache hits.
-        speculative_replay: Replay a displaced importer-cache finder at report
-            time against a module that later failed on its path.
+        invocation: Frozen target and monitoring configuration.
 
     Returns:
         The exit code a direct invocation of the target would produce.
@@ -261,7 +231,8 @@ def _run(
     # machinery ran, so a diagnostic report would describe only our bootstrap.
     import os
 
-    if target is not None and not is_module and not os.path.exists(target):
+    target = invocation.target
+    if target is not None and not invocation.is_module and not os.path.exists(target):
         _PARSER._print_error(f"script target does not exist: {target!r}")
         return 2
 
@@ -285,19 +256,19 @@ def _run(
 
     monitor = metapathology.install(
         report_at_exit=False,
-        report_destination=report_destination,
-        report_format=report_format,
-        report_color=report_color,
-        monitor_path_hooks=monitor_path_hooks,
-        monitor_importer_cache=monitor_importer_cache,
-        monitor_sys_path=monitor_sys_path,
-        deep=deep,
-        deep_path_hooks=deep_path_hooks,
-        deep_path_entry_finders=deep_path_entry_finders,
-        deep_loaders=deep_loaders,
-        deep_import_outcomes=deep_import_outcomes,
-        deep_import_calls=deep_import_calls,
-        speculative_replay=speculative_replay,
+        report_destination=invocation.report_destination,
+        report_format=invocation.report_format,
+        report_color=invocation.report_color,
+        monitor_path_hooks=invocation.monitor_path_hooks,
+        monitor_importer_cache=invocation.monitor_importer_cache,
+        monitor_sys_path=invocation.monitor_sys_path,
+        deep=invocation.deep,
+        deep_path_hooks=invocation.deep_path_hooks,
+        deep_path_entry_finders=invocation.deep_path_entry_finders,
+        deep_loaders=invocation.deep_loaders,
+        deep_import_outcomes=invocation.deep_import_outcomes,
+        deep_import_calls=invocation.deep_import_calls,
+        speculative_replay=invocation.speculative_replay,
     )
     exit_code = 0
     try:
@@ -321,8 +292,8 @@ def _run(
             )
             monitor.record_target_outcome(exit_code=exit_code)
             return exit_code
-        sys.argv = [target, *target_args]
-        if is_module:
+        sys.argv = [target, *invocation.target_args]
+        if invocation.is_module:
             # Mimic `python -m target`: cwd on sys.path; run_module fixes argv[0].
             # Bypass our optional list override: this is launcher setup, not a
             # target mutation, and should not appear as diagnostic evidence.

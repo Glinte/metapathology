@@ -4,6 +4,11 @@ from importlib.machinery import ModuleSpec
 
 from metapathology._records import ObjectRef, SpecSummary, type_name
 
+TYPE_CHECKING = False
+
+if TYPE_CHECKING:
+    from metapathology._records import LocationsState
+
 
 def _safe_value(value: object) -> str | ObjectRef | None:
     if value is None or type(value) is str:
@@ -15,6 +20,55 @@ def _safe_location(value: object) -> str | ObjectRef:
     if type(value) is str:
         return value
     return ObjectRef.of(value)
+
+
+def _spec_namespace(spec: object, unavailable: list[str]) -> dict[str, object]:
+    try:
+        namespace = object.__getattribute__(spec, "__dict__")
+    except Exception as exc:
+        unavailable.append(f"__dict__:{type_name(exc)}")
+        unavailable.append("__dict__:unavailable")
+        return {}
+    if type(namespace) is dict:
+        return namespace
+    unavailable.append("__dict__:unavailable")
+    return {}
+
+
+def _cached_path(spec: object, origin: object, cached: object, missing: object, unavailable: list[str]) -> object:
+    if cached is not missing and cached is not None:
+        return cached
+    if type(spec) is ModuleSpec and type(origin) is str:
+        try:
+            return spec.cached
+        except Exception as exc:
+            unavailable.append(f"cached:{type_name(exc)}")
+            return None
+    if cached is missing:
+        unavailable.append("cached:missing")
+    return None
+
+
+def _package_locations(
+    locations: object,
+    missing: object,
+    iterate_foreign_locations: bool,
+    unavailable: list[str],
+) -> "tuple[bool | None, tuple[str | ObjectRef, ...] | None, LocationsState]":
+    if locations is missing:
+        unavailable.append("submodule_search_locations:missing")
+        return None, None, "failed"
+    if locations is None:
+        return False, None, "not_applicable"
+    if type(locations) not in (list, tuple) and not iterate_foreign_locations:
+        return True, None, "deferred"
+    try:
+        copied = tuple(_safe_location(item) for item in locations)  # type: ignore[union-attr]
+    except Exception as exc:
+        unavailable.append(f"submodule_search_locations:{type_name(exc)}")
+        return True, None, "failed"
+    state = "captured" if type(locations) in (list, tuple) else "post_hoc"
+    return True, copied, state
 
 
 def summarize_spec(
@@ -33,15 +87,7 @@ def summarize_spec(
         The plain summary and the raw loader, when it was safely available.
     """
     unavailable: list[str] = []
-    try:
-        namespace = object.__getattribute__(spec, "__dict__")
-    except Exception as exc:
-        namespace = None
-        unavailable.append(f"__dict__:{type_name(exc)}")
-    if type(namespace) is not dict:
-        namespace = {}
-        if "__dict__" not in unavailable:
-            unavailable.append("__dict__:unavailable")
+    namespace = _spec_namespace(spec, unavailable)
 
     missing = object()
     loader = namespace.get("loader", missing)
@@ -55,37 +101,10 @@ def summarize_spec(
     if origin is missing:
         unavailable.append("origin:missing")
         origin = None
-    if cached is missing or cached is None:
-        if type(spec) is ModuleSpec and type(origin) is str:
-            try:
-                cached = spec.cached
-            except Exception as exc:
-                cached = None
-                unavailable.append(f"cached:{type_name(exc)}")
-        elif cached is missing:
-            cached = None
-            unavailable.append("cached:missing")
-
-    copied_locations: tuple[str | ObjectRef, ...] | None = None
-    locations_state = "not_applicable"
-    is_package: bool | None
-    if locations is missing:
-        unavailable.append("submodule_search_locations:missing")
-        is_package = None
-        locations_state = "failed"
-    elif locations is None:
-        is_package = False
-    else:
-        is_package = True
-        if type(locations) in (list, tuple) or iterate_foreign_locations:
-            try:
-                copied_locations = tuple(_safe_location(item) for item in locations)
-                locations_state = "captured" if type(locations) in (list, tuple) else "post_hoc"
-            except Exception as exc:
-                locations_state = "failed"
-                unavailable.append(f"submodule_search_locations:{type_name(exc)}")
-        else:
-            locations_state = "deferred"
+    cached = _cached_path(spec, origin, cached, missing, unavailable)
+    is_package, copied_locations, locations_state = _package_locations(
+        locations, missing, iterate_foreign_locations, unavailable
+    )
 
     safe_origin = _safe_value(origin)
     is_namespace = is_package and origin is None if is_package is not None else None
