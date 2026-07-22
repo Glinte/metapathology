@@ -231,6 +231,31 @@ def _ref_label(reference: ObjectRef) -> str:
     return reference.type_name if reference.name is None else reference.name
 
 
+def _emit_event_section(
+    lines: list[str],
+    empty_sections: list[str],
+    items: list,
+    label: str,
+    render_item: "Callable[..., list[str]]",
+    context: _RenderContext,
+    *,
+    record_empty: bool = True,
+) -> None:
+    """Append one monitored-list section, or record its label as empty.
+
+    A present section is a ``-- label (N) --`` heading (preceded by a blank
+    line) over ``render_item`` output for each entry. An absent section adds
+    ``label`` to ``empty_sections`` only when ``record_empty`` is set.
+    """
+    if items:
+        lines.append("")
+        lines.append(context.heading(f"-- {label} ({len(items)}) --"))
+        for item in items:
+            lines.extend(render_item(item, context))
+    elif record_empty:
+        empty_sections.append(label)
+
+
 def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
     """Build the report body as a list of lines; the caller adds the trailing newline."""
     context = _RenderContext(document, color=color)
@@ -320,61 +345,20 @@ def render_lines(document: ReportDocument, *, color: bool = False) -> list[str]:
     else:
         empty_sections.append("timeline events")
 
-    if mutations:
-        lines.append("")
-        lines.append(context.heading(f"-- sys.meta_path mutations ({len(mutations)}) --"))
-        for mutation in mutations:
-            lines.extend(_mutation_lines(mutation, context))
-    else:
-        empty_sections.append("sys.meta_path mutations")
-
-    if reassignments:
-        lines.append("")
-        lines.append(context.heading(f"-- sys.meta_path reassignments ({len(reassignments)}) --"))
-        for reassignment in reassignments:
-            lines.extend(_reassignment_lines(reassignment, context))
-    else:
-        empty_sections.append("sys.meta_path reassignments")
-
-    if path_hook_mutations:
-        lines.append("")
-        lines.append(context.heading(f"-- sys.path_hooks mutations ({len(path_hook_mutations)}) --"))
-        for mutation in path_hook_mutations:
-            lines.extend(_path_hooks_mutation_lines(mutation, context))
-    else:
-        empty_sections.append("sys.path_hooks mutations")
-
-    if path_hook_reassignments:
-        lines.append("")
-        lines.append(context.heading(f"-- sys.path_hooks reassignments ({len(path_hook_reassignments)}) --"))
-        for reassignment in path_hook_reassignments:
-            lines.extend(_path_hooks_reassignment_lines(reassignment, context))
-    else:
-        empty_sections.append("sys.path_hooks reassignments")
-
-    if sys_path_mutations:
-        lines.append("")
-        lines.append(context.heading(f"-- sys.path mutations ({len(sys_path_mutations)}) --"))
-        for mutation in sys_path_mutations:
-            lines.extend(_sys_path_mutation_lines(mutation, context))
-    elif document.sys_path_enabled:
-        empty_sections.append("sys.path mutations")
-
-    if sys_path_reassignments:
-        lines.append("")
-        lines.append(context.heading(f"-- sys.path reassignments ({len(sys_path_reassignments)}) --"))
-        for reassignment in sys_path_reassignments:
-            lines.extend(_sys_path_reassignment_lines(reassignment, context))
-    elif document.sys_path_enabled:
-        empty_sections.append("sys.path reassignments")
-
-    if importer_cache_diffs:
-        lines.append("")
-        lines.append(context.heading(f"-- sys.path_importer_cache changes ({len(importer_cache_diffs)}) --"))
-        for diff in importer_cache_diffs:
-            lines.extend(_importer_cache_diff_lines(diff, context))
-    else:
-        empty_sections.append("sys.path_importer_cache changes")
+    # These monitored-list sections share one shape: a "-- label (N) --"
+    # heading over per-item lines, or the label recorded as empty. The sys.path
+    # sections only note emptiness when that opt-in mechanism is enabled.
+    event_log_sections: list[tuple[list, str, Callable[..., list[str]], bool]] = [
+        (mutations, "sys.meta_path mutations", _mutation_lines, True),
+        (reassignments, "sys.meta_path reassignments", _reassignment_lines, True),
+        (path_hook_mutations, "sys.path_hooks mutations", _path_hooks_mutation_lines, True),
+        (path_hook_reassignments, "sys.path_hooks reassignments", _path_hooks_reassignment_lines, True),
+        (sys_path_mutations, "sys.path mutations", _sys_path_mutation_lines, document.sys_path_enabled),
+        (sys_path_reassignments, "sys.path reassignments", _sys_path_reassignment_lines, document.sys_path_enabled),
+        (importer_cache_diffs, "sys.path_importer_cache changes", _importer_cache_diff_lines, True),
+    ]
+    for items, label, render_item, record_empty in event_log_sections:
+        _emit_event_section(lines, empty_sections, items, label, render_item, context, record_empty=record_empty)
 
     if document.analysis.speculative_replay_enabled:
         replay_lines = _speculative_replay_lines(document, context)
@@ -1517,58 +1501,64 @@ def _metadata_value(value: "str | ObjectRef | None", context: _RenderContext) ->
     return context.quoted_path(value)
 
 
-def _mutation_lines(mutation: MetaPathMutation, context: _RenderContext) -> list[str]:
-    """Format one mutation record: op, delta, resulting contents, and user stack."""
+def _mutation_lines_core(
+    mutation: "MetaPathMutation | PathHooksMutation | SysPathMutation",
+    context: _RenderContext,
+    *,
+    after_label: str,
+    format_values: "Callable[..., str]",
+) -> list[str]:
+    """Format any monitored-list mutation: op, delta, resulting contents, and user stack.
+
+    ``format_values`` renders one entry snapshot (finder names for meta_path and
+    sys.path, path-hook references for sys.path_hooks); ``after_label`` names the
+    list in the resulting-contents line.
+    """
     delta_parts: list[str] = []
     if mutation.added:
-        delta_parts.append("+" + _names_line(mutation.added))
+        delta_parts.append("+" + format_values(mutation.added))
     if mutation.removed:
-        delta_parts.append("-" + _names_line(mutation.removed))
+        delta_parts.append("-" + format_values(mutation.removed))
     delta = " ".join(delta_parts) if delta_parts else "(order change)"
     lines = [f"#{mutation.seq} {mutation.op} {delta}{context.thread_suffix(mutation.thread_name)}"]
-    lines.append(f"    meta_path after: {_names_line(mutation.contents_after)}")
+    lines.append(f"    {after_label}: {format_values(mutation.contents_after)}")
     lines.extend(_stack_lines(mutation.stack, context))
     return lines
+
+
+def _reassignment_lines_core(
+    reassignment: "MetaPathReassignment | PathHooksReassignment | SysPathReassignment",
+    context: _RenderContext,
+    *,
+    mechanism: str,
+    format_values: "Callable[..., str]",
+) -> list[str]:
+    """Format any monitored-list reassignment with before/after contents and the detection stack."""
+    lines = [
+        f"#{reassignment.seq} {mechanism} REASSIGNED, detected during import of "
+        f"'{reassignment.during_import}'{context.thread_suffix(reassignment.thread_name)}"
+    ]
+    lines.append(f"    before: {format_values(reassignment.old_contents)}")
+    lines.append(f"    after:  {format_values(reassignment.new_contents)}")
+    lines.append("    instrumentation reinstalled; stack shows the triggering import, not the reassignment itself:")
+    lines.extend(_stack_lines(reassignment.stack, context))
+    return lines
+
+
+def _mutation_lines(mutation: MetaPathMutation, context: _RenderContext) -> list[str]:
+    return _mutation_lines_core(mutation, context, after_label="meta_path after", format_values=_names_line)
 
 
 def _reassignment_lines(reassignment: MetaPathReassignment, context: _RenderContext) -> list[str]:
-    """Format one reassignment record with before/after contents and detection stack."""
-    lines = [
-        f"#{reassignment.seq} sys.meta_path REASSIGNED, detected during import of "
-        f"'{reassignment.during_import}'{context.thread_suffix(reassignment.thread_name)}"
-    ]
-    lines.append(f"    before: {_names_line(reassignment.old_contents)}")
-    lines.append(f"    after:  {_names_line(reassignment.new_contents)}")
-    lines.append("    instrumentation reinstalled; stack shows the triggering import, not the reassignment itself:")
-    lines.extend(_stack_lines(reassignment.stack, context))
-    return lines
+    return _reassignment_lines_core(reassignment, context, mechanism="sys.meta_path", format_values=_names_line)
 
 
 def _path_hooks_mutation_lines(mutation: PathHooksMutation, context: _RenderContext) -> list[str]:
-    """Format one path-hook mutation from captured plain references."""
-    delta_parts: list[str] = []
-    if mutation.added:
-        delta_parts.append("+" + context.hook_refs(mutation.added))
-    if mutation.removed:
-        delta_parts.append("-" + context.hook_refs(mutation.removed))
-    delta = " ".join(delta_parts) if delta_parts else "(order change)"
-    lines = [f"#{mutation.seq} {mutation.op} {delta}{context.thread_suffix(mutation.thread_name)}"]
-    lines.append(f"    path_hooks after: {context.hook_refs(mutation.contents_after)}")
-    lines.extend(_stack_lines(mutation.stack, context))
-    return lines
+    return _mutation_lines_core(mutation, context, after_label="path_hooks after", format_values=context.hook_refs)
 
 
 def _path_hooks_reassignment_lines(reassignment: PathHooksReassignment, context: _RenderContext) -> list[str]:
-    """Format one path-hooks reassignment detected at an import boundary."""
-    lines = [
-        f"#{reassignment.seq} sys.path_hooks REASSIGNED, detected during import of "
-        f"'{reassignment.during_import}'{context.thread_suffix(reassignment.thread_name)}"
-    ]
-    lines.append(f"    before: {context.hook_refs(reassignment.old_contents)}")
-    lines.append(f"    after:  {context.hook_refs(reassignment.new_contents)}")
-    lines.append("    instrumentation reinstalled; stack shows the triggering import, not the reassignment itself:")
-    lines.extend(_stack_lines(reassignment.stack, context))
-    return lines
+    return _reassignment_lines_core(reassignment, context, mechanism="sys.path_hooks", format_values=context.hook_refs)
 
 
 def _cache_entry_line(entry: ImporterCacheEntry, context: _RenderContext) -> str:
@@ -1578,30 +1568,11 @@ def _cache_entry_line(entry: ImporterCacheEntry, context: _RenderContext) -> str
 
 
 def _sys_path_mutation_lines(mutation: SysPathMutation, context: _RenderContext) -> list[str]:
-    """Format one opt-in sys.path mutation and its attribution stack."""
-    delta_parts: list[str] = []
-    if mutation.added:
-        delta_parts.append("+" + _names_line(mutation.added))
-    if mutation.removed:
-        delta_parts.append("-" + _names_line(mutation.removed))
-    delta = " ".join(delta_parts) if delta_parts else "(order change)"
-    lines = [f"#{mutation.seq} {mutation.op} {delta}{context.thread_suffix(mutation.thread_name)}"]
-    lines.append(f"    sys.path after: {_names_line(mutation.contents_after)}")
-    lines.extend(_stack_lines(mutation.stack, context))
-    return lines
+    return _mutation_lines_core(mutation, context, after_label="sys.path after", format_values=_names_line)
 
 
 def _sys_path_reassignment_lines(reassignment: SysPathReassignment, context: _RenderContext) -> list[str]:
-    """Format one sys.path reassignment detected at an import boundary."""
-    lines = [
-        f"#{reassignment.seq} sys.path REASSIGNED, detected during import of "
-        f"'{reassignment.during_import}'{context.thread_suffix(reassignment.thread_name)}"
-    ]
-    lines.append(f"    before: {_names_line(reassignment.old_contents)}")
-    lines.append(f"    after:  {_names_line(reassignment.new_contents)}")
-    lines.append("    instrumentation reinstalled; stack shows the triggering import, not the reassignment itself:")
-    lines.extend(_stack_lines(reassignment.stack, context))
-    return lines
+    return _reassignment_lines_core(reassignment, context, mechanism="sys.path", format_values=_names_line)
 
 
 def _cache_finder_name(finder: ObjectRef | None, force_id: bool = False) -> str:
