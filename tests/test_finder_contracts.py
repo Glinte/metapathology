@@ -3,7 +3,7 @@
 import subprocess
 from collections.abc import Callable
 
-from metapathology._monitor import _inspect_finder_protocol
+from metapathology._finder_attribution import _FinderAttribution
 
 RunPython = Callable[..., "subprocess.CompletedProcess[str]"]
 
@@ -45,9 +45,9 @@ class HostileFinder(metaclass=HostileMeta):
 
 
 def test_protocol_inspection_classifies_raw_dictionary_evidence() -> None:
-    modern = _inspect_finder_protocol(ModernFinder(), "find_spec")
-    legacy = _inspect_finder_protocol(LegacyFinder(), "find_module")
-    absent = _inspect_finder_protocol(LegacyFinder(), "find_spec")
+    modern = _FinderAttribution._inspect_protocol(ModernFinder(), "find_spec")
+    legacy = _FinderAttribution._inspect_protocol(LegacyFinder(), "find_module")
+    absent = _FinderAttribution._inspect_protocol(LegacyFinder(), "find_spec")
 
     assert (modern.availability, modern.evidence, modern.defined_by) == (
         "callable",
@@ -59,9 +59,9 @@ def test_protocol_inspection_classifies_raw_dictionary_evidence() -> None:
 
 
 def test_protocol_inspection_never_binds_dynamic_attributes_or_descriptors() -> None:
-    descriptor = _inspect_finder_protocol(DescriptorFinder(), "find_spec")
-    dynamic = _inspect_finder_protocol(DynamicFinder(), "find_spec")
-    hostile = _inspect_finder_protocol(HostileFinder, "find_spec")
+    descriptor = _FinderAttribution._inspect_protocol(DescriptorFinder(), "find_spec")
+    dynamic = _FinderAttribution._inspect_protocol(DynamicFinder(), "find_spec")
+    hostile = _FinderAttribution._inspect_protocol(HostileFinder, "find_spec")
 
     assert descriptor.availability == "indeterminate"
     assert dynamic.availability == "absent"
@@ -72,7 +72,7 @@ def test_protocol_inspection_preserves_instance_dictionary_evidence() -> None:
     finder = ModernFinder()
     finder.find_spec = lambda fullname, path=None, target=None: None  # type: ignore[method-assign]
 
-    protocol = _inspect_finder_protocol(finder, "find_spec")
+    protocol = _FinderAttribution._inspect_protocol(finder, "find_spec")
 
     assert protocol.availability == "callable"
     assert protocol.evidence == "instance_dict"

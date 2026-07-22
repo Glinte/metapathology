@@ -11,17 +11,15 @@ import os
 import sys
 import threading
 import traceback
-import types
 import warnings
 from contextlib import contextmanager, suppress
-from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 
 from metapathology import _report
 from metapathology._config import normalize_report_destination, resolve_install_request
 from metapathology._deep_diagnostics import _DeepDiagnostics
+from metapathology._finder_attribution import _FinderAttribution
 from metapathology._importer_cache import _ImporterCacheObserver
 from metapathology._instrumented_list import _InstrumentedMetaPath, _InstrumentedPathHooks, _InstrumentedSysPath
-from metapathology._module_metadata import module_cache_state
 from metapathology._monitor_model import (
     _MISSING,
     MonitorSnapshot,
@@ -31,27 +29,20 @@ from metapathology._monitor_model import (
     _OwnedValue,
     _TargetOutcomeState,
 )
-from metapathology._record import _Record
 from metapathology._records import (
-    FinderContract,
-    FinderProtocol,
-    FindSpecCall,
     ImportAuditStart,
     ImporterCacheEntry,
     InternalError,
     MetaPathMutation,
     MetaPathReassignment,
-    ModuleCacheState,
     MonitorEvent,
     ObjectRef,
     PathHooksMutation,
     PathHooksReassignment,
-    SpecSummary,
     SysPathMutation,
     SysPathReassignment,
     type_name,
 )
-from metapathology._spec import summarize_spec
 
 # Supported type checkers treat this conventional name as true without making
 # the runtime import typing solely for annotations and casts.
@@ -69,7 +60,7 @@ if TYPE_CHECKING:
 
     from metapathology._config import InstallRequest
     from metapathology._monitor_model import DeepImportCallsStatus, DeepImportOutcomesStatus, StandardFinderStatus
-    from metapathology._records import MutationOp, SearchPathKind
+    from metapathology._records import MutationOp
 
     _FindSpec = Callable[[str, Sequence[str] | None, ModuleType | None], ModuleSpec | None]
     _ProfileFunction = Callable[[FrameType, str, object], object]
@@ -89,63 +80,10 @@ else:
 
 # Frames captured per event; the report trims further (and filters noise) at display time.
 _STACK_CAPTURE_LIMIT = 20
-# Reuse common immutable path snapshots without retaining an unbounded intern
-# table. Eight entries cover the usual top-level path plus several package
-# paths; least-recently used eviction keeps both work and auxiliary memory constant.
-_SEARCH_PATH_CACHE_SIZE = 8
-_STANDARD_CLASS_FINDERS = (BuiltinImporter, FrozenImporter, PathFinder)
-_STANDARD_CLASS_FINDER_REASON = "standard CPython class finder; expected and deliberately left unchanged"
 _IMPLEMENTATION_NAME = sys.implementation.name
 _UNSUPPORTED_IMPLEMENTATION_WARNING = (
     f"metapathology supports CPython only; monitoring on {_IMPLEMENTATION_NAME!r} may be incomplete or inaccurate"
 )
-
-
-def _raw_protocol_value(value: object, evidence: str, defined_by: str) -> FinderProtocol:
-    """Classify a dictionary value without binding or invoking a descriptor."""
-    if isinstance(value, (staticmethod, classmethod)):
-        value = value.__func__
-    elif not callable(value):
-        try:
-            for owner in type.__getattribute__(type(value), "__mro__"):
-                if "__get__" in type.__getattribute__(owner, "__dict__"):
-                    return FinderProtocol("indeterminate", evidence, defined_by)
-        except Exception:
-            return FinderProtocol("indeterminate", "inspection_error", None)
-    return FinderProtocol("callable" if callable(value) else "non_callable", evidence, defined_by)
-
-
-def _inspect_finder_protocol(finder: object, name: str) -> FinderProtocol:
-    """Inspect one protocol through raw dictionaries and the real type MRO."""
-    try:
-        if not issubclass(type(finder), type):
-            try:
-                instance_dict = object.__getattribute__(finder, "__dict__")
-            except (AttributeError, TypeError):
-                instance_dict = None
-            if type(instance_dict) is dict and name in instance_dict:
-                return _raw_protocol_value(instance_dict[name], "instance_dict", type_name(finder))
-            cls = type(finder)
-        else:
-            cls = _cast("type[object]", finder)
-        mro = type.__getattribute__(cls, "__mro__")
-        for owner in mro:
-            namespace = type.__getattribute__(owner, "__dict__")
-            if name in namespace:
-                owner_name = type.__getattribute__(owner, "__name__")
-                return _raw_protocol_value(namespace[name], "class_dict", owner_name)
-    except Exception:
-        return FinderProtocol("indeterminate", "inspection_error", None)
-    return FinderProtocol("absent", "class_mro", None)
-
-
-class _FinderPatch(_Record):
-    """A finder claim or committed instance-dict shadow."""
-
-    finder: object
-    original: "_FindSpec | None"
-    previous: object
-    installed: object
 
 
 class _ThreadState(threading.local):
@@ -164,23 +102,6 @@ class _ImportThreadState(_ThreadState):
     report_analysis = False
     thread_id: "int | None" = None
     pending_import_attempt: "tuple[int, str] | None" = None
-
-
-class _FinderAttribution:
-    """Coordinate finder inspection, instance shadows, wrappers, and restoration."""
-
-    def __init__(self, monitor: "Monitor") -> None:
-        self._monitor = monitor
-
-    def instrument(self, finder: object) -> None:
-        self._monitor._instrument_finder_impl(finder)
-
-    def observe_contract(self, finder: object, position: int, observation: str, seq: int | None) -> None:
-        self._monitor._observe_finder_contract_impl(finder, position, observation, seq)
-
-    def restore_patches(self) -> None:
-        for patch in list(self._monitor._patched.values()):
-            self._monitor._restore_finder_patch(patch)
 
 
 def _capture_stack(frame: "FrameType") -> traceback.StackSummary:
@@ -248,7 +169,7 @@ class Monitor:
     """Records import-machinery activity. Use the module-level :func:`install`."""
 
     def __init__(self) -> None:
-        # Guards _events/_seq/_patched/_skipped/_search_path_cache. Held only
+        # Guards event state and component-owned attribution/cache state. Held only
         # around plain-data reads/writes, never across foreign code.
         self._record_lock = threading.Lock()
         # Serializes install/uninstall/reinstall. Lock order: _reinstall_lock
@@ -261,7 +182,7 @@ class Monitor:
         # imports still run normally, but our instrumentation delegates without
         # trying to observe itself recursively.
         self._local = _ImportThreadState()
-        self._finder_attribution = _FinderAttribution(self)
+        self._finder_attribution = _FinderAttribution()
         self._deep = _DeepDiagnostics(self)
         self._importer_cache = _ImporterCacheObserver(self)
         # Opt-in, independent of --deep: enables report-time replay of displaced
@@ -274,7 +195,6 @@ class Monitor:
         self._attempt_id = 0
         self._thread_id = 0
         self._events: list[MonitorEvent] = []
-        self._search_path_cache: list[tuple[str, ...]] = []
         # Master switch: hooks stay registered after uninstall() (audit hooks
         # are irremovable) but become no-ops when this is False.
         self._enabled = False
@@ -314,21 +234,11 @@ class Monitor:
         # Full observations are coalesced when one is already in progress;
         # diff events themselves remain exhaustive and unbounded.
         self.initial_importer_cache: tuple[ImporterCacheEntry, ...] = ()
-        # Both dicts key by id(finder) and hold strong finder references, keeping ids
-        # unique for the process lifetime.
-        # A None original marks an in-progress claim so callers cannot
-        # double-wrap the same finder.
-        self._patched: dict[int, _FinderPatch] = {}
-        # id -> (finder, human-readable reason it could not be instrumented).
-        self._skipped: dict[int, tuple[object, str]] = {}
         # sys.modules names at install time; the report analyzes only modules
         # imported afterwards.
         self.baseline_modules: frozenset[str] = frozenset()
         # Finder display names at install time, for the report header.
         self.initial_meta_path: tuple[str, ...] = ()
-        # Finder-contract observations are exhaustive over distinct finder identities and
-        # retain the finder through the existing patched/skipped maps.
-        self._finder_contracts: dict[int, FinderContract] = {}
         # How the monitored target finished, recorded by the CLI (or any
         # embedder) before the report is written. Reduced to plain data at
         # record time; exception messages are never captured.
@@ -419,19 +329,19 @@ class Monitor:
 
     def skipped_finders(self) -> list[tuple[str, str]]:
         """Return ``(finder name, reason)`` for meta-path entries that could not be instrumented."""
-        with self._record_lock:
-            return [(type_name(finder), reason) for finder, reason in self._skipped.values()]
+        return self._finder_attribution.skipped_names(self)
 
     def _report_state(self) -> MonitorSnapshot:
         """Copy chronological evidence and skipped finders at one sequence cutoff."""
         self._importer_cache.observe("report")
         with self._record_lock:
             cache_state = self._importer_cache.report_state(self._enabled)
+            skipped_finders, finder_contracts = self._finder_attribution.snapshot_locked()
             return MonitorSnapshot(
                 cutoff_seq=self._seq,
                 events=tuple(self._events),
-                skipped_finders=tuple(self._skipped.values()),
-                finder_contracts=tuple(self._finder_contracts.values()),
+                skipped_finders=skipped_finders,
+                finder_contracts=finder_contracts,
                 importer_cache=cache_state,
                 early_site_bootstrap=self._early_site_bootstrap,
                 frozen_bootstrap=self._frozen_bootstrap,
@@ -609,8 +519,8 @@ class Monitor:
         self._local.active = True
         try:
             for position, finder in enumerate(list(instrumented)):
-                self._observe_finder_contract(finder, position, "install", None)
-                self._instrument_finder(finder)
+                self._finder_attribution.observe_contract(finder, position, "install", None, self)
+                self._finder_attribution.instrument(finder, self)
         finally:
             self._local.active = False
         if not self._audit_installed:
@@ -713,12 +623,8 @@ class Monitor:
                 self._sys_path_enabled = False
                 self._instrumented_sys_path = None
                 self._sys_path_lease = None
-            self._finder_attribution.restore_patches()
+            self._finder_attribution.uninstall(self)
             with self._record_lock:
-                self._patched.clear()
-                self._skipped.clear()
-                self._finder_contracts.clear()
-                self._search_path_cache.clear()
                 self._observed_path_hooks.clear()
                 self._importer_cache.uninstall()
         if self._report_at_exit:
@@ -729,12 +635,6 @@ class Monitor:
     def _restore_owned_attribute(cls, patch: _OwnedAttribute) -> None:
         """Restore an attribute only while the installed shadow is still owned."""
         cls._restore_attribute(patch.target, patch.name, patch.previous, patch.installed)
-
-    @classmethod
-    def _restore_finder_patch(cls, patch: _FinderPatch) -> None:
-        """Restore a committed finder shadow without disturbing a replacement."""
-        if patch.installed is not _MISSING:
-            cls._restore_attribute(patch.finder, "find_spec", patch.previous, patch.installed)
 
     @staticmethod
     def _restore_attribute(obj: object, name: str, previous: object, installed: object) -> None:
@@ -883,8 +783,8 @@ class Monitor:
         new_contents = tuple(type_name(finder) for finder in list(current))
         replacement = _InstrumentedMetaPath(current, self)
         for position, finder in enumerate(list(replacement)):
-            self._observe_finder_contract(finder, position, "reassignment", None)
-            self._instrument_finder(finder)
+            self._finder_attribution.observe_contract(finder, position, "reassignment", None, self)
+            self._finder_attribution.instrument(finder, self)
         self._instrumented = replacement
         self._meta_path_lease = _OwnedValue(current, replacement)
         sys.meta_path = replacement
@@ -968,318 +868,6 @@ class Monitor:
                     )
                 )
 
-    def _instrument_finder(self, finder: object) -> None:
-        """Delegate finder shadow ownership to the attribution component."""
-        self._finder_attribution.instrument(finder)
-
-    def _instrument_finder_impl(self, finder: object) -> None:
-        """Shadow ``finder.find_spec`` with a recording wrapper in the instance dict (layer 3).
-
-        Instance-dict shadowing keeps third-party ``isinstance`` scans of
-        ``sys.meta_path`` working. Entries that cannot be shadowed (classes,
-        ``__slots__`` instances, objects without ``find_spec``) are remembered
-        as skipped and attributed by elimination at report time.
-
-        Args:
-            finder: Any ``sys.meta_path`` entry; safe to pass repeatedly.
-        """
-        finder_id = id(finder)
-        with self._record_lock:
-            if finder_id in self._patched or finder_id in self._skipped:
-                return
-            # Claim the id before touching the finder so concurrent callers don't double-wrap.
-            self._patched[finder_id] = _FinderPatch(finder, None, _MISSING, _MISSING)
-        class_reason = self._class_finder_skip_reason(finder)
-        if class_reason is not None:
-            # Class entries (PathFinder and friends) are shared stdlib state; never mutate them.
-            self._skip_finder(finder_id, finder, class_reason)
-            return
-        typed_original = self._finder_find_spec(finder_id, finder)
-        if typed_original is None:
-            return
-        try:
-            # Deliberately bypass custom __getattribute__ only for __dict__:
-            # finder.__dict__ could import, raise, or re-enter us while merely
-            # preparing reversible cleanup. The find_spec lookup and write use
-            # normal getattr/setattr above and below, preserving descriptor and
-            # custom attribute semantics that affect actual finder calls.
-            instance_dict = object.__getattribute__(finder, "__dict__")
-            previous = instance_dict.get("find_spec", _MISSING)
-        except (AttributeError, TypeError):
-            instance_dict = None
-            previous = _MISSING
-        with self._record_lock:
-            # The foreign attribute lookups above can block arbitrarily long
-            # (imports, __getattr__); a vanished claim means uninstall() ran
-            # meanwhile, so stop before touching the finder. Otherwise refresh
-            # the claim with the real pre-shadowing value so a concurrent
-            # uninstall() restores the same state our own undo would.
-            if not self._enabled or finder_id not in self._patched:
-                return
-            self._patched[finder_id] = _FinderPatch(finder, None, previous, _MISSING)
-        wrapper = self._make_find_spec_wrapper(type_name(finder), finder_id, typed_original)
-        try:
-            setattr(finder, "find_spec", wrapper)
-        except Exception:
-            self._skip_finder(finder_id, finder, "find_spec not settable on the instance")
-            return
-        try:
-            landed = instance_dict is not None and instance_dict.get("find_spec") is wrapper
-        except Exception:
-            landed = False
-        if not landed:
-            # setattr succeeded but wrote through a slot or data descriptor,
-            # not the instance dict, so uninstall()'s __dict__-based restore
-            # could never undo it. Write the original back through the same
-            # writable path and leave the finder unwrapped.
-            try:
-                setattr(finder, "find_spec", typed_original)
-            except Exception as exc:
-                self._record_internal_error("instrument_finder", exc)
-            self._skip_finder(finder_id, finder, "find_spec assignment bypasses the instance dict (slot or descriptor)")
-            return
-        with self._record_lock:
-            committed = self._enabled and finder_id in self._patched
-            if committed:
-                self._patched[finder_id] = _FinderPatch(finder, typed_original, previous, wrapper)
-        if not committed:
-            # Lost the race with uninstall(): undo the shadow ourselves, outside
-            # _record_lock. Idempotent against uninstall()'s own restore in
-            # either order.
-            self._restore_attribute(finder, "find_spec", previous, wrapper)
-
-    @staticmethod
-    def _class_finder_skip_reason(finder: object) -> str | None:
-        if not isinstance(finder, type):
-            return None
-        if finder in _STANDARD_CLASS_FINDERS:
-            return _STANDARD_CLASS_FINDER_REASON
-        return "class entry; instance-dict shadowing not applicable"
-
-    def _finder_find_spec(self, finder_id: int, finder: object) -> "_FindSpec | None":
-        try:
-            original = getattr(finder, "find_spec", None)
-        except Exception as exc:
-            self._skip_finder(finder_id, finder, "find_spec lookup raised")
-            self._record_internal_error("instrument_finder", exc)
-            return None
-        if callable(original):
-            return _cast("_FindSpec", original)
-        self._skip_finder(finder_id, finder, "no callable find_spec")
-        return None
-
-    def _skip_finder(self, finder_id: int, finder: object, reason: str) -> None:
-        """Mark a finder as uninstrumentable, releasing any claim taken by ``_instrument_finder``.
-
-        Args:
-            finder_id: ``id(finder)``, the claim key.
-            finder: The entry itself; kept referenced so its id stays unique.
-            reason: Human-readable explanation shown in the report.
-        """
-        with self._record_lock:
-            self._patched.pop(finder_id, None)
-            # After uninstall() cleared _skipped, a late skip must not
-            # repopulate it; just release the claim.
-            if self._enabled:
-                self._skipped[finder_id] = (finder, reason)
-
-    def _observe_finder_contract(
-        self,
-        finder: object,
-        position: int,
-        observation: str,
-        observation_seq: int | None,
-    ) -> None:
-        """Delegate finder inspection to the attribution component."""
-        self._finder_attribution.observe_contract(finder, position, observation, observation_seq)
-
-    def _observe_finder_contract_impl(
-        self,
-        finder: object,
-        position: int,
-        observation: str,
-        observation_seq: int | None,
-    ) -> None:
-        """Inventory raw finder protocols without invoking attribute lookup."""
-        finder_id = id(finder)
-        with self._record_lock:
-            if finder_id in self._finder_contracts:
-                return
-        contract = FinderContract(
-            finder_id=finder_id,
-            finder_type_name=type_name(finder),
-            position=position,
-            observation=observation,
-            observation_seq=observation_seq,
-            find_spec=_inspect_finder_protocol(finder, "find_spec"),
-            find_module=_inspect_finder_protocol(finder, "find_module"),
-        )
-        with self._record_lock:
-            if self._enabled:
-                self._finder_contracts.setdefault(finder_id, contract)
-
-    def _make_find_spec_wrapper(self, finder_type_name: str, finder_id: int, original: "_FindSpec") -> "_FindSpec":
-        """Build the ``find_spec`` replacement that records each call and delegates to the original.
-
-        Args:
-            finder_type_name: Display name captured once while instrumenting
-                the finder.
-            finder_id: ``id()`` captured once while instrumenting the finder.
-            original: The bound ``find_spec`` to delegate to.
-
-        Returns:
-            A plain function suitable for the finder's instance dict; functions
-            stored there are not bound, so it takes no ``self``.
-        """
-
-        # Exact Python functions and bound methods expose interpreter-owned
-        # metadata, so the usual wraps behavior is safe and preserves normal
-        # introspection. An arbitrary callable can implement every metadata
-        # attribute dynamically; for those, retain only the safely assigned
-        # __wrapped__ link used by inspect.unwrap/signature.
-        copy_metadata = isinstance(original, (types.FunctionType, types.MethodType))
-        assigned = functools.WRAPPER_ASSIGNMENTS if copy_metadata else ()
-        updated = functools.WRAPPER_UPDATES if copy_metadata else ()
-
-        @functools.wraps(original, assigned=assigned, updated=updated)
-        def find_spec(
-            fullname: str,
-            path: "Sequence[str] | None" = None,
-            target: "ModuleType | None" = None,
-        ) -> "ModuleSpec | None":
-            # The _enabled check makes any wrapper that briefly outlives
-            # uninstall() (instrumentation racing uninstall) delegate silently.
-            if self._local.active or not self._enabled:
-                return original(fullname, path, target)
-            self._local.active = True
-            spec = None
-            exception_type_name: str | None = None
-            module_state_before = module_cache_state(sys.modules, fullname)
-            try:
-                search_path = self._snapshot_search_path(path)
-                try:
-                    spec = original(fullname, path, target)
-                except BaseException as exc:
-                    exception_type_name = type(exc).__name__
-                    raise
-                finally:
-                    module_state_after = module_cache_state(sys.modules, fullname)
-                    self._record_find_spec(
-                        finder_type_name,
-                        finder_id,
-                        fullname,
-                        spec,
-                        search_path,
-                        "sys_path" if path is None else "parent_path",
-                        exception_type_name,
-                        module_state_before,
-                        module_state_after,
-                        None if target is None else ModuleCacheState("object", id(target), type_name(target)),
-                    )
-            finally:
-                self._local.active = False
-            return spec
-
-        return find_spec
-
-    @staticmethod
-    def _snapshot_search_path(path: "Sequence[str] | None") -> tuple[str, ...]:
-        """Copy the effective finder path while the import is in progress."""
-        source = sys.path if path is None else path
-        try:
-            if path is not None:
-                return tuple(entry for entry in source if type(entry) is str)
-            snapshot: list[str] = []
-            for entry in source:
-                if type(entry) is not str:
-                    continue
-                # PathFinder resolves the special empty top-level entry to the
-                # cwd before consulting its importer cache. Preserve that
-                # import-time meaning if the process changes cwd before report.
-                snapshot.append(os.getcwd() if entry == "" else entry)
-            return tuple(snapshot)
-        except Exception:
-            return ()
-
-    def _reuse_search_path(self, snapshot: tuple[str, ...]) -> tuple[str, ...]:
-        """Return a recent identity-equal snapshot; caller holds ``_record_lock``."""
-        for index, cached in enumerate(self._search_path_cache):
-            if len(cached) != len(snapshot):
-                continue
-            if any(left is not right for left, right in zip(cached, snapshot, strict=True)):
-                continue
-            # Keep frequently reused paths resident when package imports cycle
-            # among several distinct __path__ values.
-            self._search_path_cache.append(self._search_path_cache.pop(index))
-            return cached
-        self._search_path_cache.append(snapshot)
-        if len(self._search_path_cache) > _SEARCH_PATH_CACHE_SIZE:
-            del self._search_path_cache[0]
-        return snapshot
-
-    def _record_find_spec(
-        self,
-        finder_type_name: str,
-        finder_id: int,
-        fullname: str,
-        spec: "ModuleSpec | None",
-        search_path: tuple[str, ...],
-        search_path_kind: "SearchPathKind",
-        exception_type_name: str | None,
-        module_state_before: ModuleCacheState,
-        module_state_after: ModuleCacheState,
-        target_state: ModuleCacheState | None,
-    ) -> None:
-        """Record one ``find_spec`` call, reducing the spec to primitives before taking the lock.
-
-        Args:
-            finder_type_name: Display name captured when the finder was instrumented.
-            finder_id: ``id()`` captured when the finder was instrumented.
-            fullname: The module name that was probed.
-            spec: Whatever ``find_spec`` returned; ``None`` means the finder passed.
-            search_path: Effective import search path captured before the call.
-            exception_type_name: Set when the call raised instead of returning.
-        """
-        try:
-            loader_type_name: str | None = None
-            origin: str | None = None
-            spec_summary: SpecSummary | None = None
-            if spec is not None:
-                spec_summary, loader = summarize_spec(spec, iterate_foreign_locations=False)
-                if loader is not None:
-                    loader_type_name = type_name(loader)
-                    self._deep.instrument_loader(loader)
-                if type(spec_summary.origin) is str:
-                    origin = spec_summary.origin
-            found = spec is not None
-            thread_name = threading.current_thread().name
-            with self._record_lock:
-                thread_id = self._thread_id_locked()
-                search_path = self._reuse_search_path(search_path)
-                self._seq += 1
-                self._events.append(
-                    FindSpecCall(
-                        seq=self._seq,
-                        fullname=fullname,
-                        finder_type_name=finder_type_name,
-                        finder_id=finder_id,
-                        found=found,
-                        loader_type_name=loader_type_name,
-                        origin=origin,
-                        search_path=search_path,
-                        search_path_kind=search_path_kind,
-                        spec_summary=spec_summary,
-                        exception_type_name=exception_type_name,
-                        thread_name=thread_name,
-                        thread_id=thread_id,
-                        module_state_before=module_state_before,
-                        module_state_after=module_state_after,
-                        target_state=target_state,
-                    )
-                )
-        except Exception as exc:
-            self._record_internal_error("record_find_spec", exc)
-
     @_guard_monitor_callback("meta_path_mutation")
     def _on_meta_path_mutation(
         self,
@@ -1324,13 +912,14 @@ class Monitor:
             )
         positions = {id(finder): position for position, finder in enumerate(list(mutated))}
         for finder in added:
-            self._observe_finder_contract(
+            self._finder_attribution.observe_contract(
                 finder,
                 positions.get(id(finder), -1),
                 "mutation",
                 mutation_seq,
+                self,
             )
-            self._instrument_finder(finder)
+            self._finder_attribution.instrument(finder, self)
 
     @_guard_monitor_callback("path_hooks_mutation")
     def _on_path_hooks_mutation(
