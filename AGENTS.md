@@ -1,234 +1,70 @@
 # metapathology
 
-A standalone, stdlib-only debug tool that diagnoses `sys.meta_path` / import
-hook contention: attributes each import to the finder that claimed it, logs
-mutations of `sys.meta_path` with stack traces, and flags modules loaded in
-ways that bypass `sys.path_hooks`. Origin story: beartype#556 (scikit-build-core's
-`ScikitBuildRedirectingFinder` short-circuited `sys.path_hooks`, silently
-disabling `beartype.claw`).
+`metapathology` is a standalone diagnostic tool for `sys.meta_path` and import-hook contention. Its primary interface is `python -m metapathology`; `install()` supports environments where a wrapper is impractical.
 
-Guiding constraint: observe the import machinery while perturbing it as little
-as possible, and never break third-party code that inspects `sys.meta_path`.
+The governing rule is to observe import machinery with minimal perturbation and never break third-party code inspecting it.
 
-## Interfaces
+## Non-negotiable constraints
 
-The CLI is the primary interface; `install()` is the library API it wraps.
+- Runtime code is stdlib-only and supports CPython 3.10+.
+- Never handle an import or change its outcome. Observe and report only.
+- `uninstall()` must restore ordinary lists and remove instance instrumentation. Audit hooks are irremovable, so they become inert.
+- Finders installed before startup, including those from already-processed `.pth` files, can only appear in the initial snapshot. Keep this limitation documented.
 
-- `python -m metapathology <script> [args...]` and
-  `python -m metapathology -m <module> [args...]` — parse our args, call
-  `install()`, fix up `sys.argv` and `sys.path[0]` to mimic a direct
-  invocation, then `runpy.run_path(..., run_name="__main__")` /
-  `runpy.run_module(..., run_name="__main__", alter_sys=True)`. Same
-  `__main__` caveats as coverage/cProfile (different `__spec__`;
-  multiprocessing re-import quirks on Windows) — accepted tradeoff.
-- Docs lead with `python -m metapathology`, not a console script: `-m`
-  guarantees the same interpreter/venv as the target. A `metapathology`
-  console script may exist as sugar only.
-- `metapathology.install()` stays public for cases where a wrapper is
-  impossible (notebooks, embedded interpreters, conftest.py-only access).
-- Known limitation, document it: in the normal CLI/API workflow, finders
-  installed by `.pth` files (this is exactly how scikit-build-core's
-  `ScikitBuildRedirectingFinder` arrives) are added before our code runs. They
-  appear in the initial snapshot. The explicitly managed, environment-gated
-  early-site bootstrap can witness later `.pth` files in one selected
-  directory on CPython 3.10--3.14; it must report its ordering boundary and
-  remain absent from ordinary package installation.
+## Architecture
 
-## Hard constraints
+Keep the three core mechanisms independently toggleable:
 
-- **Zero runtime dependencies.** Stdlib only, forever. The tool must work in a
-  broken environment where nothing else imports cleanly.
-- **CPython only.** Relies on the `import` audit event and import-system
-  internals. Python >= 3.10 (see `pyproject.toml`).
-- **Never handle an import.** Nothing here may return a spec, load a module,
-  or change import outcomes. Observe and report only.
-- **Everything reversible.** `uninstall()` must restore pristine state:
-  `del finder.__dict__['find_spec']`, swap back a plain list, etc. (Audit
-  hooks can't be removed — theirs must become inert no-ops on uninstall.)
+1. An import audit hook detects direct `sys.meta_path` replacement and records immediate copied snapshots.
+2. A real `list` subclass observes all supported `sys.meta_path` mutations and their stacks. It must remain compatible with `isinstance(..., list)` checks.
+3. Finder attribution shadows `find_spec` in writable instance dictionaries and delegates unchanged. Never proxy finder objects or mutate shared stdlib finder classes.
 
-## Architecture: three mechanisms
+Optional deep monitoring applies the shared list observer to `sys.path` and related import state. It is exhaustive, may grow with observed mutations, and must restore ordinary state on uninstall.
 
-Most `sys.meta_path` changes are ordinary list mutations and must be recorded
-at the moment they happen. Direct list replacement and finder calls require
-separate hooks. Keep the three mechanisms independently toggleable.
+`Monitor` owns observation and its mutable evidence. Reporting receives one immutable snapshot and must not acquire monitor locks or call back into live monitor components. Runtime code owns installation, atexit, and output policy. Analysis produces a format-neutral artifact that can support multiple exports from one capture.
 
-1. **Audit hook** (`sys.addaudithook`): on each `import` event, snapshot
-   `(id(sys.meta_path), [type(f) for f in sys.meta_path])` and diff against
-   the previous snapshot. This is the recovery mechanism for the less common
-   direct reassignment (`sys.meta_path = [...]`), which bypasses list methods.
-   Irremovable by third parties.
-2. **Instrumented list**: replace `sys.meta_path` with a `list` subclass
-   overriding every supported mutator: `append`, `insert`, `extend`, `remove`,
-   `pop`, `clear`, `reverse`, `sort`, item/slice assignment and deletion,
-   `+=`, and `*=`. Each mutation logs `traceback.extract_stack()` for
-   attribution at mutation time. New finders added through the list get
-   auto-instrumented. If mechanism 1 detects direct reassignment, log it and
-   install a fresh instrumented list around the new contents.
-3. **Finder attribution**: shadow each finder's `find_spec` in its *instance
-   dict* with a logging wrapper that delegates, recording
-   `(fullname, finder, spec_or_None)`. Instance-dict shadowing — never proxy
-   objects — because third parties (pytest's `AssertionRewritingHook` among
-   them) scan `sys.meta_path` with `isinstance`. Fallbacks: finders with
-   `__slots__` and class entries cannot be wrapped this way; don't mutate
-   shared stdlib classes. The report must identify `BuiltinImporter`,
-   `FrozenImporter`, and `PathFinder` as expected standard class entries,
-   explain their roles, and distinguish them from nonstandard skipped finders.
-   Custom claims get a captured resolution-route record and may be compared
-   with an independently labeled report-time standard-path probe.
+Captured custom-finder routes may be compared with a report-time `PathFinder` probe. Describe differences as current-state evidence, never as a prediction of what would have won. Promote differences to findings only when corroborated by an observed effect.
 
-An additional opt-in mechanism instruments `sys.path` with the shared list
-observer. It records ordinary mutations with stacks and detects direct
-reassignment at the next import audit boundary. It is enabled explicitly or
-by `deep=True`, is exhaustive (retention grows with mutation count), reduces
-non-string entries to type names without foreign conversion, and restores a
-plain list on uninstall.
+## Import-hook correctness
 
-**Monitoring/report boundary:** `Monitor` owns observation and the lock that
-protects its mutable evidence. Reporting must request one atomic immutable
-snapshot; report modules never acquire monitor locks or call back into live
-monitor components. Process runtime code owns automatic destination, format,
-color, PID expansion, and atexit policy. Analysis produces one format-neutral
-artifact before any text/JSON export so the same capture can later support
-multiple destinations without repeating report-time probes.
+Violating these rules is a bug:
 
-**Resolution-route comparison and bypass detection** (the beartype#556 and
-scikit-build-core#1482 checks): claim records contain conservative, plain spec
-summaries captured before returning to importlib. At report time, custom
-claims are represented as captured routes and compared with an independent
-`importlib.machinery.PathFinder.find_spec(name, parent_path, target)` probe by
-status, loader, origin, package status, cached path, and namespace search
-locations. The probe uses the captured search path with report-time path-hook,
-importer-cache, filesystem, and finder state. It skips intervening meta-path
-finders and must never be described as predicting the winner if the captured
-finder were removed. Raw route differences are neutral evidence, not findings.
-Only a corroborated observed effect may promote one, such as an exact deep
-descendant failure correlated with a narrower captured namespace route. Modules
-in `sys.modules` with no recorded `find_spec` call are their own bucket
-(manual `exec_module`-style loads).
+- Copy audit-event values inside the hook; mutable arguments cannot be inspected later.
+- Import every hot-path dependency before monitoring begins. Hooks and wrappers must not import lazily.
+- Put a `threading.local()` re-entrancy guard around every hook and wrapper body.
+- Protect shared state with one lock, but only append plain data while holding it. Never format, import, invoke foreign code, or rely on GIL atomicity under the lock.
+- Never call `repr()` or `str()` on foreign objects while recording. Store safe primitives such as type names and object IDs.
+- Keep observation failures isolated from the target program. Reporting and cleanup must degrade without changing import outcomes.
+- Snapshot mutable global collections before report-time iteration and tolerate concurrent imports.
+- Remember that the import audit event precedes resolution and does not identify the winning finder or cover cache hits and manual module execution.
 
-## Correctness rules (violating any of these is a bug)
+## Resource behavior
 
-These came out of the design discussion; they are not optional style.
+For every producer/consumer path, define capacity, overflow, and shutdown behavior. If exhaustive capture intentionally grows with event count, document and test that cost. Do not add accidental unbounded queues, caches, or retries.
 
-- **Copy snapshots inside the hook.** The `import` audit event passes
-  `sys.meta_path` *by reference*. Any deferred inspection sees only final
-  state. Extract ids/type-names immediately.
-- **No imports in hot paths.** Hook and wrapper code runs *inside* an import.
-  Pre-import every dependency (`traceback`, `threading`, …) at `install()`
-  time; never import lazily in hook/wrapper bodies.
-- **Re-entrancy guard.** A `threading.local()` active-flag around every hook
-  and wrapper body (`if self._local.active: return` / set–clear). Even
-  innocent-looking formatting can trigger an import and re-enter.
-- **Lock discipline.** One `threading.Lock` for shared state. Never do
-  anything potentially-importing (including string formatting of arbitrary
-  objects — `__repr__` can import) while holding it: acquire → append plain
-  data → release. Format at report time. Rationale: per-module import locks
-  since 3.3 mean hooks run concurrently on arbitrary threads; holding our
-  lock across an import is a classic ABBA deadlock with the module locks.
-  Don't rely on "list.append is atomic under the GIL" — free-threaded builds.
-- **Never call `repr()`/`str()` on foreign objects at record time.** Store
-  `type(f).__name__` and `id(f)`; stringify only in the exit report.
-- **The exit report must tolerate concurrent imports** from daemon threads:
-  iterate over `list(sys.modules.items())` copies, expect slight
-  inconsistency, never raise.
-- **The `import` audit event fires before resolution starts**, not when a
-  finder wins — winner attribution comes from layer 3, never from
-  the event itself. It also doesn't fire on `sys.modules` cache hits or
-  manual `spec_from_file_location` + `exec_module` loads.
+Concurrency and randomized tests must be reproducible from a reported seed or example.
 
-## Resource and failure behavior
+## Development
 
-- Import monitoring can produce data for the lifetime of the target process.
-  Do not add an unbounded queue, cache, or retry loop accidentally. For every
-  new producer/consumer path, define and test its capacity, overflow policy,
-  and shutdown behavior. If exhaustive capture intentionally grows with the
-  number of observed events, document that cost rather than silently dropping
-  records.
-- Keep observation failures isolated from the target program. Reporting and
-  cleanup should degrade gracefully on malformed, partially initialized, or
-  concurrently changing import state; they must not change import outcomes.
-- Make nondeterminism explicit. Tests using concurrency, randomized inputs, or
-  generated cases must be reproducible from their reported seed or example.
+- Source lives in `src/metapathology/` and is fully type-annotated. Tests are typed where practical.
+- Use built-in generics and `collections.abc`; keep imports at module scope.
+- Prefer small functions, explicit parameters, and straightforward ownership boundaries over speculative abstractions.
+- Comments explain non-obvious reasons. Public and non-obvious APIs use Google-style docstrings.
+- Runtime dependencies remain forbidden. Justify any new development dependency.
+- Update the nearest public discovery surface only when public behavior changes. Keep internal design detail in focused docs or this file.
+- Temporary compatibility code needs a `TODO` with a concrete removal trigger.
 
-## Layout & tooling
+## Tooling and tests
 
-- `src/metapathology/` — package source (`py.typed`; fully type-annotated).
-- Build backend: `uv_build`; use `uv` for everything (`uv run`, `uv sync`).
-  Note: `venv/` in the repo root is a stray non-uv env; `uv` will use `.venv`.
-- Tests will need subprocess isolation: most of this tool's behavior can only
-  be observed in a fresh interpreter (audit hooks are per-process and
-  irremovable, import state is global). Prefer `uv run python -c ...` /
-  script-based tests over in-process pytest tests for anything touching
-  `install()`.
-
-## Development practices
-
-- Prefer simple, readable, maintainable solutions over clever abstractions.
-  Add shared helpers only when they remove meaningful duplication; do not
-  over-engineer speculative reuse.
-- Keep all production code and tests fully type-annotated. Use built-in
-  generics (`list`, `tuple`, etc.) and `collections.abc` rather than legacy
-  aliases from `typing`.
-- Keep imports at module scope. The import-hook hot paths are especially
-  strict: anything they need must already have been imported by `install()`.
-- Put repeated hardcoded values in named module-level constants.
-- Comments should explain why a non-obvious decision exists, not narrate the
-  code. Do not rewrite unrelated comments while making a focused change.
-- Use Google-style docstrings for non-obvious modules and public APIs. Include
-  `Args` and `Raises` where applicable; include `Returns` when the return value
-  is not already clear from its annotation.
-- Keep boundaries injectable where doing so makes import-system behavior
-  independently testable, but prefer small functions and explicit parameters
-  over a dependency-injection framework.
-- Treat the public API, CLI help, report vocabulary, and documented examples as
-  discovery surfaces. New functionality should be findable from the nearest
-  relevant surface without requiring a user to read the implementation.
-- Keep conceptual documentation and behavior in sync in the same change.
-  Update `README.md` when public behavior, CLI usage, limitations, or report
-  interpretation changes; update this file when architectural invariants
-  change. Add a documentation site only when the material outgrows the README.
-- Runtime dependencies remain forbidden. Before adding a development
-  dependency, record why the standard library and existing tools are
-  insufficient, what maintenance/security cost it adds, and whether it
-  replaces an existing tool.
-- Temporary compatibility, migration, or rollout code must leave a `TODO` at
-  every future cleanup point with a concrete removal trigger such as a Python
-  version, dependency version, or date. Vague cleanup reminders are not enough.
-
-## Testing
-
-- Use pytest through `uv run pytest`; do not invoke an environment's bare
-  `pytest` executable.
-- New features and bug fixes require tests. For a bug fix, first add a test
-  that reproduces the failure, then implement the fix and verify the test.
-- Cover relevant edge cases and failure paths, not only the happy path.
-- Express correctness rules as invariants where practical. Use Hypothesis for
-  stateful or property-based coverage of mutation sequences, round trips, and
-  malformed inputs; keep the underlying helpers callable without the CLI so
-  they remain fuzzable.
-- Assert invariants after each operation in generated sequences, not only at
-  the end. Include repeated operations, reordering, concurrent mutation, and
-  interrupted cleanup when those failure modes apply.
-- Keep a small corpus of representative historical inputs or outputs when a
-  serialization or report format becomes a compatibility contract. Prefer
-  semantic assertions; use snapshot/golden tests only when the reviewed whole
-  output is itself the contract and a diff is useful.
-- Prefer real finders, modules, files, and subprocesses over mocks. Do not test
-  third-party library behavior or private implementation details.
-- Keep shared fixtures in `tests/conftest.py` or `tests/fixtures/`; leave a
-  fixture in a test module only when it is specific to that module.
-- Avoid tautological assertions that merely repeat test setup without
-  exercising behavior.
+- Use `uv` for all project commands: `uv run pytest`, type checks, linting, and builds. Ignore the stray root `venv/`; `uv` uses `.venv`.
+- Test global import-state behavior in fresh subprocesses because audit hooks cannot be removed.
+- Add regression coverage for behavior changes; for bug fixes, reproduce the failure first.
+- Prefer real finders, modules, files, and subprocesses over mocks. Test project behavior, not third-party internals.
+- Cover cleanup, concurrency, malformed state, and overflow where relevant.
+- Keep serialization assertions semantic unless the complete output is intentionally the contract.
 
 ## CI and commits
 
-- For GitHub Actions changes, check the current action release and pin actions
-  by full commit hash rather than a mutable version tag.
-- CI must run formatting/linting, both type checkers, tests, and package-build
-  checks across the supported Python range as appropriate. Public examples or
-  generated reference material should be executable or checked for drift
-  rather than trusted to stay current manually.
-- Keep commits atomic when commits are requested. Use concise, imperative,
-  scoped subjects. In the body, explain the user-visible problem or invariant,
-  why the chosen approach is appropriate, and important tradeoffs or follow-up
-  triggers; do not merely narrate the diff (mitchellh style).
+- CI must cover formatting, linting, both type checkers, tests, and package builds across supported Python versions as appropriate.
+- Pin GitHub Actions by full commit hash.
+- Keep requested commits atomic. Use concise imperative subjects and bodies that explain the problem or invariant, why the solution fits, and important tradeoffs or follow-up triggers.
