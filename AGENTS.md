@@ -83,6 +83,14 @@ by `deep=True`, is exhaustive (retention grows with mutation count), reduces
 non-string entries to type names without foreign conversion, and restores a
 plain list on uninstall.
 
+**Monitoring/report boundary:** `Monitor` owns observation and the lock that
+protects its mutable evidence. Reporting must request one atomic immutable
+snapshot; report modules never acquire monitor locks or call back into live
+monitor components. Process runtime code owns automatic destination, format,
+color, PID expansion, and atexit policy. Analysis produces one format-neutral
+artifact before any text/JSON export so the same capture can later support
+multiple destinations without repeating report-time probes.
+
 **Resolution-route comparison and bypass detection** (the beartype#556 and
 scikit-build-core#1482 checks): claim records contain conservative, plain spec
 summaries captured before returning to importlib. At report time, custom

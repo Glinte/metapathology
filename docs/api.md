@@ -165,11 +165,9 @@ competing monitors is not supported because import state is process-global.
   included with an explicit "expected" reason; see [Reading the
   report](report.md#header) for why they are deliberately left unchanged.
 
-`Monitor.install()` and `Monitor.uninstall()` implement the same idempotent
-lifecycle for the process-wide instance, but the module-level functions and
-`monitoring()` context manager are the intended entry points. `Monitor` itself
-is deliberately not a context manager: after `install()` returns it, the
-instance cannot determine whether a block owns a pre-existing installation.
+Lifecycle belongs to the module-level `install()`, `uninstall()`, and
+`monitoring()` APIs. `Monitor` exposes captured evidence but does not remember
+automatic report destinations, formats, or atexit policy.
 
 ## Event records
 

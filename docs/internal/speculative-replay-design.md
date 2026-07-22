@@ -192,7 +192,7 @@ This phase is required regardless of later decisions.
 
 - Normalize deep hook wrappers to original hook references in current
   snapshots, mutation `contents_after`, and reassignment evidence.
-- Make the report-analysis guard cover ordinary wrappers, deep wrappers,
+- Make the observation-suspension guard cover ordinary wrappers, deep wrappers,
   audit/profiling producers, and any future replay path.
 - Record whether custom and path-entry `find_spec()` calls received a target.
   Decline replay when an equivalent current target cannot be established.
@@ -245,7 +245,7 @@ each displaced importer-cache finder (from `ImporterCacheDiff` removals and
 replacements) with a later deep `path_entry_finder` `not_found` call on the same
 path. Each selected candidate triggers at most one foreign
 `prior_finder.find_spec(fullname, None)` at report time under the
-report-analysis guard, capped at 16 probes with an overflow count. Results are a
+observation-suspension guard, capped at 16 probes with an overflow count. Results are a
 report-phase `SpeculativeReplay` model attached to the document (text section
 and JSON `speculative_replay` block), never appended to the monitor event log,
 so repeated reports recompute rather than grow. Reload-target lookups are
