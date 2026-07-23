@@ -11,7 +11,7 @@ from metapathology._displaced_finder_check import (
     check_displaced_finders,
 )
 from metapathology._module_metadata import ModuleMetadata, inspect_module
-from metapathology._records import ObjectIdentity, type_name
+from metapathology._records import ImportBranchExplorationCall, ObjectIdentity, type_name
 from metapathology._report_analysis import (
     _AnalysisInputs,
     _causal_explanations,
@@ -28,6 +28,7 @@ from metapathology._report_model import (
     CaptureInfo,
     CheckRun,
     EarlySiteBootstrap,
+    FinderResult,
     FrozenBootstrap,
     ImporterCacheSnapshot,
     LoaderInventory,
@@ -39,13 +40,17 @@ from metapathology._report_model import (
     ReportError,
     SkippedFinder,
     StandardResolution,
+    StructuralComparison,
 )
 
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from metapathology._monitor_model import MonitorSnapshot
-    from metapathology._report_model import CausalExplanation, FinderResult, FinderResultComparison, Finding
+    from metapathology._records import MonitorEvent
+    from metapathology._report_model import CausalExplanation, FinderResultComparison, Finding
 
 
 _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
@@ -146,12 +151,13 @@ def _derive_findings(
     """
     finding_ids = _IdAllocator("finding")
     result_ids = _IdAllocator("result")
+    comparison_ids = _IdAllocator("comparison")
     standard_available = snapshot.finder_attribution_enabled
     findings, finder_results, finder_result_comparisons = _suspicious_findings(
         inputs,
         finding_ids,
         result_ids,
-        _IdAllocator("comparison"),
+        comparison_ids,
         analysis.standard_path_check and standard_available,
     )
     findings = (
@@ -208,11 +214,17 @@ def _derive_findings(
         displaced_results, displaced_run = check_displaced_finders(
             inputs.events, snapshot.retained_cache_finders, result_ids.next_id
         )
+    explored_results = _explored_finder_results(inputs.events, result_ids)
+    exploration_comparisons = _exploration_result_comparisons(
+        finder_results,
+        explored_results,
+        comparison_ids,
+    )
     return (
         findings,
         explanations,
-        (*finder_results, *displaced_results),
-        finder_result_comparisons,
+        (*finder_results, *displaced_results, *explored_results),
+        (*finder_result_comparisons, *exploration_comparisons),
         (standard_run, displaced_run),
     )
 
@@ -284,7 +296,90 @@ def _capture_info(snapshot: "MonitorSnapshot", modules_since_install: tuple[str,
         import_results_capture_status=snapshot.import_results_capture_status,
         import_calls_capture_status=snapshot.import_calls_capture_status,
         path_finder_capture_status=snapshot.path_finder_capture_status,
+        unsafe_import_branch_exploration_status=snapshot.unsafe_import_branch_exploration_status,
     )
+
+
+def _explored_finder_results(
+    events: "Sequence[MonitorEvent]",
+    result_ids: _IdAllocator,
+) -> "tuple[FinderResult, ...]":
+    """Project unsafe finder calls into the shared format-neutral result stream."""
+    results: list[FinderResult] = []
+    for event in events:
+        if (
+            not isinstance(event, ImportBranchExplorationCall)
+            or event.boundary == "path_hook"
+            or event.fullname is None
+        ):
+            continue
+        if event.outcome == "found":
+            status = "found"
+        elif event.outcome == "not_found":
+            status = "not_found"
+        elif event.outcome == "raised":
+            status = "failed"
+        elif event.outcome == "unsupported":
+            status = "unsupported_finder"
+        else:
+            continue
+        results.append(
+            FinderResult(
+                result_id=result_ids.next_id(),
+                module=event.fullname,
+                kind="import_branch_exploration_result",
+                purpose="record_skipped_import_candidate_result",
+                limitations=(
+                    "discarded_result_not_used_by_import",
+                    "foreign_call_may_have_changed_target_state",
+                    "does_not_prove_loader_success",
+                    "does_not_predict_alternative_winner",
+                    "earlier_explored_calls_may_have_changed_state",
+                ),
+                evidence_level="explored",
+                state_phase="import",
+                predicts_alternative_winner=False,
+                finder_type_name=event.candidate.type_name,
+                finder_id=event.candidate.object_id,
+                status=status,
+                spec_summary=event.spec_summary,
+                exception_type_name=event.exception_type_name,
+                source_event_seqs=(event.exploration_seq, event.sequence),
+                search_path=() if event.path is None else (event.path,),
+                search_path_kind="sys_path" if event.boundary == "meta_path" else "path_entry",
+                search_path_phase="import",
+            )
+        )
+    return tuple(results)
+
+
+def _exploration_result_comparisons(
+    observed_results: "Sequence[FinderResult]",
+    explored_results: "Sequence[FinderResult]",
+    comparison_ids: _IdAllocator,
+) -> "tuple[FinderResultComparison, ...]":
+    """Compare same-import explored specs only with an observed custom result."""
+    observed_by_module = {
+        result.module: result
+        for result in observed_results
+        if result.kind == "observed_finder_result" and result.spec_summary is not None
+    }
+    comparisons: list[FinderResultComparison] = []
+    unavailable_structure = StructuralComparison(None, None, (), ())
+    for explored in explored_results:
+        if explored.spec_summary is None:
+            continue
+        observed = observed_by_module.get(explored.module)
+        if observed is None:
+            continue
+        comparisons.append(
+            observed.compare(
+                explored,
+                comparison_id=comparison_ids.next_id(),
+                structural_comparison=unavailable_structure,
+            )
+        )
+    return tuple(comparisons)
 
 
 def _current_meta_path_names(report_errors: list[ReportError]) -> tuple[str, ...] | None:

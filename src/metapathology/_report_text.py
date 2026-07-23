@@ -5,6 +5,8 @@ from importlib.machinery import BuiltinImporter, FrozenImporter, PathFinder
 
 from metapathology._records import (
     FinderAPIObservation,
+    ImportBranchExplorationCall,
+    ImportBranchExplorationStarted,
     ImportCall,
     ImporterCacheChange,
     ImporterCacheEntry,
@@ -714,6 +716,13 @@ def _mechanism_header_lines(document: ReportDocument, context: _RenderContext) -
         lines.append(f"import call observation: {_humanize(document.capture.import_calls_capture_status)}")
     if document.capture.path_finder_capture_status != "disabled":
         lines.append(f"PathFinder result capture: {_humanize(document.capture.path_finder_capture_status)}")
+    exploration_status = document.capture.unsafe_import_branch_exploration_status
+    if exploration_status != "disabled":
+        lines.append(
+            f"{context.risk('UNSAFE:')} skipped import branches were invoked; "
+            "their side effects may have changed this run"
+        )
+        lines.append(f"import branch exploration: {_humanize(exploration_status)}")
     bootstrap = document.capture.early_site_bootstrap
     if bootstrap is not None:
         lines.append(f"early site bootstrap: {context.display_path(bootstrap.path)}")
@@ -1314,6 +1323,29 @@ def _timeline_import_search_started(event: ImportSearchStarted, context: _Render
     return f"#{event.sequence} import started: {event.fullname!r}{context.thread_suffix(event.thread_name)}"
 
 
+def _timeline_import_branch_exploration_started(event: ImportBranchExplorationStarted, context: _RenderContext) -> str:
+    target = "<unknown>" if event.fullname is None else repr(event.fullname)
+    return (
+        f"#{event.sequence} UNSAFE explored {event.boundary} siblings after "
+        f"{event.trigger.type_name} {event.trigger_outcome} for {target}"
+        f"{context.thread_suffix(event.thread_name)}"
+    )
+
+
+def _timeline_import_branch_exploration_call(event: ImportBranchExplorationCall, context: _RenderContext) -> str:
+    detail = event.outcome
+    if event.exception_type_name is not None:
+        detail = f"raised {event.exception_type_name}"
+    elif event.spec_summary is not None:
+        loader = event.spec_summary.loader
+        detail = f"found spec (loader {'None' if loader is None else loader.type_name})"
+    transition = _module_transition_suffix(event.module_state_before, event.module_state_after)
+    return (
+        f"#{event.sequence} explored {event.boundary} candidate {event.candidate.type_name}: "
+        f"{detail}{transition}{context.thread_suffix(event.thread_name)}"
+    )
+
+
 def _timeline_meta_path_finder_call(event: MetaPathFinderCall, context: _RenderContext) -> str:
     if event.exception_type_name is not None:
         outcome = f"raised {event.exception_type_name}"
@@ -1403,6 +1435,8 @@ def _timeline_monitoring_error(event: MonitoringError, context: _RenderContext) 
 
 # One line renderer per event type, dispatched by concrete type in _timeline_line.
 _TIMELINE_LINE_BUILDERS: "dict[type[MonitorEvent], Callable[..., str]]" = {
+    ImportBranchExplorationStarted: _timeline_import_branch_exploration_started,
+    ImportBranchExplorationCall: _timeline_import_branch_exploration_call,
     ImportMechanismCall: _import_mechanism_call_line,
     ImportResult: _timeline_import_result,
     ImportCall: _import_call_line,
@@ -1873,17 +1907,25 @@ def _result_comparison_lines(
     right = context.results_by_id.get(comparison.right_result_id)
     if left is None or right is None:
         return [f"{comparison.comparison_id}: referenced result unavailable"]
+    explored = right.kind == "import_branch_exploration_result"
+    right_label = "unsafe explored sibling during the run" if explored else "standard search at report time"
     lines = [
         f"'{left.module}':",
         f"    during the run: {_result_summary(left, context)}",
-        f"    standard search at report time: {_result_summary(right, context, same_origin_as=left)}",
-        f"    {_result_difference_line(comparison)}",
+        f"    {right_label}: {_result_summary(right, context, same_origin_as=left)}",
+        f"    {_result_difference_line(comparison, explored=explored)}",
     ]
     installer = _finder_installation_line(left.finder_type_name, mutations or [], context)
     if installer is not None:
         lines.append(f"    {installer}")
     lines.extend(f"    note: {_signal_description(signal)}" for signal in left.signals)
-    lines.append(f"    {_structural_evidence_line(comparison.structural_comparison)}")
+    if explored:
+        lines.append(
+            "    unsafe explored calls ran sequentially after the real branch; "
+            "this does not show which candidate would have won"
+        )
+    else:
+        lines.append(f"    {_structural_evidence_line(comparison.structural_comparison)}")
     return lines
 
 
@@ -1924,7 +1966,7 @@ def _result_summary(result: FinderResult, context: _RenderContext, same_origin_a
     return f"{finder}, loader {loader}, origin {_origin_display(origin, context)}"
 
 
-def _result_difference_line(comparison: FinderResultComparison) -> str:
+def _result_difference_line(comparison: FinderResultComparison, *, explored: bool = False) -> str:
     """Describe symmetric semantic differences without choosing a baseline."""
     differences: list[str] = []
     if comparison.status_differs:
@@ -1942,7 +1984,8 @@ def _result_difference_line(comparison: FinderResultComparison) -> str:
         differences.append(f"{count} search location{'' if count == 1 else 's'} only in the recorded result")
     if comparison.only_in_right_result:
         count = len(comparison.only_in_right_result)
-        differences.append(f"{count} search location{'' if count == 1 else 's'} only in the standard search")
+        source = "explored result" if explored else "standard search"
+        differences.append(f"{count} search location{'' if count == 1 else 's'} only in the {source}")
     if comparison.locations_reordered:
         differences.append("search locations reordered")
     detail = "; ".join(differences) if differences else "none"

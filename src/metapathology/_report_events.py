@@ -7,6 +7,8 @@ module is a leaf: it imports only :mod:`metapathology._records`.
 """
 
 from metapathology._records import (
+    ImportBranchExplorationCall,
+    ImportBranchExplorationStarted,
     ImportCall,
     ImporterCacheChange,
     ImportMechanismCall,
@@ -44,6 +46,8 @@ if TYPE_CHECKING:
         "sys_path_change",
         "sys_path_replacement",
         "monitoring_error",
+        "import_branch_exploration_started",
+        "import_branch_exploration_call",
     ]
     EventCountKind = Literal[
         "calls",
@@ -59,11 +63,15 @@ if TYPE_CHECKING:
         "sys_path_changes",
         "sys_path_replacements",
         "importer_cache_changes",
+        "import_branch_exploration_starts",
+        "import_branch_exploration_calls",
     ]
 
 # Stable JSON ``kind`` discriminator per event type. Part of the public JSON
 # schema; do not rename values without a schema bump.
 EVENT_KIND: "dict[type[MonitorEvent], EventKind]" = {
+    ImportBranchExplorationStarted: "import_branch_exploration_started",
+    ImportBranchExplorationCall: "import_branch_exploration_call",
     ImportSearchStarted: "import_search_started",
     ImportMechanismCall: "import_mechanism_call",
     ImportResult: "import_result",
@@ -83,6 +91,8 @@ EVENT_KIND: "dict[type[MonitorEvent], EventKind]" = {
 # JSON summary count bucket per event type. ``MonitoringError`` is intentionally
 # absent: it is surfaced as ``monitoring_error_refs`` rather than a count.
 EVENT_COUNT_KEY: "dict[type[MonitorEvent], EventCountKind]" = {
+    ImportBranchExplorationStarted: "import_branch_exploration_starts",
+    ImportBranchExplorationCall: "import_branch_exploration_calls",
     MetaPathFinderCall: "calls",
     ImportSearchStarted: "audit_starts",
     ImportMechanismCall: "import_mechanism_calls",

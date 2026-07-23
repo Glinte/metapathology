@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         ImportResultsCaptureStatus,
         PathFinderCaptureStatus,
         ProgramOutcomeKind,
+        UnsafeImportBranchExplorationStatus,
     )
     from metapathology._records import ImportMechanismOutcome, SearchPathKind
 
@@ -70,13 +71,19 @@ if TYPE_CHECKING:
     ResolutionCategory = Literal["namespace", "built_in", "frozen", "source", "bytecode", "extension", "zip"]
     StatePhase = Literal["import", "report"]
     StandardEvidenceLevel = Literal["observed", "inferred"]
-    FinderResultKind = Literal["observed_finder_result", "standard_path_check", "displaced_finder_check"]
+    FinderResultKind = Literal[
+        "observed_finder_result",
+        "standard_path_check",
+        "displaced_finder_check",
+        "import_branch_exploration_result",
+    ]
     FinderResultPurpose = Literal[
         "record_custom_finder_result",
         "compare_with_current_pathfinder",
         "check_displaced_importer_cache_finder",
+        "record_skipped_import_candidate_result",
     ]
-    FinderResultEvidenceLevel = Literal["observed", "current_state_check"]
+    FinderResultEvidenceLevel = Literal["observed", "current_state_check", "explored"]
     FinderResultStatus = Literal[
         "found", "not_found", "failed", "target_unavailable", "finder_unavailable", "unsupported_finder"
     ]
@@ -592,6 +599,7 @@ class CaptureInfo(_Record):
     import_results_capture_status: "ImportResultsCaptureStatus"
     import_calls_capture_status: "ImportCallsCaptureStatus"
     path_finder_capture_status: "PathFinderCaptureStatus"
+    unsafe_import_branch_exploration_status: "UnsafeImportBranchExplorationStatus"
 
 
 class MetaPathSnapshot(_Record):

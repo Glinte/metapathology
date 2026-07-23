@@ -136,6 +136,21 @@ def test_detailed_group_option_enables_every_mechanism(tmp_path: Path) -> None:
     assert "('path_hooks', 'path_entry_finders', 'loaders', 'import_results', 'import_calls') True" in proc.stdout
 
 
+def test_unsafe_branch_option_is_forwarded_and_enables_only_its_prerequisites(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text(
+        "import metapathology\n"
+        "monitor = metapathology.get_monitor()\n"
+        "print(monitor.unsafe_import_branch_exploration_status, monitor.detailed_capture)\n"
+    )
+
+    proc = run_cli("--unsafe-explore-import-branches", str(script), cwd=tmp_path)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "active_exhaustive_direct_siblings ('path_hooks', 'path_entry_finders', 'import_results')" in proc.stdout
+    assert "UNSAFE: skipped import branches were invoked" in proc.stderr
+
+
 def test_capture_environment_and_explicit_cli_values_have_consistent_precedence(tmp_path: Path) -> None:
     script = tmp_path / "prog.py"
     script.write_text(

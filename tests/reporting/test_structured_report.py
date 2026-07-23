@@ -60,7 +60,7 @@ import observed_mod
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 3, "minor": 0, "name": "metapathology.report"}
+assert document["schema"] == {"major": 3, "minor": 1, "name": "metapathology.report"}
 assert document["report_status"] == "complete"
 assert isinstance(document["finder_results"], list)
 assert isinstance(document["finder_result_comparisons"], list)
@@ -313,6 +313,7 @@ def test_report_document_uses_hand_written_slots(python_runner: PythonRunner) ->
         "        modules_since_install=(), early_site_bootstrap=None, frozen_bootstrap=None,\n"
         "        detailed_capture=(), import_results_capture_status='disabled',\n"
         "        import_calls_capture_status='disabled', path_finder_capture_status='disabled',\n"
+        "        unsafe_import_branch_exploration_status='disabled',\n"
         "    ),\n"
         "    meta_path=MetaPathSnapshot(enabled=False, initial=(), current=()),\n"
         "    path_hooks=PathHooksSnapshot(enabled=False, initial=(), current=None),\n"

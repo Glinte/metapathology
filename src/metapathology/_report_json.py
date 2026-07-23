@@ -12,6 +12,8 @@ from metapathology import __version__
 from metapathology._module_metadata import ModuleMetadata
 from metapathology._records import (
     FinderAPIObservation,
+    ImportBranchExplorationCall,
+    ImportBranchExplorationStarted,
     ImportCall,
     ImporterCacheChange,
     ImporterCacheEntry,
@@ -77,6 +79,8 @@ from metapathology._report_schema import (
     FindingJSON,
     FrameJSON,
     FrozenBootstrapJSON,
+    ImportBranchExplorationCallDataJSON,
+    ImportBranchExplorationStartedDataJSON,
     ImportCallDataJSON,
     ImporterCacheChangeDataJSON,
     ImporterCacheEntryJSON,
@@ -125,7 +129,7 @@ if TYPE_CHECKING:
 
 _SCHEMA_NAME = "metapathology.report"
 _SCHEMA_MAJOR = 3
-_SCHEMA_MINOR = 0
+_SCHEMA_MINOR = 1
 
 
 def _json_events(
@@ -146,6 +150,8 @@ def _json_events(
         "path_finder_calls": 0,
         "sys_path_changes": 0,
         "sys_path_replacements": 0,
+        "import_branch_exploration_starts": 0,
+        "import_branch_exploration_calls": 0,
     }
     timeline: list[EventJSON] = []
     monitoring_error_refs: list[str] = []
@@ -277,6 +283,12 @@ def _json_mechanisms(
             document.capture.path_finder_capture_status.startswith("active_"),
             event_counts["path_finder_calls"],
             document.capture.path_finder_capture_status,
+        ),
+        _mechanism(
+            "unsafe_import_branch_exploration",
+            document.capture.unsafe_import_branch_exploration_status.startswith(("active_", "partial_")),
+            event_counts["import_branch_exploration_calls"],
+            document.capture.unsafe_import_branch_exploration_status,
         ),
         _result_analysis_mechanism(document),
         _mechanism(
@@ -506,6 +518,45 @@ def _json_import_search_started(event: ImportSearchStarted) -> ImportSearchStart
     }
 
 
+def _json_import_branch_exploration_started(
+    event: ImportBranchExplorationStarted,
+) -> ImportBranchExplorationStartedDataJSON:
+    return {
+        "boundary": event.boundary,
+        "evidence": "unsafe_import_branch_exploration",
+        "fullname": event.fullname,
+        "path": event.path,
+        "trigger": _json_import_object(event.trigger),
+        "trigger_event_ref": None if event.trigger_event_seq is None else f"event:{event.trigger_event_seq}",
+        "trigger_index": event.trigger_index,
+        "trigger_outcome": event.trigger_outcome,
+        "thread_id": event.thread_id,
+        "thread_name": event.thread_name,
+    }
+
+
+def _json_import_branch_exploration_call(
+    event: ImportBranchExplorationCall,
+) -> ImportBranchExplorationCallDataJSON:
+    return {
+        "boundary": event.boundary,
+        "candidate": _json_import_object(event.candidate),
+        "candidate_index": event.candidate_index,
+        "evidence": "unsafe_import_branch_exploration",
+        "exception_type_name": event.exception_type_name,
+        "exploration_ref": f"event:{event.exploration_seq}",
+        "fullname": event.fullname,
+        "module_state_after": _json_module_state(event.module_state_after),
+        "module_state_before": _json_module_state(event.module_state_before),
+        "outcome": event.outcome,
+        "path": event.path,
+        "returned_finder": None if event.returned_finder is None else _json_import_object(event.returned_finder),
+        "spec": None if event.spec_summary is None else _json_spec_summary(event.spec_summary),
+        "thread_id": event.thread_id,
+        "thread_name": event.thread_name,
+    }
+
+
 def _json_import_mechanism_call(event: ImportMechanismCall) -> ImportMechanismCallDataJSON:
     return {
         "boundary": event.boundary,
@@ -670,6 +721,8 @@ def _json_monitoring_error(event: MonitoringError) -> MonitoringErrorDataJSON:
 # ``_json_event`` wraps it in the shared ``{id, sequence, kind, data}`` envelope. New
 # event types must be added here and in ``_report_events`` together.
 _EVENT_JSON_BUILDERS: "dict[type[MonitorEvent], Callable[..., EventDataJSON]]" = {
+    ImportBranchExplorationStarted: _json_import_branch_exploration_started,
+    ImportBranchExplorationCall: _json_import_branch_exploration_call,
     ImportSearchStarted: _json_import_search_started,
     ImportMechanismCall: _json_import_mechanism_call,
     ImportResult: _json_import_result,

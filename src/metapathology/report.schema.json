@@ -216,6 +216,12 @@
         "data": {
           "anyOf": [
             {
+              "$ref": "#/$defs/ImportBranchExplorationCallDataJSON"
+            },
+            {
+              "$ref": "#/$defs/ImportBranchExplorationStartedDataJSON"
+            },
+            {
               "$ref": "#/$defs/ImportSearchStartedDataJSON"
             },
             {
@@ -261,6 +267,8 @@
         },
         "kind": {
           "enum": [
+            "import_branch_exploration_started",
+            "import_branch_exploration_call",
             "import_search_started",
             "import_mechanism_call",
             "import_result",
@@ -732,7 +740,8 @@
         "evidence_level": {
           "enum": [
             "observed",
-            "current_state_check"
+            "current_state_check",
+            "explored"
           ]
         },
         "exception_type_name": {
@@ -765,7 +774,8 @@
           "enum": [
             "observed_finder_result",
             "standard_path_check",
-            "displaced_finder_check"
+            "displaced_finder_check",
+            "import_branch_exploration_result"
           ]
         },
         "limitations": {
@@ -784,7 +794,8 @@
           "enum": [
             "record_custom_finder_result",
             "compare_with_current_pathfinder",
-            "check_displaced_importer_cache_finder"
+            "check_displaced_importer_cache_finder",
+            "record_skipped_import_candidate_result"
           ]
         },
         "search_path": {
@@ -1205,6 +1216,216 @@
         "boundary",
         "integration",
         "path"
+      ],
+      "type": "object"
+    },
+    "ImportBranchExplorationCallDataJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "boundary": {
+          "enum": [
+            "meta_path",
+            "path_hook",
+            "path_entry"
+          ]
+        },
+        "candidate": {
+          "$ref": "#/$defs/ImportObjectJSON"
+        },
+        "candidate_index": {
+          "type": "integer"
+        },
+        "evidence": {
+          "enum": [
+            "unsafe_import_branch_exploration"
+          ]
+        },
+        "exception_type_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exploration_ref": {
+          "type": "string"
+        },
+        "fullname": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "module_state_after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleStateJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "module_state_before": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleStateJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "found",
+            "not_found",
+            "returned_finder",
+            "declined",
+            "raised",
+            "unsupported",
+            "negative_cache"
+          ]
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "returned_finder": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImportObjectJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "spec": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleSpecSnapshotJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread_id": {
+          "type": "integer"
+        },
+        "thread_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "boundary",
+        "candidate",
+        "candidate_index",
+        "evidence",
+        "exception_type_name",
+        "exploration_ref",
+        "fullname",
+        "module_state_after",
+        "module_state_before",
+        "outcome",
+        "path",
+        "returned_finder",
+        "spec",
+        "thread_id",
+        "thread_name"
+      ],
+      "type": "object"
+    },
+    "ImportBranchExplorationStartedDataJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "boundary": {
+          "enum": [
+            "meta_path",
+            "path_hook",
+            "path_entry"
+          ]
+        },
+        "evidence": {
+          "enum": [
+            "unsafe_import_branch_exploration"
+          ]
+        },
+        "fullname": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread_id": {
+          "type": "integer"
+        },
+        "thread_name": {
+          "type": "string"
+        },
+        "trigger": {
+          "$ref": "#/$defs/ImportObjectJSON"
+        },
+        "trigger_event_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trigger_index": {
+          "type": "integer"
+        },
+        "trigger_outcome": {
+          "enum": [
+            "found",
+            "returned",
+            "raised"
+          ]
+        }
+      },
+      "required": [
+        "boundary",
+        "evidence",
+        "fullname",
+        "path",
+        "thread_id",
+        "thread_name",
+        "trigger",
+        "trigger_event_ref",
+        "trigger_index",
+        "trigger_outcome"
       ],
       "type": "object"
     },
@@ -1955,7 +2176,10 @@
             "refused_existing_profiler",
             "unsupported_boundary",
             "active_current_and_future_threading_threads_cache_hits_not_observed",
-            "active_all_threads_including_cache_hits"
+            "active_all_threads_including_cache_hits",
+            "active_exhaustive_direct_siblings",
+            "partial_profiler_unavailable",
+            "partial_capture_prerequisites_disabled"
           ]
         },
         "dropped": {
@@ -1966,6 +2190,7 @@
         },
         "name": {
           "enum": [
+            "unsafe_import_branch_exploration",
             "meta_path_changes",
             "meta_path_replacements",
             "import_searches",
@@ -2918,7 +3143,7 @@
           "const": 3
         },
         "minor": {
-          "const": 0
+          "const": 1
         },
         "name": {
           "const": "metapathology.report"
@@ -3239,7 +3464,7 @@
       "type": "object"
     }
   },
-  "$id": "https://glinte.github.io/metapathology/schema/report-3.0.json",
+  "$id": "https://glinte.github.io/metapathology/schema/report-3.1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Stable machine-readable import-hook diagnostic report.",

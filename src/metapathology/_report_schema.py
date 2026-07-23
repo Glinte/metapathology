@@ -16,6 +16,8 @@ ReportStatus = Literal["complete", "partial", "generation_failed"]
 # registry values in ``_report_events``; keep the two in lockstep (asserted by
 # ``test_schema_vocabulary``).
 EventKind = Literal[
+    "import_branch_exploration_started",
+    "import_branch_exploration_call",
     "import_search_started",
     "import_mechanism_call",
     "import_result",
@@ -30,6 +32,17 @@ EventKind = Literal[
     "sys_path_change",
     "sys_path_replacement",
     "monitoring_error",
+]
+ImportBranchBoundary = Literal["meta_path", "path_hook", "path_entry"]
+ImportBranchTriggerOutcome = Literal["found", "returned", "raised"]
+ImportBranchExplorationOutcome = Literal[
+    "found",
+    "not_found",
+    "returned_finder",
+    "declined",
+    "raised",
+    "unsupported",
+    "negative_cache",
 ]
 
 # Closed vocabularies mirrored from the internal typing aliases.
@@ -46,13 +59,19 @@ SearchPathPhase = Literal["import"]
 StatePhase = Literal["import", "report"]
 ResolutionCategory = Literal["namespace", "built_in", "frozen", "source", "bytecode", "extension", "zip"]
 StandardEvidenceLevel = Literal["observed", "inferred"]
-FinderResultKind = Literal["observed_finder_result", "standard_path_check", "displaced_finder_check"]
+FinderResultKind = Literal[
+    "observed_finder_result",
+    "standard_path_check",
+    "displaced_finder_check",
+    "import_branch_exploration_result",
+]
 FinderResultPurpose = Literal[
     "record_custom_finder_result",
     "compare_with_current_pathfinder",
     "check_displaced_importer_cache_finder",
+    "record_skipped_import_candidate_result",
 ]
-FinderResultEvidenceLevel = Literal["observed", "current_state_check"]
+FinderResultEvidenceLevel = Literal["observed", "current_state_check", "explored"]
 FinderResultStatus = Literal[
     "found", "not_found", "failed", "target_unavailable", "finder_unavailable", "unsupported_finder"
 ]
@@ -131,6 +150,7 @@ FindingDetail = Literal[
 # finder-contract category, ``_finder_attribution`` observation, and
 # ``_module_metadata``); keep in lockstep (asserted by ``test_schema_vocabulary``).
 MechanismName = Literal[
+    "unsafe_import_branch_exploration",
     "meta_path_changes",
     "meta_path_replacements",
     "import_searches",
@@ -169,6 +189,9 @@ MechanismCompleteness = Literal[
     "unsupported_boundary",
     "active_current_and_future_threading_threads_cache_hits_not_observed",
     "active_all_threads_including_cache_hits",
+    "active_exhaustive_direct_siblings",
+    "partial_profiler_unavailable",
+    "partial_capture_prerequisites_disabled",
 ]
 FinderAPIObservationCategory = Literal["indeterminate", "legacy_only", "modern", "modern_and_legacy", "protocol_less"]
 FinderAPIObservationKind = Literal["install", "replacement", "change"]
@@ -462,6 +485,37 @@ class ImportSearchStartedDataJSON(TypedDict):
     thread_id: int
 
 
+class ImportBranchExplorationStartedDataJSON(TypedDict):
+    boundary: ImportBranchBoundary
+    evidence: Literal["unsafe_import_branch_exploration"]
+    fullname: str | None
+    path: str | None
+    trigger: ImportObjectJSON
+    trigger_event_ref: str | None
+    trigger_index: int
+    trigger_outcome: ImportBranchTriggerOutcome
+    thread_id: int
+    thread_name: str
+
+
+class ImportBranchExplorationCallDataJSON(TypedDict):
+    boundary: ImportBranchBoundary
+    candidate: ImportObjectJSON
+    candidate_index: int
+    evidence: Literal["unsafe_import_branch_exploration"]
+    exception_type_name: str | None
+    exploration_ref: str
+    fullname: str | None
+    module_state_after: ModuleStateJSON | None
+    module_state_before: ModuleStateJSON | None
+    outcome: ImportBranchExplorationOutcome
+    path: str | None
+    returned_finder: ImportObjectJSON | None
+    spec: ModuleSpecSnapshotJSON | None
+    thread_id: int
+    thread_name: str
+
+
 class ImportMechanismCallDataJSON(TypedDict):
     boundary: ImportMechanismBoundary
     evidence: Literal["detailed_delegation"]
@@ -589,7 +643,9 @@ class MonitoringErrorDataJSON(TypedDict):
 
 
 EventDataJSON = (
-    ImportSearchStartedDataJSON
+    ImportBranchExplorationCallDataJSON
+    | ImportBranchExplorationStartedDataJSON
+    | ImportSearchStartedDataJSON
     | ImportMechanismCallDataJSON
     | ImportResultDataJSON
     | ImportCallDataJSON
@@ -805,7 +861,7 @@ class CheckRunJSON(TypedDict):
 
 
 class ReportJSON(TypedDict):
-    """Complete schema 3.0 report document."""
+    """Complete schema 3.1 report document."""
 
     schema: SchemaVersion
     report_status: ReportStatus
