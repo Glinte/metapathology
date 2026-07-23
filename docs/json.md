@@ -21,9 +21,6 @@ schema_text = (
 
 ## Contract
 
-Schema 3.0 is a clean break. Removed keys and vocabulary are not accepted as
-aliases.
-
 The file follows
 [JSON Schema draft 2020-12](https://json-schema.org/draft/2020-12). A minor
 schema release may add fields or vocabulary; consumers should ignore fields
@@ -56,6 +53,8 @@ produced the report.
 - `correlated`: joined from multiple observed records.
 - `current_state`: inspected while the report was built.
 - `current_state_check`: produced by a report-time check.
+- `explored`: returned by a candidate that the real import skipped. It does not
+  predict which finder would have won.
 - `inferred` or `inferred_from_state`: derived conservatively without a direct
   event for the claim.
 

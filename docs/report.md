@@ -124,6 +124,10 @@ descendant. Editable-install finders are a common source, so try reinstalling
 the distribution, comparing editable and regular installs, and reporting the
 omission to the build backend or finder maintainer.
 
+**Further investigation.** If files or import state may have changed before
+reporting, [unsafe branch exploration](capture.md#unsafe-import-branch-exploration)
+can ask the skipped `PathFinder` during a disposable reproduction.
+
 ### `module-hides-namespace`
 
 **What it means.** `PathFinder` saw a namespace-package portion in an earlier
@@ -155,6 +159,11 @@ chooses the other behavior. The durable fix is for the tools to cooperate,
 often by delegating to or wrapping
 [`FileFinder`](https://docs.python.org/3/library/importlib.html#importlib.machinery.FileFinder).
 This finding requires path-hook-call capture.
+
+**Further investigation.** To see whether the skipped hook's finder can locate
+the affected module, use
+[unsafe branch exploration](capture.md#unsafe-import-branch-exploration) in a
+disposable reproduction.
 
 ### `legacy-finder-api`
 
@@ -207,10 +216,21 @@ The standard search uses current files, hooks, and caches. It also calls
 `PathFinder` directly, skipping other meta-path finders. Read it as “what the
 standard path search returns now,” not “what would have won earlier.”
 
+If that timing difference matters, use
+[unsafe branch exploration](capture.md#unsafe-import-branch-exploration) in a
+disposable reproduction to ask later finders during the import.
+
 The optional displaced-finder check investigates a different pattern: an
 importer-cache entry changed, a later lookup through that path failed, and the
 old finder is still available to ask about the failed module. It checks at most
 16 candidates per report and states when more were omitted.
+
+An explored result says that a skipped candidate returned a spec, returned
+nothing, or raised when called. Check its timeline events for call order and
+module-state changes.
+
+`predicts_alternative_winner` is always false. Before changing finder order,
+inspect the spec difference and look for an independently observed effect.
 
 ## Imports that did not produce a module
 

@@ -46,6 +46,20 @@ An individual check setting takes priority. For example,
 `AnalysisConfig(checks=True, standard_path_check=False)` enables the
 displaced-finder check and disables the standard-path check.
 
+## Unsafe import execution
+
+| CLI | Environment | API keyword | Default |
+| --- | --- | --- | --- |
+| `--unsafe-explore-import-branches` | `METAPATHOLOGY_UNSAFE_EXPLORE_IMPORT_BRANCHES` | `unsafe_explore_import_branches` | off |
+
+This executes skipped finder and hook code. Read
+[Unsafe import-branch exploration](capture.md#unsafe-import-branch-exploration)
+before using it.
+
+It enables its required capture mechanisms unless you explicitly disabled one.
+It never replaces an existing profiler. Either case is reported as partial
+coverage. Loader and `__import__` call capture remain off.
+
 ## Report destinations
 
 With no destination option, the CLI writes one text report to standard error.

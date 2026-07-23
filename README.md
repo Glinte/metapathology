@@ -21,9 +21,9 @@ checking, tracing, and packaging tools. When two hooks claim the same module,
 the first one can quietly bypass the other. `metapathology` runs the failing
 program and records enough evidence to show that contention.
 
-It observes imports; it never returns a module spec or changes which finder
-wins. Runtime code uses only the Python standard library and supports CPython
-3.10+.
+By default, it only observes imports: it never returns a module spec or changes
+which finder wins. Runtime code uses only the Python standard library and
+supports CPython 3.10+.
 
 ## Start here
 

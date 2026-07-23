@@ -95,6 +95,20 @@ python -m metapathology --capture-loader-calls app.py
 
 See [Choosing capture](capture.md) for the decision table.
 
+## Invoke skipped candidates only in a disposable run
+
+If the report shows a skipped candidate and you still need its live answer,
+rerun the smallest reproduction with:
+
+```console
+python -m metapathology --unsafe-explore-import-branches app.py
+```
+
+Run it only in a disposable process or container. It executes skipped
+third-party code, and side effects cannot be rolled back. Read the result as
+“what it returned now,” not “what would have won.” See
+[Choosing capture](capture.md#unsafe-import-branch-exploration).
+
 ## Stop after the relevant operation
 
 Long-lived processes retain events until reporting. If the CLI wrapper is not a

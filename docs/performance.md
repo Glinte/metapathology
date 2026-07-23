@@ -65,6 +65,11 @@ path-entry-finder, loader, or `__import__` calls. A single import can cross
 several of these points, so detailed event counts can be much larger than the
 number of imported modules.
 
+Unsafe exploration calls every skipped direct candidate synchronously and
+retains every result. There is no cap. Use the smallest reproduction and stop
+after the relevant import. See
+[Unsafe import-branch exploration](capture.md#unsafe-import-branch-exploration).
+
 Every event is retained until the process ends or the monitor is uninstalled.
 Nothing is silently discarded. Importer-cache snapshot storage keeps the
 installation snapshot and latest snapshot, while cache-change events remain in

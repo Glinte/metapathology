@@ -86,3 +86,40 @@ disabled.
 
 If you explicitly disable a required capture mechanism, the check remains
 requested but is reported as unavailable, with the missing requirement listed.
+
+## Unsafe import-branch exploration
+
+Use this only when the report shows a skipped finder or hook and you need to
+know what it returns during the failing import.
+
+```console
+python -m metapathology --unsafe-explore-import-branches app.py
+```
+
+Run it in a disposable process or container. It executes third-party code that
+the import skipped. That code can change state, perform I/O, hang, or exit.
+Metapathology does not undo those effects.
+
+### What it calls
+
+After the real import chooses a result or raises, metapathology calls the
+remaining direct candidates in order:
+
+- later entries in `sys.meta_path`;
+- later `sys.path_hooks` and each returned finder; and
+- later entries in the active search path.
+
+It stops there. It does not explore new branches created by those calls or
+execute alternative loaders.
+
+### How to use the result
+
+An explored result answers only: “What did this candidate return when called
+now?” It does not show which finder would have won. Check the timeline for
+earlier explored calls and state changes before trusting a later answer.
+
+Calls are synchronous and uncapped. Shorten the reproduction if it becomes too
+slow or retains too much data. An existing profiler or an explicitly disabled
+prerequisite produces partial coverage; missing records are then inconclusive.
+Uninstall restores metapathology's instrumentation, not third-party side
+effects.

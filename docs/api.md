@@ -29,6 +29,7 @@ install(
     report_color=None,
     capture=None,
     analysis=None,
+    unsafe_explore_import_branches=None,
 ) -> Monitor
 ```
 
@@ -40,6 +41,11 @@ mutation.
 instrumentation. Python does not provide a way to remove a
 [`sys.addaudithook()` hook](https://docs.python.org/3/library/sys.html#sys.addaudithook),
 so that hook remains installed but becomes inert.
+
+`unsafe_explore_import_branches=True` calls skipped finders and hooks during the
+import. Use it only in a disposable process or container. Returned specs are
+discarded, but other side effects are not undone. See
+[Unsafe import-branch exploration](capture.md#unsafe-import-branch-exploration).
 
 ## Scoped monitoring
 
@@ -146,3 +152,8 @@ Useful monitor properties include `enabled`, the six core `*_enabled` values,
 `detailed_capture`, and the three detailed status properties. A status explains
 whether exact import results, import-call capture, or aggregate `PathFinder`
 capture was active or why it was unavailable.
+
+`unsafe_import_branch_exploration_status` reports complete, partial, disabled,
+or uninstalled coverage. Partial coverage means some skipped calls may be
+missing because a profiler was already installed or a prerequisite was
+disabled.

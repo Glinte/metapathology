@@ -55,6 +55,17 @@ Checks call finder methods supplied by Python or third-party packages.
 Exceptions are isolated and reported, but those methods can still have side
 effects.
 
+## Unsafe exploration can change the run
+
+Unsafe exploration executes code the import skipped. It does not execute
+alternative loaders, but it cannot undo other side effects. Calls run in order,
+so one explored finder can also affect the next.
+
+An explored result is not proof that a finder would have won or that its loader
+would work. See
+[Unsafe import-branch exploration](capture.md#unsafe-import-branch-exploration)
+for the exact boundary.
+
 ## Evidence is retained
 
 Every event from an enabled capture mechanism is retained until reporting.
