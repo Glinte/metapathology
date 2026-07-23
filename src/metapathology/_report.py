@@ -1,6 +1,6 @@
 """Report rendering and output boundaries.
 
-Live-state capture and resolution-route analysis happen once before rendering.
+Live-state capture and finder-result analysis happen once before rendering.
 The renderers only project that document, while this module contains the I/O
 behavior shared by explicit, CLI, and atexit reporting.
 """

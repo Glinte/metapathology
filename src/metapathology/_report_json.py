@@ -11,107 +11,107 @@ import time
 from metapathology import __version__
 from metapathology._module_metadata import ModuleMetadata
 from metapathology._records import (
-    DeepDiagnosticCall,
-    DeepImportEvent,
-    FinderContract,
-    FindSpecCall,
-    ImportAuditStart,
+    FinderAPIObservation,
     ImportCall,
-    ImporterCacheDiff,
+    ImporterCacheChange,
     ImporterCacheEntry,
     ImporterCacheReplacement,
-    InternalError,
-    MetaPathMutation,
-    MetaPathReassignment,
+    ImportMechanismCall,
+    ImportResult,
+    ImportSearchStarted,
+    MetaPathChange,
+    MetaPathFinderCall,
+    MetaPathReplacement,
     ModuleCacheState,
+    ModuleSpecSnapshot,
     MonitorEvent,
-    ObjectRef,
-    PathHooksMutation,
-    PathHooksReassignment,
-    SpecSummary,
-    StandardFinderCall,
-    SysPathMutation,
-    SysPathReassignment,
+    MonitoringError,
+    ObjectIdentity,
+    PathFinderCall,
+    PathHooksChange,
+    PathHooksReplacement,
+    SysPathChange,
+    SysPathReplacement,
 )
-from metapathology._report_analysis import _finder_contract_category
+from metapathology._report_analysis import _finder_api_category
 from metapathology._report_events import EVENT_COUNT_KEY, EVENT_KIND
 from metapathology._report_model import (
     CausalExplanation,
-    ClaimEvidence,
-    ContractEvidence,
+    CheckRun,
     CorrelationEvidence,
-    DeepCallEvidence,
     EarlySiteBootstrap,
+    FinderAPIEvidence,
+    FinderCallEvidence,
+    FinderComparisonEvidence,
+    FinderResult,
+    FinderResultComparison,
     Finding,
     FrozenBootstrap,
-    ImportAttempt,
+    ImportMechanismEvidence,
+    ImportSearch,
     LoaderInventory,
-    ProbeRun,
+    ProgramOutcome,
     ReportDocument,
     ReportSummary,
-    ResolutionRoute,
-    RouteComparison,
-    RouteEvidence,
     StandardResolution,
     StructuralComparison,
-    TargetOutcome,
-    finding_claim,
-    finding_deep_call,
-    finding_finder_contract,
+    finding_finder_api,
+    finding_finder_call,
+    finding_import_mechanism_call,
     finding_structural_comparison,
 )
 from metapathology._report_schema import (
-    DeepDiagnosticCallDataJSON,
-    DeepImportEventDataJSON,
+    CheckRunJSON,
     DiagnosticsInfo,
     EarlySiteBootstrapJSON,
     EventDataJSON,
     EventJSON,
     ExplanationJSON,
-    FinderContractJSON,
-    FindingClaimJSON,
-    FindingDeepCallJSON,
+    FinderAPIObservationJSON,
+    FinderResultComparisonJSON,
+    FinderResultJSON,
     FindingEvidenceDataJSON,
     FindingEvidenceJSON,
+    FindingFinderCallJSON,
+    FindingImportMechanismCallJSON,
     FindingJSON,
-    FindSpecCallDataJSON,
     FrameJSON,
     FrozenBootstrapJSON,
-    ImportAttemptJSON,
-    ImportAuditStartDataJSON,
     ImportCallDataJSON,
-    ImporterCacheDiffDataJSON,
+    ImporterCacheChangeDataJSON,
     ImporterCacheEntryJSON,
     ImporterCacheReplacementJSON,
+    ImportMechanismCallDataJSON,
     ImportObjectJSON,
     ImportObjectValueJSON,
-    InternalErrorDataJSON,
+    ImportResultDataJSON,
+    ImportSearchJSON,
+    ImportSearchStartedDataJSON,
     LoaderGroupJSON,
     LoaderInventoryInfo,
     MechanismCompleteness,
     MechanismJSON,
     MechanismName,
-    MetaPathMutationDataJSON,
+    MetaPathChangeDataJSON,
+    MetaPathFinderCallDataJSON,
     ModuleMetadataJSON,
+    ModuleSpecSnapshotJSON,
     ModuleStateJSON,
-    PathHooksMutationDataJSON,
-    PathHooksReassignmentDataJSON,
-    ProbeRunJSON,
+    MonitoringErrorDataJSON,
+    PathFinderCallDataJSON,
+    PathHooksChangeDataJSON,
+    PathHooksReplacementDataJSON,
     ProcessInfo,
+    ProgramOutcomeJSON,
     ReassignmentDataJSON,
     ReportJSON,
     ReportStatus,
-    ResolutionRouteJSON,
-    RouteComparisonJSON,
     SnapshotJSON,
-    SpecSummaryJSON,
     SpecValueJSON,
-    StandardFinderCallDataJSON,
     StandardResolutionJSON,
     StructuralComparisonJSON,
     SummaryInfo,
-    SysPathMutationDataJSON,
-    TargetOutcomeJSON,
+    SysPathChangeDataJSON,
 )
 
 TYPE_CHECKING = False
@@ -135,28 +135,28 @@ def _json_events(
     counts: dict[EventCountKind, int] = {
         "audit_starts": 0,
         "calls": 0,
-        "deep_calls": 0,
-        "deep_import_events": 0,
+        "import_mechanism_calls": 0,
+        "import_results": 0,
         "import_calls": 0,
-        "importer_cache_diffs": 0,
-        "mutations": 0,
-        "path_hook_mutations": 0,
-        "path_hook_reassignments": 0,
-        "reassignments": 0,
-        "standard_finder_calls": 0,
-        "sys_path_mutations": 0,
-        "sys_path_reassignments": 0,
+        "importer_cache_changes": 0,
+        "meta_path_changes": 0,
+        "path_hooks_changes": 0,
+        "path_hooks_replacements": 0,
+        "meta_path_replacements": 0,
+        "path_finder_calls": 0,
+        "sys_path_changes": 0,
+        "sys_path_replacements": 0,
     }
     timeline: list[EventJSON] = []
-    internal_error_refs: list[str] = []
+    monitoring_error_refs: list[str] = []
     for event in events:
         timeline.append(_json_event(event))
         count_key = EVENT_COUNT_KEY.get(type(event))
         if count_key is not None:
             counts[count_key] += 1
-        elif isinstance(event, InternalError):
-            internal_error_refs.append(f"event:{event.seq}")
-    return timeline, counts, internal_error_refs
+        elif isinstance(event, MonitoringError):
+            monitoring_error_refs.append(f"event:{event.sequence}")
+    return timeline, counts, monitoring_error_refs
 
 
 def json_document(document: ReportDocument) -> ReportJSON:
@@ -166,8 +166,8 @@ def json_document(document: ReportDocument) -> ReportJSON:
 
 def _build_json_document(document: ReportDocument) -> ReportJSON:
     """Project one report document onto the stable JSON schema."""
-    timeline, event_counts, internal_error_refs = _json_events(document.analysis.events)
-    report_status: ReportStatus = "partial" if document.analysis.report_errors or internal_error_refs else "complete"
+    timeline, event_counts, monitoring_error_refs = _json_events(document.analysis.events)
+    report_status: ReportStatus = "partial" if document.analysis.report_errors or monitoring_error_refs else "complete"
     return {
         "schema": {"major": _SCHEMA_MAJOR, "minor": _SCHEMA_MINOR, "name": _SCHEMA_NAME},
         "report_status": report_status,
@@ -187,20 +187,22 @@ def _build_json_document(document: ReportDocument) -> ReportJSON:
         },
         "snapshots": _json_snapshots(document),
         "loader_inventory": _json_loader_inventory(document.analysis.loader_inventory),
-        "finder_contracts": [_json_finder_contract(contract) for contract in document.analysis.finder_contracts],
-        "import_attempts": [_json_import_attempt(attempt) for attempt in document.analysis.attempts],
+        "finder_apis": [_json_finder_api(observation) for observation in document.analysis.finder_apis],
+        "import_searches": [_json_import_search(search) for search in document.analysis.searches],
         "standard_resolutions": [
             _json_standard_resolution(resolution) for resolution in document.analysis.standard_resolutions
         ],
-        "resolution_routes": [_json_resolution_route(route) for route in document.analysis.resolution_routes],
-        "route_comparisons": [_json_route_comparison(comparison) for comparison in document.analysis.route_comparisons],
+        "finder_results": [_json_resolution_result(result) for result in document.analysis.finder_results],
+        "finder_result_comparisons": [
+            _json_result_comparison(comparison) for comparison in document.analysis.finder_result_comparisons
+        ],
         "timeline": timeline,
         "findings": [_json_finding(finding) for finding in document.analysis.findings],
         "explanations": [_json_explanation(explanation) for explanation in document.analysis.explanations],
         "summary": _json_summary(document.analysis.summary),
-        "probes": [_json_probe_run(run) for run in document.analysis.probes],
-        "target_outcome": _json_target_outcome(document.analysis.target_outcome),
-        "diagnostics": _json_diagnostics(document, internal_error_refs),
+        "checks": [_json_check_run(run) for run in document.analysis.checks],
+        "program_outcome": _json_program_outcome(document.analysis.program_outcome),
+        "diagnostics": _json_diagnostics(document, monitoring_error_refs),
     }
 
 
@@ -225,15 +227,17 @@ def _json_mechanisms(
 ) -> list[MechanismJSON]:
     """Describe the independently enabled capture mechanisms."""
     return [
-        _mechanism("meta_path_mutations", document.capture.meta_path_enabled, event_counts["mutations"], "best_effort"),
         _mechanism(
-            "meta_path_reassignments",
+            "meta_path_changes", document.capture.meta_path_enabled, event_counts["meta_path_changes"], "best_effort"
+        ),
+        _mechanism(
+            "meta_path_replacements",
             document.capture.meta_path_enabled and document.capture.import_audit_enabled,
-            event_counts["reassignments"],
+            event_counts["meta_path_replacements"],
             "import_boundaries",
         ),
         _mechanism(
-            "import_audit_starts",
+            "import_searches",
             document.capture.import_audit_enabled,
             event_counts["audit_starts"],
             "resolution_starts",
@@ -245,57 +249,57 @@ def _json_mechanisms(
             "instrumented_finders",
         ),
         _mechanism(
-            "finder_contracts",
+            "finder_apis",
             document.capture.finder_attribution_enabled,
-            len(document.analysis.finder_contracts),
+            len(document.analysis.finder_apis),
             "first_observation_per_identity",
         ),
         _mechanism(
-            "deep_diagnostics",
-            bool(document.capture.deep_diagnostics),
-            event_counts["deep_calls"],
+            "detailed_capture",
+            bool(document.capture.detailed_capture),
+            event_counts["import_mechanism_calls"],
             "delegated_boundaries",
         ),
         _mechanism(
-            "deep_import_outcomes",
-            "import_outcomes" in document.capture.deep_diagnostics,
-            event_counts["deep_import_events"],
-            document.capture.deep_import_outcomes_status,
+            "import_results",
+            "import_results" in document.capture.detailed_capture,
+            event_counts["import_results"],
+            document.capture.import_results_capture_status,
         ),
         _mechanism(
-            "deep_import_calls",
-            "import_calls" in document.capture.deep_diagnostics,
+            "import_calls",
+            "import_calls" in document.capture.detailed_capture,
             event_counts["import_calls"],
-            document.capture.deep_import_calls_status,
+            document.capture.import_calls_capture_status,
         ),
         _mechanism(
-            "standard_finder_aggregate",
-            document.capture.standard_finder_status.startswith("active_"),
-            event_counts["standard_finder_calls"],
-            document.capture.standard_finder_status,
+            "path_finder_calls",
+            document.capture.path_finder_capture_status.startswith("active_"),
+            event_counts["path_finder_calls"],
+            document.capture.path_finder_capture_status,
         ),
-        _route_analysis_mechanism(document),
+        _result_analysis_mechanism(document),
         _mechanism(
-            "path_hooks_mutations", document.path_hooks.enabled, event_counts["path_hook_mutations"], "best_effort"
+            "path_hooks_changes", document.path_hooks.enabled, event_counts["path_hooks_changes"], "best_effort"
         ),
         _mechanism(
-            "path_hooks_reassignments",
+            "path_hooks_replacements",
             document.path_hooks.enabled and document.capture.import_audit_enabled,
-            event_counts["path_hook_reassignments"],
+            event_counts["path_hooks_replacements"],
             "import_boundaries",
         ),
-        _mechanism("sys_path_mutations", document.sys_path_enabled, event_counts["sys_path_mutations"], "best_effort"),
+        _mechanism("sys_path_changes", document.sys_path_enabled, event_counts["sys_path_changes"], "best_effort"),
         _mechanism(
-            "sys_path_reassignments",
+            "sys_path_replacements",
             document.sys_path_enabled and document.capture.import_audit_enabled,
-            event_counts["sys_path_reassignments"],
+            event_counts["sys_path_replacements"],
             "import_boundaries",
         ),
         _cache_snapshot_mechanism(document),
         _mechanism(
-            "importer_cache_diffs",
+            "importer_cache_changes",
             document.importer_cache.enabled,
-            event_counts["importer_cache_diffs"],
+            event_counts["importer_cache_changes"],
             "passive_boundaries",
         ),
     ]
@@ -355,10 +359,10 @@ def _json_snapshots(document: ReportDocument) -> list[SnapshotJSON]:
     ]
 
 
-def _json_diagnostics(document: ReportDocument, internal_error_refs: list[str]) -> DiagnosticsInfo:
+def _json_diagnostics(document: ReportDocument, monitoring_error_refs: list[str]) -> DiagnosticsInfo:
     """Project failures isolated while observing or reporting."""
     return {
-        "internal_error_refs": internal_error_refs,
+        "monitoring_error_refs": monitoring_error_refs,
         "report_errors": [
             {"exception_type_name": error.exception_type_name, "where": error.where}
             for error in document.analysis.report_errors
@@ -388,39 +392,41 @@ def _mechanism(name: MechanismName, enabled: bool, retained: int, completeness: 
     }
 
 
-def _json_finder_contract(contract: FinderContract) -> FinderContractJSON:
-    """Project one finder contract without consulting the live finder."""
+def _json_finder_api(observation: FinderAPIObservation) -> FinderAPIObservationJSON:
+    """Project one finder API observation without consulting the live finder."""
     return {
-        "category": _finder_contract_category(contract),
-        "id": _finder_contract_id(contract),
-        "finder_id": f"0x{contract.finder_id:x}",
-        "finder_type_name": contract.finder_type_name,
+        "category": _finder_api_category(observation),
+        "id": _finder_api_id(observation),
+        "finder_id": f"0x{observation.finder_id:x}",
+        "finder_type_name": observation.finder_type_name,
         "find_module": {
-            "availability": contract.find_module.availability,
-            "defined_by": contract.find_module.defined_by,
-            "evidence": contract.find_module.evidence,
+            "availability": observation.find_module.availability,
+            "defined_by": observation.find_module.defined_by,
+            "evidence": observation.find_module.evidence,
         },
         "find_spec": {
-            "availability": contract.find_spec.availability,
-            "defined_by": contract.find_spec.defined_by,
-            "evidence": contract.find_spec.evidence,
+            "availability": observation.find_spec.availability,
+            "defined_by": observation.find_spec.defined_by,
+            "evidence": observation.find_spec.evidence,
         },
-        "observation": contract.observation,
-        "observation_event_ref": None if contract.observation_seq is None else f"event:{contract.observation_seq}",
-        "position": contract.position,
+        "observation": observation.observation,
+        "observation_event_ref": (
+            None if observation.observation_seq is None else f"event:{observation.observation_seq}"
+        ),
+        "position": observation.position,
     }
 
 
-def _route_analysis_mechanism(document: ReportDocument) -> MechanismJSON:
+def _result_analysis_mechanism(document: ReportDocument) -> MechanismJSON:
     return {
         "capacity": None,
-        "comparison_count": len(document.analysis.route_comparisons),
+        "comparison_count": len(document.analysis.finder_result_comparisons),
         "completeness": "reported_custom_winners",
         "dropped": 0,
         "enabled": document.capture.monitor_enabled,
-        "name": "resolution_route_analysis",
+        "name": "finder_result_analysis",
         "overflow_policy": "retain_all",
-        "retained": len(document.analysis.resolution_routes),
+        "retained": len(document.analysis.finder_results),
         "shutdown": "synchronous_no_retry",
     }
 
@@ -440,9 +446,9 @@ def _cache_snapshot_mechanism(document: ReportDocument) -> MechanismJSON:
     }
 
 
-def _finder_contract_id(contract: FinderContract) -> str:
-    """Return the document-scoped id for one observed finder contract."""
-    return f"finder-contract:0x{contract.finder_id:x}"
+def _finder_api_id(observation: FinderAPIObservation) -> str:
+    """Return the document-scoped id for one observed finder API."""
+    return f"finder-api:0x{observation.finder_id:x}"
 
 
 def _json_early_site_bootstrap(bootstrap: EarlySiteBootstrap | None) -> EarlySiteBootstrapJSON | None:
@@ -479,7 +485,7 @@ def _json_module_state(state: ModuleCacheState | None) -> ModuleStateJSON | None
     }
 
 
-def _json_import_audit_start(event: ImportAuditStart) -> ImportAuditStartDataJSON:
+def _json_import_search_started(event: ImportSearchStarted) -> ImportSearchStartedDataJSON:
     return {
         "evidence": "resolution_started",
         "fullname": event.fullname,
@@ -489,7 +495,7 @@ def _json_import_audit_start(event: ImportAuditStart) -> ImportAuditStartDataJSO
             "object_id": f"0x{event.importer_cache_id:x}",
             "size": event.importer_cache_size,
         },
-        "attempt_ref": f"attempt:{event.attempt_id}",
+        "search_ref": f"search:{event.search_id}",
         "meta_path": {
             "entries": list(event.meta_path_type_names),
             "object_id": f"0x{event.meta_path_id:x}",
@@ -500,10 +506,10 @@ def _json_import_audit_start(event: ImportAuditStart) -> ImportAuditStartDataJSO
     }
 
 
-def _json_deep_diagnostic_call(event: DeepDiagnosticCall) -> DeepDiagnosticCallDataJSON:
+def _json_import_mechanism_call(event: ImportMechanismCall) -> ImportMechanismCallDataJSON:
     return {
         "boundary": event.boundary,
-        "evidence": "deep_delegation",
+        "evidence": "detailed_delegation",
         "exception_type_name": event.exception_type_name,
         "fullname": event.fullname,
         "module_state_after": _json_module_state(event.module_state_after),
@@ -519,9 +525,9 @@ def _json_deep_diagnostic_call(event: DeepDiagnosticCall) -> DeepDiagnosticCallD
     }
 
 
-def _json_deep_import_event(event: DeepImportEvent) -> DeepImportEventDataJSON:
+def _json_import_result(event: ImportResult) -> ImportResultDataJSON:
     return {
-        "attempt_ref": f"attempt:{event.attempt_id}",
+        "search_ref": f"search:{event.search_id}",
         "evidence": "exact_import_boundary",
         "fullname": event.fullname,
         "outcome": event.outcome,
@@ -545,10 +551,10 @@ def _json_import_call(event: ImportCall) -> ImportCallDataJSON:
     }
 
 
-def _json_standard_finder_call(event: StandardFinderCall) -> StandardFinderCallDataJSON:
+def _json_path_finder_call(event: PathFinderCall) -> PathFinderCallDataJSON:
     return {
-        "attempt_ref": f"attempt:{event.attempt_id}",
-        "evidence": "captured_standard_finder_boundary",
+        "search_ref": f"search:{event.search_id}",
+        "evidence": "observed_path_finder_boundary",
         "finder_type_name": event.finder_type_name,
         "fullname": event.fullname,
         "spec": _json_spec_summary(event.spec_summary),
@@ -557,7 +563,7 @@ def _json_standard_finder_call(event: StandardFinderCall) -> StandardFinderCallD
     }
 
 
-def _json_find_spec_call(event: FindSpecCall) -> FindSpecCallDataJSON:
+def _json_meta_path_finder_call(event: MetaPathFinderCall) -> MetaPathFinderCallDataJSON:
     return {
         "exception_type_name": event.exception_type_name,
         "finder_id": f"0x{event.finder_id:x}",
@@ -577,7 +583,7 @@ def _json_find_spec_call(event: FindSpecCall) -> FindSpecCallDataJSON:
     }
 
 
-def _json_importer_cache_diff(event: ImporterCacheDiff) -> ImporterCacheDiffDataJSON:
+def _json_importer_cache_change(event: ImporterCacheChange) -> ImporterCacheChangeDataJSON:
     return {
         "added": [_json_importer_cache_entry(entry) for entry in event.added],
         "non_string_keys_after": event.non_string_keys_after,
@@ -589,7 +595,7 @@ def _json_importer_cache_diff(event: ImporterCacheDiff) -> ImporterCacheDiffData
     }
 
 
-def _json_meta_path_mutation(event: MetaPathMutation) -> MetaPathMutationDataJSON:
+def _json_meta_path_change(event: MetaPathChange) -> MetaPathChangeDataJSON:
     return {
         "added": list(event.added),
         "contents_after": list(event.contents_after),
@@ -600,7 +606,7 @@ def _json_meta_path_mutation(event: MetaPathMutation) -> MetaPathMutationDataJSO
     }
 
 
-def _json_meta_path_reassignment(event: MetaPathReassignment) -> ReassignmentDataJSON:
+def _json_meta_path_replacement(event: MetaPathReplacement) -> ReassignmentDataJSON:
     return {
         "during_import": event.during_import,
         "new_contents": list(event.new_contents),
@@ -610,7 +616,7 @@ def _json_meta_path_reassignment(event: MetaPathReassignment) -> ReassignmentDat
     }
 
 
-def _json_path_hooks_mutation(event: PathHooksMutation) -> PathHooksMutationDataJSON:
+def _json_path_hooks_change(event: PathHooksChange) -> PathHooksChangeDataJSON:
     return {
         "added": [_json_import_object(reference) for reference in event.added],
         "contents_after": [_json_import_object(reference) for reference in event.contents_after],
@@ -621,7 +627,7 @@ def _json_path_hooks_mutation(event: PathHooksMutation) -> PathHooksMutationData
     }
 
 
-def _json_path_hooks_reassignment(event: PathHooksReassignment) -> PathHooksReassignmentDataJSON:
+def _json_path_hooks_replacement(event: PathHooksReplacement) -> PathHooksReplacementDataJSON:
     return {
         "during_import": event.during_import,
         "new_contents": [_json_import_object(reference) for reference in event.new_contents],
@@ -631,7 +637,7 @@ def _json_path_hooks_reassignment(event: PathHooksReassignment) -> PathHooksReas
     }
 
 
-def _json_sys_path_mutation(event: SysPathMutation) -> SysPathMutationDataJSON:
+def _json_sys_path_change(event: SysPathChange) -> SysPathChangeDataJSON:
     return {
         "added": list(event.added),
         "contents_after": list(event.contents_after),
@@ -642,7 +648,7 @@ def _json_sys_path_mutation(event: SysPathMutation) -> SysPathMutationDataJSON:
     }
 
 
-def _json_sys_path_reassignment(event: SysPathReassignment) -> ReassignmentDataJSON:
+def _json_sys_path_replacement(event: SysPathReplacement) -> ReassignmentDataJSON:
     return {
         "during_import": event.during_import,
         "new_contents": list(event.new_contents),
@@ -652,7 +658,7 @@ def _json_sys_path_reassignment(event: SysPathReassignment) -> ReassignmentDataJ
     }
 
 
-def _json_internal_error(event: InternalError) -> InternalErrorDataJSON:
+def _json_monitoring_error(event: MonitoringError) -> MonitoringErrorDataJSON:
     return {
         "exception_type_name": event.exception_type_name,
         "message": event.message,
@@ -661,56 +667,56 @@ def _json_internal_error(event: InternalError) -> InternalErrorDataJSON:
 
 
 # One serializer per event type, returning the kind-specific ``data`` payload.
-# ``_json_event`` wraps it in the shared ``{id, seq, kind, data}`` envelope. New
+# ``_json_event`` wraps it in the shared ``{id, sequence, kind, data}`` envelope. New
 # event types must be added here and in ``_report_events`` together.
 _EVENT_JSON_BUILDERS: "dict[type[MonitorEvent], Callable[..., EventDataJSON]]" = {
-    ImportAuditStart: _json_import_audit_start,
-    DeepDiagnosticCall: _json_deep_diagnostic_call,
-    DeepImportEvent: _json_deep_import_event,
+    ImportSearchStarted: _json_import_search_started,
+    ImportMechanismCall: _json_import_mechanism_call,
+    ImportResult: _json_import_result,
     ImportCall: _json_import_call,
-    StandardFinderCall: _json_standard_finder_call,
-    FindSpecCall: _json_find_spec_call,
-    ImporterCacheDiff: _json_importer_cache_diff,
-    MetaPathMutation: _json_meta_path_mutation,
-    MetaPathReassignment: _json_meta_path_reassignment,
-    PathHooksMutation: _json_path_hooks_mutation,
-    PathHooksReassignment: _json_path_hooks_reassignment,
-    SysPathMutation: _json_sys_path_mutation,
-    SysPathReassignment: _json_sys_path_reassignment,
-    InternalError: _json_internal_error,
+    PathFinderCall: _json_path_finder_call,
+    MetaPathFinderCall: _json_meta_path_finder_call,
+    ImporterCacheChange: _json_importer_cache_change,
+    MetaPathChange: _json_meta_path_change,
+    MetaPathReplacement: _json_meta_path_replacement,
+    PathHooksChange: _json_path_hooks_change,
+    PathHooksReplacement: _json_path_hooks_replacement,
+    SysPathChange: _json_sys_path_change,
+    SysPathReplacement: _json_sys_path_replacement,
+    MonitoringError: _json_monitoring_error,
 }
 
 
 def _json_event(event: MonitorEvent) -> EventJSON:
     """Wrap one event's kind-specific payload in the shared envelope."""
     return {
-        "id": f"event:{event.seq}",
-        "seq": event.seq,
+        "id": f"event:{event.sequence}",
+        "sequence": event.sequence,
         "kind": EVENT_KIND[type(event)],
         "data": _EVENT_JSON_BUILDERS[type(event)](event),
     }
 
 
-def _json_import_attempt(attempt: ImportAttempt) -> ImportAttemptJSON:
-    """Serialize one derived attempt while retaining links to raw evidence."""
+def _json_import_search(search: ImportSearch) -> ImportSearchJSON:
+    """Serialize one derived search while retaining links to raw evidence."""
     return {
-        "id": f"attempt:{attempt.attempt_id}",
-        "fullname": attempt.fullname,
-        "start_event_ref": f"event:{attempt.start_event_seq}",
-        "evidence_event_refs": [f"event:{seq}" for seq in attempt.event_seqs],
-        "thread_id": attempt.thread_id,
-        "thread_name": attempt.thread_name,
-        "progress": attempt.progress,
-        "presence": attempt.presence,
+        "id": f"search:{search.search_id}",
+        "fullname": search.fullname,
+        "start_event_ref": f"event:{search.start_event_seq}",
+        "evidence_event_refs": [f"event:{sequence}" for sequence in search.event_seqs],
+        "thread_id": search.thread_id,
+        "thread_name": search.thread_name,
+        "progress": search.progress,
+        "presence": search.presence,
     }
 
 
 def _json_standard_resolution(resolution: StandardResolution) -> StandardResolutionJSON:
     """Serialize provenance without presenting inference as a raw event."""
     return {
-        "attempt_ref": f"attempt:{resolution.attempt_id}",
+        "search_ref": f"search:{resolution.search_id}",
         "category": resolution.category,
-        "component_event_refs": [f"event:{seq}" for seq in resolution.component_event_seqs],
+        "component_event_refs": [f"event:{sequence}" for sequence in resolution.component_event_seqs],
         "evidence_level": resolution.evidence_level,
         "event_ref": None if resolution.event_seq is None else f"event:{resolution.event_seq}",
         "finder_type_name": resolution.finder_type_name,
@@ -722,46 +728,46 @@ def _json_standard_resolution(resolution: StandardResolution) -> StandardResolut
     }
 
 
-def _json_resolution_route(route: ResolutionRoute) -> ResolutionRouteJSON:
-    """Serialize one route without implying that a probe predicts a winner."""
-    summary = route.spec_summary
+def _json_resolution_result(result: FinderResult) -> FinderResultJSON:
+    """Serialize one result without implying that a check predicts a winner."""
+    summary = result.spec_summary
     return {
-        "id": route.route_id,
-        "module": route.module,
-        "kind": route.kind,
-        "purpose": route.purpose,
-        "limitations": list(route.limitations),
-        "evidence_level": route.evidence_level,
-        "state_phase": route.state_phase,
-        "predicts_alternative_winner": route.predicts_alternative_winner,
-        "finder_type_name": route.finder_type_name,
-        "finder_id": None if route.finder_id is None else f"0x{route.finder_id:x}",
-        "status": route.status,
+        "id": result.result_id,
+        "module": result.module,
+        "kind": result.kind,
+        "purpose": result.purpose,
+        "limitations": list(result.limitations),
+        "evidence_level": result.evidence_level,
+        "state_phase": result.state_phase,
+        "predicts_alternative_winner": result.predicts_alternative_winner,
+        "finder_type_name": result.finder_type_name,
+        "finder_id": None if result.finder_id is None else f"0x{result.finder_id:x}",
+        "status": result.status,
         "spec": None if summary is None else _json_spec_summary(summary),
-        "exception_type_name": route.exception_type_name,
-        "source_event_refs": [f"event:{seq}" for seq in route.source_event_seqs],
-        "search_path": list(route.search_path),
-        "search_path_kind": route.search_path_kind,
-        "search_path_phase": route.search_path_phase,
-        "signals": list(route.signals),
+        "exception_type_name": result.exception_type_name,
+        "source_event_refs": [f"event:{sequence}" for sequence in result.source_event_seqs],
+        "search_path": list(result.search_path),
+        "search_path_kind": result.search_path_kind,
+        "search_path_phase": result.search_path_phase,
+        "signals": list(result.signals),
     }
 
 
-def _json_route_comparison(comparison: RouteComparison) -> RouteComparisonJSON:
-    """Serialize symmetric route differences and stable route references."""
+def _json_result_comparison(comparison: FinderResultComparison) -> FinderResultComparisonJSON:
+    """Serialize symmetric result differences and stable result references."""
     structural = comparison.structural_comparison
     return {
         "id": comparison.comparison_id,
-        "left_route_ref": comparison.left_route_id,
-        "right_route_ref": comparison.right_route_id,
+        "left_result_ref": comparison.left_result_id,
+        "right_result_ref": comparison.right_result_id,
         "complete": comparison.complete,
         "status_differs": comparison.status_differs,
         "loader_type_differs": comparison.loader_type_differs,
         "origin_differs": comparison.origin_differs,
         "cached_differs": comparison.cached_differs,
         "package_status_differs": comparison.package_status_differs,
-        "only_in_left_route": list(comparison.only_in_left_route),
-        "only_in_right_route": list(comparison.only_in_right_route),
+        "only_in_left_result": list(comparison.only_in_left_result),
+        "only_in_right_result": list(comparison.only_in_right_result),
         "locations_reordered": comparison.locations_reordered,
         "left_locations_state": comparison.left_locations_state,
         "right_locations_state": comparison.right_locations_state,
@@ -770,7 +776,7 @@ def _json_route_comparison(comparison: RouteComparison) -> RouteComparisonJSON:
             "importer_cache": {
                 "changed": structural.importer_cache_changed,
                 "changed_paths": list(structural.importer_cache_changed_paths),
-                "change_event_refs": [f"event:{seq}" for seq in structural.importer_cache_event_seqs],
+                "change_event_refs": [f"event:{sequence}" for sequence in structural.importer_cache_event_seqs],
                 "install_snapshot_ref": "snapshot:importer-cache:install",
                 "report_snapshot_ref": "snapshot:importer-cache:report",
             },
@@ -783,7 +789,7 @@ def _json_route_comparison(comparison: RouteComparison) -> RouteComparisonJSON:
     }
 
 
-def _json_import_object(reference: ObjectRef) -> ImportObjectJSON:
+def _json_import_object(reference: ObjectIdentity) -> ImportObjectJSON:
     """Serialize safe import-object identity metadata."""
     return {
         "name": reference.name,
@@ -792,15 +798,15 @@ def _json_import_object(reference: ObjectRef) -> ImportObjectJSON:
     }
 
 
-def _json_spec_value(value: str | ObjectRef | None) -> SpecValueJSON:
-    if isinstance(value, ObjectRef):
+def _json_spec_value(value: str | ObjectIdentity | None) -> SpecValueJSON:
+    if isinstance(value, ObjectIdentity):
         result: ImportObjectValueJSON = {"kind": "object", **_json_import_object(value)}
         return result
     return value
 
 
-def _json_probe_run(run: ProbeRun) -> ProbeRunJSON:
-    """Project one probe policy/resource summary."""
+def _json_check_run(run: CheckRun) -> CheckRunJSON:
+    """Project one check policy/resource summary."""
     return {
         "kind": run.kind,
         "status": run.status,
@@ -813,7 +819,7 @@ def _json_probe_run(run: ProbeRun) -> ProbeRunJSON:
     }
 
 
-def _json_spec_summary(summary: SpecSummary) -> SpecSummaryJSON:
+def _json_spec_summary(summary: ModuleSpecSnapshot) -> ModuleSpecSnapshotJSON:
     locations = summary.submodule_search_locations
     return {
         "cached": _json_spec_value(summary.cached),
@@ -832,9 +838,9 @@ def _json_spec_summary(summary: SpecSummary) -> SpecSummaryJSON:
 
 def _loader_inventory_groups(
     inventory: LoaderInventory,
-) -> tuple[tuple[ObjectRef | None, tuple[ModuleMetadata, ...]], ...]:
+) -> tuple[tuple[ObjectIdentity | None, tuple[ModuleMetadata, ...]], ...]:
     """Group available module records by effective loader identity."""
-    groups: dict[int | None, tuple[ObjectRef | None, list[ModuleMetadata]]] = {}
+    groups: dict[int | None, tuple[ObjectIdentity | None, list[ModuleMetadata]]] = {}
     for entry in inventory.entries:
         if entry.inspection != "available":
             continue
@@ -885,7 +891,7 @@ def _json_loader_inventory(inventory: LoaderInventory) -> LoaderInventoryInfo:
         )
     return {
         "available": inventory.available,
-        "evidence": "post_hoc",
+        "evidence": "current_state",
         "groups": groups,
         "non_string_keys_omitted": inventory.non_string_keys,
         "phase": "report",
@@ -931,32 +937,32 @@ def _json_finding(finding: Finding) -> FindingJSON:
 
 def _json_finding_evidence(finding: Finding) -> FindingEvidenceJSON:
     event_refs: list[str] = []
-    claim = finding_claim(finding)
-    if claim is not None:
-        event_refs.append(f"event:{claim.seq}")
-    deep_call = finding_deep_call(finding)
-    if deep_call is not None:
-        event_refs.append(f"event:{deep_call.seq}")
-    contract = finding_finder_contract(finding)
-    if contract is not None and contract.observation_seq is not None:
-        event_refs.append(f"event:{contract.observation_seq}")
-    event_refs.extend(f"event:{seq}" for seq in finding.supporting_event_seqs)
+    finder_call = finding_finder_call(finding)
+    if finder_call is not None:
+        event_refs.append(f"event:{finder_call.sequence}")
+    import_mechanism_call = finding_import_mechanism_call(finding)
+    if import_mechanism_call is not None:
+        event_refs.append(f"event:{import_mechanism_call.sequence}")
+    finder_api = finding_finder_api(finding)
+    if finder_api is not None and finder_api.observation_seq is not None:
+        event_refs.append(f"event:{finder_api.observation_seq}")
+    event_refs.extend(f"event:{sequence}" for sequence in finding.supporting_event_seqs)
     structural = finding_structural_comparison(finding)
     if structural is not None:
-        event_refs.extend(f"event:{seq}" for seq in structural.importer_cache_event_seqs)
+        event_refs.extend(f"event:{sequence}" for sequence in structural.importer_cache_event_seqs)
     evidence: FindingEvidenceJSON = {
         "event_refs": list(dict.fromkeys(event_refs)),
         "level": finding.evidence_level,
         "limitations": list(finding.limitations),
     }
-    if finding.kind == "no_spec":
-        evidence["finder_claim"] = "not_recorded"
-        evidence["module_spec"] = "missing"
-    if finding.kind == "finder_side_effect" and claim is not None:
-        evidence["module_state_after"] = _json_module_state(claim.module_state_after)
-        evidence["module_state_before"] = _json_module_state(claim.module_state_before)
+    if finding.kind == "module_without_spec":
+        evidence["finder_call_status"] = "not_recorded"
+        evidence["module_spec_status"] = "missing"
+    if finding.kind == "finder_changed_module_cache" and finder_call is not None:
+        evidence["module_state_after"] = _json_module_state(finder_call.module_state_after)
+        evidence["module_state_before"] = _json_module_state(finder_call.module_state_before)
         evidence["outcome"] = (
-            f"raised:{claim.exception_type_name}" if claim.exception_type_name is not None else "declined"
+            f"raised:{finder_call.exception_type_name}" if finder_call.exception_type_name is not None else "declined"
         )
     return evidence
 
@@ -967,50 +973,50 @@ def _json_finding_data(finding: Finding) -> FindingEvidenceDataJSON:
     if isinstance(evidence, CorrelationEvidence):
         return {
             "detail": "correlation",
-            "attempt_refs": [f"attempt:{attempt_id}" for attempt_id in evidence.attempt_ids],
+            "search_refs": [f"search:{search_id}" for search_id in evidence.search_ids],
         }
-    if isinstance(evidence, ContractEvidence):
-        return {"detail": "contract", "finder_contract_ref": _finder_contract_id(evidence.finder_contract)}
-    if isinstance(evidence, ClaimEvidence):
-        return {"detail": "claim", "claim": _json_finding_claim(evidence.claim)}
-    if isinstance(evidence, RouteEvidence):
+    if isinstance(evidence, FinderAPIEvidence):
+        return {"detail": "finder_api", "finder_api_ref": _finder_api_id(evidence.finder_api)}
+    if isinstance(evidence, FinderCallEvidence):
+        return {"detail": "finder_call", "finder_call": _json_finding_finder_call(evidence.finder_call)}
+    if isinstance(evidence, FinderComparisonEvidence):
         return {
-            "detail": "route",
-            "claim": _json_finding_claim(evidence.claim),
-            "route_refs": list(evidence.route_ids),
-            "route_comparison_ref": evidence.route_comparison_id,
+            "detail": "result_comparison",
+            "finder_call": _json_finding_finder_call(evidence.finder_call),
+            "finder_result_refs": list(evidence.result_ids),
+            "finder_result_comparison_ref": evidence.result_comparison_id,
             "structural_comparison": _json_structural_comparison(evidence.structural_comparison),
         }
-    if isinstance(evidence, DeepCallEvidence):
+    if isinstance(evidence, ImportMechanismEvidence):
         return {
-            "detail": "deep_call",
-            "deep_call": _json_finding_deep_call(evidence.deep_call),
+            "detail": "import_mechanism_call",
+            "import_mechanism_call": _json_finding_import_mechanism_call(evidence.import_mechanism_call),
             "module_state_baseline": _json_module_state(evidence.module_state_baseline),
         }
-    return {"detail": "bare"}
+    return {"detail": "events_only"}
 
 
-def _json_finding_claim(claim: FindSpecCall) -> FindingClaimJSON:
+def _json_finding_finder_call(finder_call: MetaPathFinderCall) -> FindingFinderCallJSON:
     return {
-        "event_ref": f"event:{claim.seq}",
-        "finder_id": f"0x{claim.finder_id:x}",
-        "finder_type_name": claim.finder_type_name,
-        "loader_type_name": claim.loader_type_name,
-        "origin": claim.origin,
-        "search_path": list(claim.search_path),
-        "search_path_kind": claim.search_path_kind,
-        "spec": None if claim.spec_summary is None else _json_spec_summary(claim.spec_summary),
+        "event_ref": f"event:{finder_call.sequence}",
+        "finder_id": f"0x{finder_call.finder_id:x}",
+        "finder_type_name": finder_call.finder_type_name,
+        "loader_type_name": finder_call.loader_type_name,
+        "origin": finder_call.origin,
+        "search_path": list(finder_call.search_path),
+        "search_path_kind": finder_call.search_path_kind,
+        "spec": None if finder_call.spec_summary is None else _json_spec_summary(finder_call.spec_summary),
     }
 
 
-def _json_finding_deep_call(deep_call: DeepDiagnosticCall) -> FindingDeepCallJSON:
+def _json_finding_import_mechanism_call(import_mechanism_call: ImportMechanismCall) -> FindingImportMechanismCallJSON:
     return {
-        "boundary": deep_call.boundary,
-        "event_ref": f"event:{deep_call.seq}",
-        "module_state_after": _json_module_state(deep_call.module_state_after),
-        "module_state_before": _json_module_state(deep_call.module_state_before),
-        "outcome": deep_call.outcome,
-        "target_state": _json_module_state(deep_call.target_state),
+        "boundary": import_mechanism_call.boundary,
+        "event_ref": f"event:{import_mechanism_call.sequence}",
+        "module_state_after": _json_module_state(import_mechanism_call.module_state_after),
+        "module_state_before": _json_module_state(import_mechanism_call.module_state_before),
+        "outcome": import_mechanism_call.outcome,
+        "target_state": _json_module_state(import_mechanism_call.target_state),
     }
 
 
@@ -1020,7 +1026,7 @@ def _json_structural_comparison(comparison: StructuralComparison) -> StructuralC
         "importer_cache": {
             "changed": comparison.importer_cache_changed,
             "changed_paths": list(comparison.importer_cache_changed_paths),
-            "change_event_refs": [f"event:{seq}" for seq in comparison.importer_cache_event_seqs],
+            "change_event_refs": [f"event:{sequence}" for sequence in comparison.importer_cache_event_seqs],
             "install_snapshot_ref": "snapshot:importer-cache:install",
             "report_snapshot_ref": "snapshot:importer-cache:report",
         },
@@ -1041,7 +1047,7 @@ def _json_explanation(explanation: CausalExplanation) -> ExplanationJSON:
         "cause_finding_ref": explanation.cause_finding_id,
         "confidence": explanation.confidence,
         "effect_status": explanation.effect_status,
-        "event_refs": [f"event:{seq}" for seq in explanation.event_seqs],
+        "event_refs": [f"event:{sequence}" for sequence in explanation.event_seqs],
         "finder_type_name": explanation.finder_type_name,
         "id": explanation.explanation_id,
         "kind": explanation.kind,
@@ -1050,8 +1056,8 @@ def _json_explanation(explanation: CausalExplanation) -> ExplanationJSON:
         "origin": explanation.origin,
         "omitted_location": explanation.omitted_location,
         "subject": explanation.subject,
-        "standard_attempt_ref": (
-            None if explanation.standard_attempt_id is None else f"attempt:{explanation.standard_attempt_id}"
+        "standard_search_ref": (
+            None if explanation.standard_search_id is None else f"search:{explanation.standard_search_id}"
         ),
         "state_after": _json_module_state(explanation.state_after),
         "state_before": _json_module_state(explanation.state_before),
@@ -1062,9 +1068,9 @@ def _json_summary(summary: ReportSummary) -> SummaryInfo:
     """Serialize the shared counts-and-references summary."""
     return {
         "counts": {
-            "actionable": summary.actionable,
-            "warning": summary.warning,
-            "informational": summary.informational,
+            "problem": summary.problem,
+            "risk": summary.risk,
+            "note": summary.note,
         },
         "unresolved_import_count": summary.unresolved_import_count,
         "top_finding_ref": summary.top_finding_id,
@@ -1072,7 +1078,7 @@ def _json_summary(summary: ReportSummary) -> SummaryInfo:
     }
 
 
-def _json_target_outcome(outcome: TargetOutcome | None) -> TargetOutcomeJSON | None:
+def _json_program_outcome(outcome: ProgramOutcome | None) -> ProgramOutcomeJSON | None:
     """Serialize the recorded target completion, when one exists."""
     if outcome is None:
         return None
@@ -1096,30 +1102,30 @@ def failed_json_document(error_name: str) -> ReportJSON:
         "snapshots": [],
         "loader_inventory": {
             "available": False,
-            "evidence": "post_hoc",
+            "evidence": "current_state",
             "groups": [],
             "non_string_keys_omitted": 0,
             "phase": "report",
             "unavailable": [],
         },
-        "finder_contracts": [],
-        "import_attempts": [],
+        "finder_apis": [],
+        "import_searches": [],
         "standard_resolutions": [],
-        "resolution_routes": [],
-        "route_comparisons": [],
+        "finder_results": [],
+        "finder_result_comparisons": [],
         "timeline": [],
         "findings": [],
         "explanations": [],
         "summary": {
-            "counts": {"actionable": 0, "warning": 0, "informational": 0},
+            "counts": {"problem": 0, "risk": 0, "note": 0},
             "unresolved_import_count": 0,
             "top_finding_ref": None,
             "top_explanation_ref": None,
         },
-        "probes": [],
-        "target_outcome": None,
+        "checks": [],
+        "program_outcome": None,
         "diagnostics": {
-            "internal_error_refs": [],
+            "monitoring_error_refs": [],
             "report_errors": [{"exception_type_name": error_name, "where": "report_generation"}],
             "skipped_finders": [],
         },

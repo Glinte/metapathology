@@ -1,11 +1,11 @@
-"""Deep path-hook, path-entry-finder, and loader instrumentation."""
+"""Detailed path-hook, path-entry-finder, and loader capture."""
 
 import json
 from pathlib import Path
 
 from support import PythonRunner
 
-DEEP_CAPTURE = r"""
+DETAILED_CAPTURE = r"""
 import importlib.machinery
 import json
 import sys
@@ -21,7 +21,7 @@ class Loader:
         return None
 
     def exec_module(self, module):
-        if self.fullname == "deep_broken":
+        if self.fullname == "detailed_broken":
             raise RuntimeError("target failure")
         module.VALUE = self.fullname
 
@@ -31,9 +31,9 @@ class Finder:
         self.loaders = []
 
     def find_spec(self, fullname, target=None):
-        if fullname == "deep_outer":
-            __import__("deep_nested")
-        if fullname not in {"deep_outer", "deep_nested", "deep_broken"}:
+        if fullname == "detailed_outer":
+            __import__("detailed_nested")
+        if fullname not in {"detailed_outer", "detailed_nested", "detailed_broken"}:
             return None
         loader = Loader(fullname)
         self.loaders.append(loader)
@@ -41,7 +41,7 @@ class Finder:
 
 
 finder = Finder()
-sentinel = sys.path[0] + "\\deep-sentinel"
+sentinel = sys.path[0] + "\\detailed-sentinel"
 
 
 def hook(path):
@@ -56,7 +56,7 @@ sys.path.insert(0, sentinel)
 monitor = metapathology.install(
     report_at_exit=False,
     capture=metapathology.CaptureConfig(
-        deep=metapathology.DeepConfig(
+        detailed=metapathology.DetailedCaptureConfig(
             path_hooks=True,
             path_entry_finders=True,
             loaders=True,
@@ -79,20 +79,20 @@ assert later_hook in sys.path_hooks
 assert not any(candidate is later_hook for candidate in sys.path_hooks)
 assert any(getattr(candidate, "__wrapped__", None) is later_hook for candidate in sys.path_hooks)
 sys.path_importer_cache.pop(sentinel, None)
-__import__("deep_outer")
+__import__("detailed_outer")
 try:
-    __import__("deep_broken")
+    __import__("detailed_broken")
 except RuntimeError:
     pass
 else:
     raise AssertionError("loader exception changed")
 assert isinstance(sys.path_importer_cache[sentinel], Finder)
 document = json.loads(metapathology.render_report(format="json"))
-deep = [event["data"] for event in document["timeline"] if event["kind"] == "deep_diagnostic_call"]
-assert {event["boundary"] for event in deep} == {
+detailed = [event["data"] for event in document["timeline"] if event["kind"] == "import_mechanism_call"]
+assert {event["boundary"] for event in detailed} == {
     "path_hook", "path_entry_finder", "loader_create_module", "loader_exec_module"
-}, deep
-assert any(event["outcome"] == "unobserved_reentrant" for event in deep), deep
+}, detailed
+assert any(event["outcome"] == "unobserved_reentrant" for event in detailed), detailed
 # A successful path hook captures the identity of the finder it returned, so the
 # report can link an accepting hook to the finder it installed in the cache.
 assert any(
@@ -100,23 +100,23 @@ assert any(
     and event["outcome"] == "returned"
     and event["returned_finder"] is not None
     and event["returned_finder"]["type_name"] == "Finder"
-    for event in deep
-), deep
-assert any(event["fullname"] == "deep_broken" and event["outcome"] == "raised" for event in deep), deep
+    for event in detailed
+), detailed
+assert any(event["fullname"] == "detailed_broken" and event["outcome"] == "raised" for event in detailed), detailed
 assert document["capture"]["mechanisms"][4]["enabled"] is True
 text = metapathology.render_report()
-assert "WARNING: opt-in deep diagnostics" in text
+assert "WARNING: opt-in detailed capture" in text
 metapathology.uninstall()
 assert hook in sys.path_hooks
 assert later_hook in sys.path_hooks
 assert "find_spec" not in finder.__dict__
 assert all("create_module" not in loader.__dict__ and "exec_module" not in loader.__dict__ for loader in finder.loaders)
-print(json.dumps({"deep": deep, "mechanisms": monitor.deep_diagnostics}))
+print(json.dumps({"detailed": detailed, "mechanisms": monitor.detailed_capture}))
 """
 
 
-def test_deep_boundaries_delegate_record_and_restore(python_runner: PythonRunner) -> None:
-    proc = python_runner.run_code_ok(DEEP_CAPTURE)
+def test_detailed_boundaries_delegate_record_and_restore(python_runner: PythonRunner) -> None:
+    proc = python_runner.run_code_ok(DETAILED_CAPTURE)
     result = json.loads(proc.stdout)
     assert result["mechanisms"] == []
 
@@ -137,7 +137,7 @@ def test_distinct_hooks_accepting_one_path_report_structural_shadow(
         "sys.path_hooks[:0] = [first, second]\n"
         "sys.path.insert(0, sys.argv[1])\n"
         "sys.path_importer_cache.pop(sys.argv[1], None)\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(path_hooks=True)))\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(path_hooks=True)))\n"
         "sys.path_importer_cache.pop(sys.argv[1], None)\n"
         "try: __import__('shadow_first_missing')\n"
         "except ModuleNotFoundError: pass\n"
@@ -146,23 +146,23 @@ def test_distinct_hooks_accepting_one_path_report_structural_shadow(
         "try: __import__('shadow_second_missing')\n"
         "except ModuleNotFoundError: pass\n"
         "document = json.loads(metapathology.render_report(format='json'))\n"
-        "finding = next(item for item in document['findings'] if item['kind'] == 'path_hook_shadow')\n"
+        "finding = next(item for item in document['findings'] if item['kind'] == 'competing_path_hooks')\n"
         "assert finding['subject'] == {'kind': 'path', 'value': sys.argv[1]}\n"
-        "assert finding['evidence']['level'] == 'structural_inference'\n"
+        "assert finding['evidence']['level'] == 'inferred_from_state'\n"
         "assert len(finding['evidence']['event_refs']) == 2\n"
-        "assert '[path-hook-shadow]' in metapathology.render_report()\n"
+        "assert '[competing-path-hooks]' in metapathology.render_report()\n"
         "print('OK')\n",
         str(tmp_path),
     )
     assert proc.stdout.strip() == "OK"
 
 
-def test_deep_path_hook_wrapper_survives_equality_scan(python_runner: PythonRunner, tmp_path: Path) -> None:
+def test_detailed_path_hook_wrapper_survives_equality_scan(python_runner: PythonRunner, tmp_path: Path) -> None:
     """A third party locating its own hook by ``==`` must still find it.
 
     PyInstaller's ``PyiFrozenFinder.fallback_finder`` walks ``sys.path_hooks``
     testing ``hook == self.path_hook`` to find the hooks after its own and
-    build a fallback ``FileFinder``. A deep wrapper that did not compare equal
+    build a fallback ``FileFinder``. A detailed wrapper that did not compare equal
     to the shadowed hook broke that scan, silently disabling on-disk extension
     imports in frozen apps. The wrapper delegates equality, so the scan works.
     """
@@ -180,7 +180,7 @@ def test_deep_path_hook_wrapper_survives_equality_scan(python_runner: PythonRunn
         "    created.append(path)\n"
         "    return FallbackFinder()\n"
         "sys.path_hooks[:0] = [anchor_hook, tail_hook]\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(path_hooks=True)))\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(path_hooks=True)))\n"
         # Emulate the fallback scan: find our anchor by equality, then build
         # the first hook that comes after it.
         "anchor_seen = False\n"
@@ -223,28 +223,28 @@ class Finder:
     def __init__(self):
         self.loader = ReplacingLoader()
     def find_spec(self, fullname, path=None, target=None):
-        if fullname != "deep_identity_ext":
+        if fullname != "detailed_identity_ext":
             return None
         return importlib.machinery.ModuleSpec(fullname, self.loader, origin="shared.ext")
 
 finder = Finder()
 sys.meta_path.insert(0, finder)
-monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(loaders=True)))
-import deep_identity_ext
-first = deep_identity_ext
+monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(loaders=True)))
+import detailed_identity_ext
+first = detailed_identity_ext
 spec = first.__spec__
-second = types.ModuleType("deep_identity_ext")
+second = types.ModuleType("detailed_identity_ext")
 second.__spec__ = spec
 second.__loader__ = spec.loader
-sys.modules["deep_identity_ext"] = second
+sys.modules["detailed_identity_ext"] = second
 spec.loader.exec_module(second)
-sys.modules["deep_identity_ext"] = first
+sys.modules["detailed_identity_ext"] = first
 
 events = [
     event for event in monitor.events()
-    if isinstance(event, metapathology.DeepDiagnosticCall)
+    if isinstance(event, metapathology.ImportMechanismCall)
     and event.boundary == "loader_exec_module"
-    and event.fullname == "deep_identity_ext"
+    and event.fullname == "detailed_identity_ext"
 ]
 assert len(events) == 2, events
 assert events[0].module_state_before.object_id == id(first)
@@ -255,25 +255,25 @@ assert events[1].module_state_after.object_id == id(second)
 assert events[1].target_state.object_id == id(second)
 assert first.__spec__.origin == second.__spec__.origin == "shared.ext"
 document = json.loads(metapathology.render_report(format="json"))
-finding = next(item for item in document["findings"] if item["kind"] == "repeated_loader_execution")
-assert finding["module"] == "deep_identity_ext"
-assert finding["evidence"]["level"] == "captured"
-assert set(finding["evidence"]["event_refs"]) == {"event:" + str(events[0].seq), "event:" + str(events[1].seq)}
-assert finding["data"]["deep_call"]["event_ref"] == "event:" + str(events[1].seq)
+finding = next(item for item in document["findings"] if item["kind"] == "module_executed_again")
+assert finding["module"] == "detailed_identity_ext"
+assert finding["evidence"]["level"] == "observed"
+assert set(finding["evidence"]["event_refs"]) == {"event:" + str(events[0].sequence), "event:" + str(events[1].sequence)}
+assert finding["data"]["import_mechanism_call"]["event_ref"] == "event:" + str(events[1].sequence)
 assert finding["data"]["module_state_baseline"]["object_id"] == hex(id(first))
-assert finding["data"]["deep_call"]["module_state_before"]["object_id"] == hex(id(second))
-assert finding["data"]["deep_call"]["module_state_after"]["object_id"] == hex(id(second))
-assert finding["data"]["deep_call"]["target_state"]["object_id"] == hex(id(second))
-explanation = next(item for item in document["explanations"] if item["kind"] == "repeated_loader_execution")
-assert explanation["confidence"] == "captured"
+assert finding["data"]["import_mechanism_call"]["module_state_before"]["object_id"] == hex(id(second))
+assert finding["data"]["import_mechanism_call"]["module_state_after"]["object_id"] == hex(id(second))
+assert finding["data"]["import_mechanism_call"]["target_state"]["object_id"] == hex(id(second))
+explanation = next(item for item in document["explanations"] if item["kind"] == "module_executed_again")
+assert explanation["confidence"] == "observed"
 assert explanation["cause_finding_ref"] == finding["id"]
 assert explanation["state_before"]["object_id"] == hex(id(first))
 assert explanation["state_after"]["object_id"] == hex(id(second))
 assert explanation["effect_status"] == "separate_module_executed"
 text = metapathology.render_report()
-assert "[repeated-loader-execution] 'deep_identity_ext'" in text, text
+assert "[module-executed-again] 'detailed_identity_ext'" in text, text
 assert "internal steps and temporary objects are unknown" in text, text
-assert "[captured] ReplacingLoader executed 'deep_identity_ext' again with a different module object" in text, text
+assert "[observed] ReplacingLoader executed 'detailed_identity_ext' again with a different module object" in text, text
 metapathology.uninstall()
 print("OK")
 """
@@ -284,7 +284,7 @@ def test_discord_10017_valid_spec_module_replacement_fixture(python_runner: Pyth
     assert proc.stdout.strip() == "OK"
 
 
-def test_deep_mechanisms_are_independently_toggleable(python_runner: PythonRunner) -> None:
+def test_detailed_mechanisms_are_independently_toggleable(python_runner: PythonRunner) -> None:
     python_runner.run_code_ok(
         "import metapathology\n"
         "monitor = metapathology.install(\n"
@@ -292,23 +292,23 @@ def test_deep_mechanisms_are_independently_toggleable(python_runner: PythonRunne
         "    capture=metapathology.CaptureConfig(\n"
         "        path_hooks=False,\n"
         "        importer_cache=False,\n"
-        "        deep=metapathology.DeepConfig(path_entry_finders=True),\n"
+        "        detailed=metapathology.DetailedCaptureConfig(path_entry_finders=True),\n"
         "    ),\n"
         ")\n"
-        "assert monitor.deep_diagnostics == ('path_entry_finders',)\n"
+        "assert monitor.detailed_capture == ('path_entry_finders',)\n"
         "assert type(__import__('sys').path_hooks) is list\n"
         "metapathology.uninstall()\n"
     )
 
 
-def test_deep_path_entry_finder_preserves_later_shadow(python_runner: PythonRunner) -> None:
+def test_detailed_path_entry_finder_preserves_later_shadow(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(
         "import sys, metapathology\n"
         "class Finder:\n"
         "    def find_spec(self, fullname, target=None): return None\n"
         "finder = Finder()\n"
-        "sys.path_importer_cache['owned-finder-probe'] = finder\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(path_entry_finders=True)))\n"
+        "sys.path_importer_cache['owned-finder-check'] = finder\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(path_entry_finders=True)))\n"
         "replacement = lambda fullname, target=None: None\n"
         "finder.find_spec = replacement\n"
         "metapathology.uninstall()\n"
@@ -318,7 +318,7 @@ def test_deep_path_entry_finder_preserves_later_shadow(python_runner: PythonRunn
     assert proc.stdout.strip() == "OK"
 
 
-def test_deep_loader_preserves_later_method_shadows(python_runner: PythonRunner) -> None:
+def test_detailed_loader_preserves_later_method_shadows(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(
         "import importlib.util, sys, metapathology\n"
         "class Loader:\n"
@@ -327,14 +327,14 @@ def test_deep_loader_preserves_later_method_shadows(python_runner: PythonRunner)
         "class Finder:\n"
         "    def __init__(self, loader): self.loader = loader\n"
         "    def find_spec(self, fullname, path=None, target=None):\n"
-        "        if fullname == 'owned_loader_probe':\n"
+        "        if fullname == 'owned_loader_check':\n"
         "            return importlib.util.spec_from_loader(fullname, self.loader)\n"
         "        return None\n"
         "loader = Loader()\n"
         "finder = Finder(loader)\n"
         "sys.meta_path.insert(0, finder)\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(loaders=True)))\n"
-        "import owned_loader_probe\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(loaders=True)))\n"
+        "import owned_loader_check\n"
         "replacement_create = lambda spec: None\n"
         "replacement_exec = lambda module: None\n"
         "loader.create_module = replacement_create\n"
@@ -348,7 +348,7 @@ def test_deep_loader_preserves_later_method_shadows(python_runner: PythonRunner)
     assert proc.stdout.strip() == "OK"
 
 
-def test_deep_path_hooks_restore_only_owned_wrappers(python_runner: PythonRunner) -> None:
+def test_detailed_path_hooks_restore_only_owned_wrappers(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(
         "import sys, metapathology\n"
         "original_hooks = list(sys.path_hooks)\n"
@@ -356,7 +356,7 @@ def test_deep_path_hooks_restore_only_owned_wrappers(python_runner: PythonRunner
         "    report_at_exit=False,\n"
         "    capture=metapathology.CaptureConfig(\n"
         "        path_hooks=True,\n"
-        "        deep=metapathology.DeepConfig(path_hooks=True),\n"
+        "        detailed=metapathology.DetailedCaptureConfig(path_hooks=True),\n"
         "    ),\n"
         ")\n"
         "replacement = lambda path: (_ for _ in ()).throw(ImportError)\n"

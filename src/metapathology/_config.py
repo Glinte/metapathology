@@ -28,15 +28,15 @@ FINDER_ATTRIBUTION_ENV = "METAPATHOLOGY_FINDER_ATTRIBUTION"
 PATH_HOOKS_ENV = "METAPATHOLOGY_PATH_HOOKS"
 IMPORTER_CACHE_ENV = "METAPATHOLOGY_IMPORTER_CACHE"
 SYS_PATH_ENV = "METAPATHOLOGY_SYS_PATH"
-DEEP_ENV = "METAPATHOLOGY_DEEP"
-DEEP_PATH_HOOKS_ENV = "METAPATHOLOGY_DEEP_PATH_HOOKS"
-DEEP_PATH_ENTRY_FINDERS_ENV = "METAPATHOLOGY_DEEP_PATH_ENTRY_FINDERS"
-DEEP_LOADERS_ENV = "METAPATHOLOGY_DEEP_LOADERS"
-DEEP_IMPORT_OUTCOMES_ENV = "METAPATHOLOGY_DEEP_IMPORT_OUTCOMES"
-DEEP_IMPORT_CALLS_ENV = "METAPATHOLOGY_DEEP_IMPORT_CALLS"
-PROBES_ENV = "METAPATHOLOGY_PROBES"
-STANDARD_PATH_PROBE_ENV = "METAPATHOLOGY_STANDARD_PATH_PROBE"
-DISPLACED_FINDER_PROBE_ENV = "METAPATHOLOGY_DISPLACED_FINDER_PROBE"
+DETAILED_CAPTURE_ENV = "METAPATHOLOGY_DETAILED_CAPTURE"
+CAPTURE_PATH_HOOK_CALLS_ENV = "METAPATHOLOGY_CAPTURE_PATH_HOOK_CALLS"
+CAPTURE_PATH_ENTRY_FINDER_CALLS_ENV = "METAPATHOLOGY_CAPTURE_PATH_ENTRY_FINDER_CALLS"
+CAPTURE_LOADER_CALLS_ENV = "METAPATHOLOGY_CAPTURE_LOADER_CALLS"
+CAPTURE_IMPORT_RESULTS_ENV = "METAPATHOLOGY_CAPTURE_IMPORT_RESULTS"
+CAPTURE_IMPORT_CALLS_ENV = "METAPATHOLOGY_CAPTURE_IMPORT_CALLS"
+CHECKS_ENV = "METAPATHOLOGY_CHECKS"
+STANDARD_PATH_CHECK_ENV = "METAPATHOLOGY_STANDARD_PATH_CHECK"
+DISPLACED_FINDER_CHECK_ENV = "METAPATHOLOGY_DISPLACED_FINDER_CHECK"
 
 _TRUE_ENV_VALUES = frozenset(("1", "true", "yes", "on"))
 _FALSE_ENV_VALUES = frozenset(("0", "false", "no", "off"))
@@ -65,19 +65,24 @@ class _ConfigRecord(_Record):
         return hash((type(self), *(getattr(self, field) for field in self._fields)))
 
 
-class DeepConfig(_ConfigRecord):
-    """Unresolved opt-in delegated-boundary capture settings."""
+class DetailedCaptureConfig(_ConfigRecord):
+    """Fine-grained settings for the slower, more intrusive capture mechanisms."""
 
     enabled: bool | None = None
     path_hooks: bool | None = None
     path_entry_finders: bool | None = None
     loaders: bool | None = None
-    import_outcomes: bool | None = None
+    import_results: bool | None = None
     import_calls: bool | None = None
 
 
 class CaptureConfig(_ConfigRecord):
-    """Unresolved process-state capture settings."""
+    """Capture settings for one installation.
+
+    ``detailed=True`` enables every detailed mechanism without requiring a
+    nested configuration object. Pass :class:`DetailedCaptureConfig` only to
+    choose individual detailed mechanisms.
+    """
 
     import_audit: bool | None = None
     meta_path: bool | None = None
@@ -85,24 +90,24 @@ class CaptureConfig(_ConfigRecord):
     path_hooks: bool | None = None
     importer_cache: bool | None = None
     sys_path: bool | None = None
-    deep: DeepConfig = DeepConfig()
+    detailed: bool | DetailedCaptureConfig | None = None
 
 
 class AnalysisConfig(_ConfigRecord):
-    """Unresolved report-time probe policy."""
+    """Settings for current-state checks performed while building a report."""
 
-    probes: bool | None = None
-    standard_path_probe: bool | None = None
-    displaced_finder_probe: bool | None = None
+    checks: bool | None = None
+    standard_path_check: bool | None = None
+    displaced_finder_check: bool | None = None
 
 
-class ResolvedDeepConfig(_ConfigRecord):
-    """Concrete delegated-boundary capture settings."""
+class ResolvedDetailedCaptureConfig(_ConfigRecord):
+    """Resolved settings for the detailed capture mechanisms."""
 
     path_hooks: bool
     path_entry_finders: bool
     loaders: bool
-    import_outcomes: bool
+    import_results: bool
     import_calls: bool
 
 
@@ -115,14 +120,14 @@ class ResolvedCaptureConfig(_ConfigRecord):
     path_hooks: bool
     importer_cache: bool
     sys_path: bool
-    deep: ResolvedDeepConfig
+    detailed: ResolvedDetailedCaptureConfig
 
 
 class ResolvedAnalysisConfig(_ConfigRecord):
-    """Concrete report-time probe policy fixed for one installation."""
+    """Concrete current-state check policy fixed for one installation."""
 
-    standard_path_probe: bool
-    displaced_finder_probe: bool
+    standard_path_check: bool
+    displaced_finder_check: bool
 
 
 class InstallRequest(_Record):
@@ -144,11 +149,11 @@ class MonitoringRequest(_Record):
     path_hooks: bool
     importer_cache: bool
     sys_path: bool
-    deep_path_hooks: bool
-    deep_path_entry_finders: bool
-    deep_loaders: bool
-    deep_import_outcomes: bool
-    deep_import_calls: bool
+    capture_path_hook_calls: bool
+    capture_path_entry_finder_calls: bool
+    capture_loader_calls: bool
+    capture_import_results: bool
+    capture_import_calls: bool
     issues: tuple[str, ...]
 
 
@@ -171,11 +176,11 @@ def monitoring_request(request: InstallRequest) -> MonitoringRequest:
         path_hooks=request.capture.path_hooks,
         importer_cache=request.capture.importer_cache,
         sys_path=request.capture.sys_path,
-        deep_path_hooks=request.capture.deep.path_hooks,
-        deep_path_entry_finders=request.capture.deep.path_entry_finders,
-        deep_loaders=request.capture.deep.loaders,
-        deep_import_outcomes=request.capture.deep.import_outcomes,
-        deep_import_calls=request.capture.deep.import_calls,
+        capture_path_hook_calls=request.capture.detailed.path_hooks,
+        capture_path_entry_finder_calls=request.capture.detailed.path_entry_finders,
+        capture_loader_calls=request.capture.detailed.loaders,
+        capture_import_results=request.capture.detailed.import_results,
+        capture_import_calls=request.capture.detailed.import_calls,
         issues=request.issues,
     )
 
@@ -222,43 +227,47 @@ def resolve_install_request(
     """Resolve one complete request without mutating monitor or import state."""
     issues: list[str] = []
     _validate_configs(capture, analysis)
-    probes_enabled = _resolve_bool(analysis.probes, PROBES_ENV, False, issues)
-    probes_configured = analysis.probes is not None or os.environ.get(PROBES_ENV) is not None
-    resolved_standard_path_probe = _resolve_bool(
-        analysis.standard_path_probe,
-        STANDARD_PATH_PROBE_ENV,
-        probes_enabled if probes_configured else True,
+    checks_enabled = _resolve_bool(analysis.checks, CHECKS_ENV, False, issues)
+    checks_configured = analysis.checks is not None or os.environ.get(CHECKS_ENV) is not None
+    resolved_standard_path_check = _resolve_bool(
+        analysis.standard_path_check,
+        STANDARD_PATH_CHECK_ENV,
+        checks_enabled if checks_configured else True,
         issues,
     )
-    resolved_displaced_finder_probe = _resolve_bool(
-        analysis.displaced_finder_probe, DISPLACED_FINDER_PROBE_ENV, probes_enabled, issues
+    resolved_displaced_finder_check = _resolve_bool(
+        analysis.displaced_finder_check, DISPLACED_FINDER_CHECK_ENV, checks_enabled, issues
     )
-    deep = capture.deep
-    deep_enabled = _resolve_bool(deep.enabled, DEEP_ENV, False, issues)
+    detailed = (
+        capture.detailed
+        if isinstance(capture.detailed, DetailedCaptureConfig)
+        else DetailedCaptureConfig(enabled=capture.detailed)
+    )
+    detailed_enabled = _resolve_bool(detailed.enabled, DETAILED_CAPTURE_ENV, False, issues)
     resolved_import_audit = _resolve_bool(capture.import_audit, IMPORT_AUDIT_ENV, True, issues)
     resolved_meta_path = _resolve_bool(capture.meta_path, META_PATH_ENV, True, issues)
     resolved_finder_attribution = _resolve_bool(capture.finder_attribution, FINDER_ATTRIBUTION_ENV, True, issues)
     resolved_path_hooks = _resolve_bool(capture.path_hooks, PATH_HOOKS_ENV, True, issues)
     resolved_importer_cache = _resolve_bool(capture.importer_cache, IMPORTER_CACHE_ENV, True, issues)
-    resolved_sys_path = _resolve_bool(capture.sys_path, SYS_PATH_ENV, deep_enabled, issues)
-    resolved_deep_path_hooks = _resolve_bool(deep.path_hooks, DEEP_PATH_HOOKS_ENV, deep_enabled, issues)
-    resolved_deep_path_entry_finders = _resolve_bool(
-        deep.path_entry_finders,
-        DEEP_PATH_ENTRY_FINDERS_ENV,
-        deep_enabled or resolved_displaced_finder_probe,
+    resolved_sys_path = _resolve_bool(capture.sys_path, SYS_PATH_ENV, detailed_enabled, issues)
+    resolved_path_hook_calls = _resolve_bool(detailed.path_hooks, CAPTURE_PATH_HOOK_CALLS_ENV, detailed_enabled, issues)
+    resolved_path_entry_finder_calls = _resolve_bool(
+        detailed.path_entry_finders,
+        CAPTURE_PATH_ENTRY_FINDER_CALLS_ENV,
+        detailed_enabled or resolved_displaced_finder_check,
         issues,
     )
-    resolved_deep_loaders = _resolve_bool(deep.loaders, DEEP_LOADERS_ENV, deep_enabled, issues)
-    resolved_deep_import_outcomes = _resolve_bool(
-        deep.import_outcomes,
-        DEEP_IMPORT_OUTCOMES_ENV,
-        deep_enabled,
+    resolved_loader_calls = _resolve_bool(detailed.loaders, CAPTURE_LOADER_CALLS_ENV, detailed_enabled, issues)
+    resolved_import_results = _resolve_bool(
+        detailed.import_results,
+        CAPTURE_IMPORT_RESULTS_ENV,
+        detailed_enabled,
         issues,
     )
-    resolved_deep_import_calls = _resolve_bool(
-        deep.import_calls,
-        DEEP_IMPORT_CALLS_ENV,
-        deep_enabled,
+    resolved_import_calls = _resolve_bool(
+        detailed.import_calls,
+        CAPTURE_IMPORT_CALLS_ENV,
+        detailed_enabled,
         issues,
     )
     targets = _resolve_report_targets(
@@ -281,17 +290,17 @@ def resolve_install_request(
             path_hooks=resolved_path_hooks,
             importer_cache=resolved_importer_cache,
             sys_path=resolved_sys_path,
-            deep=ResolvedDeepConfig(
-                path_hooks=resolved_deep_path_hooks,
-                path_entry_finders=resolved_deep_path_entry_finders,
-                loaders=resolved_deep_loaders,
-                import_outcomes=resolved_deep_import_outcomes,
-                import_calls=resolved_deep_import_calls,
+            detailed=ResolvedDetailedCaptureConfig(
+                path_hooks=resolved_path_hook_calls,
+                path_entry_finders=resolved_path_entry_finder_calls,
+                loaders=resolved_loader_calls,
+                import_results=resolved_import_results,
+                import_calls=resolved_import_calls,
             ),
         ),
         analysis=ResolvedAnalysisConfig(
-            standard_path_probe=resolved_standard_path_probe,
-            displaced_finder_probe=resolved_displaced_finder_probe,
+            standard_path_check=resolved_standard_path_check,
+            displaced_finder_check=resolved_displaced_finder_check,
         ),
         issues=tuple(issues),
     )
@@ -301,13 +310,22 @@ def _validate_configs(capture: CaptureConfig, analysis: AnalysisConfig) -> None:
     """Reject malformed public configuration before installation mutates state."""
     if not isinstance(capture, CaptureConfig):
         raise TypeError("capture must be a CaptureConfig")
-    if not isinstance(capture.deep, DeepConfig):
-        raise TypeError("capture.deep must be a DeepConfig")
+    if (
+        capture.detailed is not None
+        and type(capture.detailed) is not bool
+        and not isinstance(capture.detailed, DetailedCaptureConfig)
+    ):
+        raise TypeError("capture.detailed must be bool, DetailedCaptureConfig, or None")
     if not isinstance(analysis, AnalysisConfig):
         raise TypeError("analysis must be an AnalysisConfig")
+    detailed_values = (
+        ()
+        if not isinstance(capture.detailed, DetailedCaptureConfig)
+        else tuple(getattr(capture.detailed, field) for field in capture.detailed._fields)
+    )
     values = (
-        *(getattr(capture, field) for field in capture._fields if field != "deep"),
-        *(getattr(capture.deep, field) for field in capture.deep._fields),
+        *(getattr(capture, field) for field in capture._fields if field != "detailed"),
+        *detailed_values,
         *(getattr(analysis, field) for field in analysis._fields),
     )
     if any(value is not None and type(value) is not bool for value in values):

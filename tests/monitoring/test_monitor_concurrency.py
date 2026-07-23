@@ -9,7 +9,7 @@ import sys
 import threading
 
 import metapathology
-from metapathology import ImportAuditStart
+from metapathology import ImportSearchStarted
 
 class DummyFinder:
     def find_spec(self, fullname, path=None, target=None):
@@ -39,7 +39,7 @@ def read_events():
         barrier.wait()
         for _ in range(200):
             events = monitor.events()
-            assert all(left.seq < right.seq for left, right in zip(events, events[1:]))
+            assert all(left.sequence < right.sequence for left, right in zip(events, events[1:]))
     except BaseException as exc:
         failures.append(exc)
 
@@ -72,7 +72,7 @@ for thread in threads:
 
 assert not failures, failures
 assert all(module_name in sys.modules for module_name in module_names)
-starts = {event.fullname for event in monitor.events() if isinstance(event, ImportAuditStart)}
+starts = {event.fullname for event in monitor.events() if isinstance(event, ImportSearchStarted)}
 assert starts >= set(module_names), (starts, module_names)
 assert monitor.enabled
 metapathology.uninstall()
@@ -155,7 +155,7 @@ def import_while_holding_module_lock():
     module_lock_held.set()
     try:
         assert finder_started.wait(5)
-        import audit_probe
+        import audit_check
     except BaseException as exc:
         failures.append(exc)
     finally:
@@ -182,7 +182,7 @@ print("OK")
 
 def test_install_does_not_hold_lifecycle_lock_across_finder_access(python_runner: PythonRunner, tmp_path: Path) -> None:
     (tmp_path / "blocked_dependency.py").write_text("VALUE = 1\n", encoding="utf-8")
-    (tmp_path / "audit_probe.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "audit_check.py").write_text("VALUE = 1\n", encoding="utf-8")
     proc = python_runner.run_code_ok(CROSS_THREAD_LIFECYCLE_LOCK_ORDER, str(tmp_path))
     assert proc.stdout.strip() == "OK"
 
@@ -258,7 +258,7 @@ snapshot = monitor._snapshot()
 assert isinstance(snapshot, MonitorSnapshot)
 assert snapshot.enabled
 assert snapshot.events
-assert max(event.seq for event in snapshot.events) <= snapshot.cutoff_seq
+assert max(event.sequence for event in snapshot.events) <= snapshot.cutoff_seq
 assert snapshot.baseline_modules == monitor.baseline_modules
 try:
     snapshot.cutoff_seq = 0

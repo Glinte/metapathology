@@ -125,15 +125,15 @@ def test_import_workloads_cross_the_audit_boundary(tmp_path: Path) -> None:
     # The package itself adds one resolution in addition to the two modules.
     native = run("native")
     attributed = run("attributed")
-    deep = run("deep")
+    detailed = run("detailed")
     native_event_count = native["event_count"]
     assert native_event_count == 3
     assert isinstance(native_event_count, int)
     assert attributed["event_count"] == 6
-    deep_event_count = deep["event_count"]
-    assert isinstance(deep_event_count, int)
-    assert deep_event_count > native_event_count
-    assert isinstance(deep["report_seconds"], float)
-    assert deep["report_seconds"] > 0
-    assert isinstance(deep["report_bytes"], int)
-    assert deep["report_bytes"] > 0
+    detailed_event_count = detailed["event_count"]
+    assert isinstance(detailed_event_count, int)
+    assert detailed_event_count > native_event_count
+    assert isinstance(detailed["report_seconds"], float)
+    assert detailed["report_seconds"] > 0
+    assert isinstance(detailed["report_bytes"], int)
+    assert detailed["report_bytes"] > 0

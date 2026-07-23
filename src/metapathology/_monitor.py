@@ -12,7 +12,7 @@ import traceback
 import warnings
 from contextlib import contextmanager
 
-from metapathology._deep_diagnostics import _DeepDiagnostics
+from metapathology._detailed_capture import _DetailedCapture
 from metapathology._finder_attribution import _FinderAttribution
 from metapathology._importer_cache import _ImporterCacheObserver
 from metapathology._instrumented_list import _InstrumentedMetaPath, _InstrumentedPathHooks, _InstrumentedSysPath
@@ -23,20 +23,20 @@ from metapathology._monitor_model import (
     _FrozenBootstrapState,
     _OwnedAttribute,
     _OwnedValue,
-    _TargetOutcomeState,
+    _ProgramOutcomeState,
 )
 from metapathology._records import (
-    ImportAuditStart,
     ImporterCacheEntry,
-    InternalError,
-    MetaPathMutation,
-    MetaPathReassignment,
+    ImportSearchStarted,
+    MetaPathChange,
+    MetaPathReplacement,
     MonitorEvent,
-    ObjectRef,
-    PathHooksMutation,
-    PathHooksReassignment,
-    SysPathMutation,
-    SysPathReassignment,
+    MonitoringError,
+    ObjectIdentity,
+    PathHooksChange,
+    PathHooksReplacement,
+    SysPathChange,
+    SysPathReplacement,
     type_name,
 )
 
@@ -54,7 +54,11 @@ if TYPE_CHECKING:
     from _typeshed.importlib import PathEntryFinderProtocol
 
     from metapathology._config import MonitoringRequest
-    from metapathology._monitor_model import DeepImportCallsStatus, DeepImportOutcomesStatus, StandardFinderStatus
+    from metapathology._monitor_model import (
+        ImportCallsCaptureStatus,
+        ImportResultsCaptureStatus,
+        PathFinderCaptureStatus,
+    )
     from metapathology._records import MutationOp
 
     _FindSpec = Callable[[str, Sequence[str] | None, ModuleType | None], ModuleSpec | None]
@@ -96,7 +100,7 @@ class _ImportThreadState(_ThreadState):
 
     observation_suspended = False
     thread_id: "int | None" = None
-    pending_import_attempt: "tuple[int, str] | None" = None
+    pending_import_search: "tuple[int, str] | None" = None
 
 
 def _capture_stack(frame: "FrameType") -> traceback.StackSummary:
@@ -151,7 +155,7 @@ def _guard_monitor_callback(
             try:
                 callback(self, *args, **kwargs)
             except Exception as exc:
-                self._record_internal_error(error_where, exc)
+                self._record_monitoring_error(error_where, exc)
             finally:
                 self._local.active = False
 
@@ -178,7 +182,7 @@ class Monitor:
         # trying to observe itself recursively.
         self._local = _ImportThreadState()
         self._finder_attribution = _FinderAttribution()
-        self._deep = _DeepDiagnostics(self)
+        self._detailed = _DetailedCapture(self)
         self._importer_cache = _ImporterCacheObserver(self)
         self._import_audit_enabled = False
         self._meta_path_enabled = False
@@ -186,7 +190,7 @@ class Monitor:
         # One counter for all record types, so the report can interleave the
         # different event kinds chronologically.
         self._seq = 0
-        self._attempt_id = 0
+        self._search_id = 0
         self._thread_id = 0
         self._events: list[MonitorEvent] = []
         # Master switch: hooks stay registered after uninstall() (audit hooks
@@ -207,7 +211,7 @@ class Monitor:
         self._path_hooks_enabled = False
         self._instrumented_path_hooks: _InstrumentedPathHooks | None = None
         self._path_hooks_lease: _OwnedValue | None = None
-        self.initial_path_hooks: tuple[ObjectRef, ...] = ()
+        self.initial_path_hooks: tuple[ObjectIdentity, ...] = ()
         self._observed_path_hooks: dict[int, object] = {}
         # Opt-in because replacing sys.path has a wider compatibility surface
         # than observing the import-specific lists enabled by default.
@@ -227,7 +231,7 @@ class Monitor:
         # How the monitored target finished, recorded by the CLI (or any
         # embedder) before the report is written. Reduced to plain data at
         # record time; exception messages are never captured.
-        self._target_outcome: _TargetOutcomeState | None = None
+        self._program_outcome: _ProgramOutcomeState | None = None
 
     @property
     def enabled(self) -> bool:
@@ -265,35 +269,35 @@ class Monitor:
         return self._enabled and self._sys_path_enabled
 
     @property
-    def deep_diagnostics(self) -> tuple[str, ...]:
+    def detailed_capture(self) -> tuple[str, ...]:
         """Names of explicitly enabled inline delegation mechanisms."""
-        return self._deep.enabled_names(self._enabled)
+        return self._detailed.enabled_names(self._enabled)
 
     @property
-    def deep_import_outcomes_status(self) -> "DeepImportOutcomesStatus":
+    def import_results_capture_status(self) -> "ImportResultsCaptureStatus":
         """Activation state and thread scope of exact import outcomes."""
-        return self._deep.deep_import_outcomes_status
+        return self._detailed.import_results_capture_status
 
     @property
-    def deep_import_calls_status(self) -> "DeepImportCallsStatus":
+    def import_calls_capture_status(self) -> "ImportCallsCaptureStatus":
         """Activation state of ``builtins.__import__`` call observation."""
-        return self._deep.deep_import_calls_status
+        return self._detailed.import_calls_capture_status
 
     @property
-    def standard_finder_status(self) -> "StandardFinderStatus":
+    def path_finder_capture_status(self) -> "PathFinderCaptureStatus":
         """Availability of exact aggregate standard-finder evidence."""
-        return self._deep.standard_finder_status
+        return self._detailed.path_finder_capture_status
 
     def _original_path_hook(self, hook: object) -> object:
-        """Normalize one deep wrapper to the foreign hook it delegates to."""
-        return self._deep.original_path_hook(hook)
+        """Normalize one detailed wrapper to the foreign hook it delegates to."""
+        return self._detailed.original_path_hook(hook)
 
     @property
-    def target_outcome(self) -> "_TargetOutcomeState | None":
+    def program_outcome(self) -> "_ProgramOutcomeState | None":
         """Plain reduction of the target's completion, if one was recorded."""
-        return self._target_outcome
+        return self._program_outcome
 
-    def record_target_outcome(self, exception: BaseException | None = None, exit_code: int | None = None) -> None:
+    def record_program_outcome(self, exception: BaseException | None = None, exit_code: int | None = None) -> None:
         """Record how the monitored target finished, reduced to plain data.
 
         Only the exception's type name and, for ``ImportError`` subclasses,
@@ -304,7 +308,7 @@ class Monitor:
             exit_code: The process exit status the target run produces.
         """
         if exception is None:
-            self._target_outcome = _TargetOutcomeState("completed", None, None, exit_code)
+            self._program_outcome = _ProgramOutcomeState("completed", None, None, exit_code)
             return
         missing: str | None = None
         if isinstance(exception, ImportError):
@@ -316,7 +320,7 @@ class Monitor:
             except Exception:
                 name = None
             missing = name if type(name) is str else None
-        self._target_outcome = _TargetOutcomeState("raised", type_name(exception), missing, exit_code)
+        self._program_outcome = _ProgramOutcomeState("raised", type_name(exception), missing, exit_code)
 
     def events(self) -> list[MonitorEvent]:
         """Return a snapshot of all recorded events, in capture order."""
@@ -332,12 +336,12 @@ class Monitor:
         self._importer_cache.observe("report")
         with self._record_lock:
             cache_state = self._importer_cache.report_state(self._enabled)
-            skipped_finders, finder_contracts = self._finder_attribution.snapshot_locked()
+            skipped_finders, finder_apis = self._finder_attribution.snapshot_locked()
             return MonitorSnapshot(
                 cutoff_seq=self._seq,
                 events=tuple(self._events),
                 skipped_finders=skipped_finders,
-                finder_contracts=finder_contracts,
+                finder_apis=finder_apis,
                 importer_cache=cache_state,
                 retained_cache_finders=self._importer_cache.retained_finders_locked(),
                 early_site_bootstrap=self._early_site_bootstrap,
@@ -351,11 +355,11 @@ class Monitor:
                 path_hooks_enabled=self._enabled and self._path_hooks_enabled,
                 initial_path_hooks=self.initial_path_hooks,
                 sys_path_enabled=self._enabled and self._sys_path_enabled,
-                deep_diagnostics=self.deep_diagnostics,
-                deep_import_outcomes_status=self._deep.deep_import_outcomes_status,
-                deep_import_calls_status=self._deep.deep_import_calls_status,
-                standard_finder_status=self._deep.standard_finder_status,
-                target_outcome=self._target_outcome,
+                detailed_capture=self.detailed_capture,
+                import_results_capture_status=self._detailed.import_results_capture_status,
+                import_calls_capture_status=self._detailed.import_calls_capture_status,
+                path_finder_capture_status=self._detailed.path_finder_capture_status,
+                program_outcome=self._program_outcome,
             )
 
     def _set_early_site_bootstrap(
@@ -406,7 +410,7 @@ class Monitor:
             # Explicit errors were raised by the resolver before this point.
             # Invalid environment values are retained as plain diagnostics.
             for issue in request.issues:
-                self._record_internal_error(issue, ValueError())
+                self._record_monitoring_error(issue, ValueError())
             if activate_monitor:
                 self._activate_core_monitor(generation, request)
             self._activate_requested_mechanisms(request)
@@ -430,7 +434,7 @@ class Monitor:
         try:
             if request.finder_attribution:
                 for position, finder in enumerate(list(current)):
-                    self._finder_attribution.observe_contract(finder, position, "install", None, self)
+                    self._finder_attribution.observe_api(finder, position, "install", None, self)
                     self._finder_attribution.instrument(finder, self)
         finally:
             self._local.active = False
@@ -456,21 +460,21 @@ class Monitor:
             self._importer_cache.enable()
         if request.sys_path and not self._sys_path_enabled:
             self._enable_sys_path()
-        if request.deep_path_entry_finders:
-            self._deep.enable_path_entry_finders()
-        if request.deep_loaders:
-            self._deep.enable_loaders()
-        if request.deep_path_hooks and not self._deep.path_hooks_enabled:
-            self._deep.enable_path_hooks()
-        if request.deep_import_outcomes and not self._deep.import_outcomes_enabled:
-            self._deep.enable_import_outcomes()
-        if request.deep_import_calls and not self._deep.import_calls_enabled:
-            self._deep.enable_import_calls()
+        if request.capture_path_entry_finder_calls:
+            self._detailed.enable_path_entry_finders()
+        if request.capture_loader_calls:
+            self._detailed.enable_loaders()
+        if request.capture_path_hook_calls and not self._detailed.path_hooks_enabled:
+            self._detailed.enable_path_hooks()
+        if request.capture_import_results and not self._detailed.import_results_enabled:
+            self._detailed.enable_import_results()
+        if request.capture_import_calls and not self._detailed.import_calls_enabled:
+            self._detailed.enable_import_calls()
 
     def _enable_path_hooks(self) -> None:
         """Install the instrumented list around the current ``sys.path_hooks`` contents."""
         contents = list(sys.path_hooks)
-        initial = tuple(ObjectRef.of(hook) for hook in contents)
+        initial = tuple(ObjectIdentity.of(hook) for hook in contents)
         instrumented = _InstrumentedPathHooks(contents, self)
         with self._record_lock:
             self._observed_path_hooks.update((reference.object_id, hook) for reference, hook in zip(initial, contents))
@@ -506,7 +510,7 @@ class Monitor:
                 return
             self._importer_cache.observe("uninstall")
             self._enabled = False
-            self._deep.uninstall()
+            self._detailed.uninstall()
             current = sys.meta_path
             meta_path_lease = self._meta_path_lease
             if meta_path_lease is not None and current is meta_path_lease.installed:
@@ -519,7 +523,7 @@ class Monitor:
                     if path_hooks_lease is not None and sys.path_hooks is path_hooks_lease.installed:
                         sys.path_hooks = list(sys.path_hooks)
                 except Exception as exc:
-                    self._record_internal_error("uninstall_path_hooks", exc)
+                    self._record_monitoring_error("uninstall_path_hooks", exc)
                 self._path_hooks_enabled = False
                 self._instrumented_path_hooks = None
                 self._path_hooks_lease = None
@@ -529,7 +533,7 @@ class Monitor:
                     if sys_path_lease is not None and sys.path is sys_path_lease.installed:
                         sys.path = list(sys.path)
                 except Exception as exc:
-                    self._record_internal_error("uninstall_sys_path", exc)
+                    self._record_monitoring_error("uninstall_sys_path", exc)
                 self._sys_path_enabled = False
                 self._instrumented_sys_path = None
                 self._sys_path_lease = None
@@ -604,7 +608,7 @@ class Monitor:
             meta_path_type_names = tuple(type_name(finder) for finder in list(current_meta_path))
             path_hooks_id = id(sys.path_hooks) if self._path_hooks_enabled else None
             cache_fingerprint = self._importer_cache.audit_fingerprint()
-            self._record_import_audit_start(
+            self._record_import_search_started(
                 fullname,
                 meta_path_id,
                 meta_path_type_names,
@@ -623,7 +627,7 @@ class Monitor:
             return
         self._recover_reassignments(args)
 
-    def _record_import_audit_start(
+    def _record_import_search_started(
         self,
         fullname: str,
         meta_path_id: int,
@@ -638,13 +642,13 @@ class Monitor:
         with self._record_lock:
             self._importer_cache.note_fingerprint_locked(cache_fingerprint)
             thread_id = self._thread_id_locked()
-            self._attempt_id += 1
-            attempt_id = self._attempt_id
+            self._search_id += 1
+            search_id = self._search_id
             self._seq += 1
             self._events.append(
-                ImportAuditStart(
-                    seq=self._seq,
-                    attempt_id=attempt_id,
+                ImportSearchStarted(
+                    sequence=self._seq,
+                    search_id=search_id,
                     fullname=fullname,
                     meta_path_id=meta_path_id,
                     meta_path_type_names=meta_path_type_names,
@@ -655,8 +659,8 @@ class Monitor:
                     thread_id=thread_id,
                 )
             )
-        if self._deep.import_outcomes_enabled:
-            self._local.pending_import_attempt = (attempt_id, fullname)
+        if self._detailed.import_results_enabled:
+            self._local.pending_import_search = (search_id, fullname)
 
     def _recover_reassignments(self, args: tuple[object, ...]) -> None:
         """Wrap directly replaced import lists and record detection evidence.
@@ -694,22 +698,22 @@ class Monitor:
         replacement = _InstrumentedMetaPath(current, self)
         if self._finder_attribution_enabled:
             for position, finder in enumerate(list(replacement)):
-                self._finder_attribution.observe_contract(finder, position, "reassignment", None, self)
+                self._finder_attribution.observe_api(finder, position, "replacement", None, self)
                 self._finder_attribution.instrument(finder, self)
         self._instrumented = replacement
         self._meta_path_lease = _OwnedValue(current, replacement)
         sys.meta_path = replacement
         return old_contents, new_contents
 
-    def _recover_path_hooks(self) -> tuple[tuple[ObjectRef, ...], tuple[ObjectRef, ...]] | None:
+    def _recover_path_hooks(self) -> tuple[tuple[ObjectIdentity, ...], tuple[ObjectIdentity, ...]] | None:
         current = sys.path_hooks
         expected = self._instrumented_path_hooks
         if not self._path_hooks_enabled or current is expected or expected is None:
             return None
         old_hooks = tuple(expected)
         new_hooks = tuple(current)
-        old_contents = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in old_hooks)
-        new_contents = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in new_hooks)
+        old_contents = tuple(ObjectIdentity.of(self._original_path_hook(hook)) for hook in old_hooks)
+        new_contents = tuple(ObjectIdentity.of(self._original_path_hook(hook)) for hook in new_hooks)
         replacement = _InstrumentedPathHooks(new_hooks, self)
         self._instrumented_path_hooks = replacement
         self._path_hooks_lease = _OwnedValue(current, replacement)
@@ -737,7 +741,7 @@ class Monitor:
         stack: traceback.StackSummary,
         thread_name: str,
         meta_data: tuple[tuple[str, ...], tuple[str, ...]] | None,
-        path_hooks_data: tuple[tuple[ObjectRef, ...], tuple[ObjectRef, ...]] | None,
+        path_hooks_data: tuple[tuple[ObjectIdentity, ...], tuple[ObjectIdentity, ...]] | None,
         sys_path_data: tuple[tuple[str, ...], tuple[str, ...]] | None,
     ) -> None:
         """Append only plain reassignment evidence after releasing the reinstall lock."""
@@ -745,8 +749,8 @@ class Monitor:
             if meta_data is not None:
                 self._seq += 1
                 self._events.append(
-                    MetaPathReassignment(
-                        seq=self._seq,
+                    MetaPathReplacement(
+                        sequence=self._seq,
                         during_import=fullname,
                         old_contents=meta_data[0],
                         new_contents=meta_data[1],
@@ -757,8 +761,8 @@ class Monitor:
             if path_hooks_data is not None:
                 self._seq += 1
                 self._events.append(
-                    PathHooksReassignment(
-                        seq=self._seq,
+                    PathHooksReplacement(
+                        sequence=self._seq,
                         during_import=fullname,
                         old_contents=path_hooks_data[0],
                         new_contents=path_hooks_data[1],
@@ -769,8 +773,8 @@ class Monitor:
             if sys_path_data is not None:
                 self._seq += 1
                 self._events.append(
-                    SysPathReassignment(
-                        seq=self._seq,
+                    SysPathReplacement(
+                        sequence=self._seq,
                         during_import=fullname,
                         old_contents=sys_path_data[0],
                         new_contents=sys_path_data[1],
@@ -779,8 +783,8 @@ class Monitor:
                     )
                 )
 
-    @_guard_monitor_callback("meta_path_mutation")
-    def _on_meta_path_mutation(
+    @_guard_monitor_callback("meta_path_change")
+    def _on_meta_path_change(
         self,
         mutated: "_InstrumentedMetaPath",
         op: "MutationOp",
@@ -811,8 +815,8 @@ class Monitor:
             self._seq += 1
             mutation_seq = self._seq
             self._events.append(
-                MetaPathMutation(
-                    seq=self._seq,
+                MetaPathChange(
+                    sequence=self._seq,
                     op=op,
                     added=added_names,
                     removed=removed_names,
@@ -824,17 +828,17 @@ class Monitor:
         if self._finder_attribution_enabled:
             positions = {id(finder): position for position, finder in enumerate(list(mutated))}
             for finder in added:
-                self._finder_attribution.observe_contract(
+                self._finder_attribution.observe_api(
                     finder,
                     positions.get(id(finder), -1),
-                    "mutation",
+                    "change",
                     mutation_seq,
                     self,
                 )
                 self._finder_attribution.instrument(finder, self)
 
-    @_guard_monitor_callback("path_hooks_mutation")
-    def _on_path_hooks_mutation(
+    @_guard_monitor_callback("path_hooks_change")
+    def _on_path_hooks_change(
         self,
         mutated: "_InstrumentedPathHooks",
         op: "MutationOp",
@@ -845,17 +849,17 @@ class Monitor:
         """Record a ``sys.path_hooks`` mutation without invoking any hook."""
         if not self._enabled or not self._path_hooks_enabled or mutated is not self._instrumented_path_hooks:
             return
-        added_refs = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in added)
-        removed_refs = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in removed)
-        if self._deep.path_hooks_enabled:
+        added_refs = tuple(ObjectIdentity.of(self._original_path_hook(hook)) for hook in added)
+        removed_refs = tuple(ObjectIdentity.of(self._original_path_hook(hook)) for hook in removed)
+        if self._detailed.path_hooks_enabled:
             for added_hook in added:
-                wrapper = self._deep.wrap_added_path_hook(added_hook)
+                wrapper = self._detailed.wrap_added_path_hook(added_hook)
                 if wrapper is added_hook:
                     continue
                 for index, current in enumerate(mutated):
                     if current is added_hook:
                         list.__setitem__(mutated, index, wrapper)
-        contents_after = tuple(ObjectRef.of(self._original_path_hook(hook)) for hook in list(mutated))
+        contents_after = tuple(ObjectIdentity.of(self._original_path_hook(hook)) for hook in list(mutated))
         observed_hooks = (*added, *removed, *mutated)
         thread_name = threading.current_thread().name
         stack = _capture_stack(frame)
@@ -867,8 +871,8 @@ class Monitor:
             self._observed_path_hooks.update((id(hook), hook) for hook in observed_hooks)
             self._seq += 1
             self._events.append(
-                PathHooksMutation(
-                    seq=self._seq,
+                PathHooksChange(
+                    sequence=self._seq,
                     op=op,
                     added=added_refs,
                     removed=removed_refs,
@@ -877,17 +881,17 @@ class Monitor:
                     stack=stack,
                 )
             )
-        self._importer_cache.observe("after_path_hooks_mutation")
+        self._importer_cache.observe("after_path_hooks_change")
 
-    @_guard_monitor_callback("importer_cache_before_path_hooks_mutation")
+    @_guard_monitor_callback("importer_cache_before_path_hooks_change")
     def _on_path_hooks_before_mutation(self, mutated: "_InstrumentedPathHooks") -> None:
         """Observe the importer cache immediately before a live path-hook list operation."""
         if not self._enabled or not self._path_hooks_enabled or mutated is not self._instrumented_path_hooks:
             return
-        self._importer_cache.observe("before_path_hooks_mutation")
+        self._importer_cache.observe("before_path_hooks_change")
 
-    @_guard_monitor_callback("sys_path_mutation")
-    def _on_sys_path_mutation(
+    @_guard_monitor_callback("sys_path_change")
+    def _on_sys_path_change(
         self,
         mutated: "_InstrumentedSysPath",
         op: "MutationOp",
@@ -908,7 +912,7 @@ class Monitor:
                 return
             self._seq += 1
             self._events.append(
-                SysPathMutation(
+                SysPathChange(
                     self._seq,
                     op,
                     added_paths,
@@ -919,7 +923,7 @@ class Monitor:
                 )
             )
 
-    def _record_internal_error(self, where: str, exc: BaseException) -> None:
+    def _record_monitoring_error(self, where: str, exc: BaseException) -> None:
         """Record an exception raised by our own instrumentation instead of letting it escape.
 
         Args:
@@ -930,4 +934,6 @@ class Monitor:
         exception_type_name = type(exc).__name__
         with self._record_lock:
             self._seq += 1
-            self._events.append(InternalError(seq=self._seq, where=where, exception_type_name=exception_type_name))
+            self._events.append(
+                MonitoringError(sequence=self._seq, where=where, exception_type_name=exception_type_name)
+            )

@@ -51,15 +51,15 @@ class _Arguments(argparse.Namespace):
         self.path_hooks: bool | None = None
         self.importer_cache: bool | None = None
         self.sys_path: bool | None = None
-        self.deep: bool | None = None
-        self.deep_path_hooks: bool | None = None
-        self.deep_path_entry_finders: bool | None = None
-        self.deep_loaders: bool | None = None
-        self.deep_import_outcomes: bool | None = None
-        self.deep_import_calls: bool | None = None
-        self.probes: bool | None = None
-        self.standard_path_probe: bool | None = None
-        self.displaced_finder_probe: bool | None = None
+        self.detailed_capture: bool | None = None
+        self.capture_path_hook_calls: bool | None = None
+        self.capture_path_entry_finder_calls: bool | None = None
+        self.capture_loader_calls: bool | None = None
+        self.capture_import_results: bool | None = None
+        self.capture_import_calls: bool | None = None
+        self.checks: bool | None = None
+        self.standard_path_check: bool | None = None
+        self.displaced_finder_check: bool | None = None
         self.is_module = False
         self.target: str | None = None
         self.target_args: list[str] = []
@@ -80,15 +80,15 @@ class _Arguments(argparse.Namespace):
             self.path_hooks,
             self.importer_cache,
             self.sys_path,
-            self.deep,
-            self.deep_path_hooks,
-            self.deep_path_entry_finders,
-            self.deep_loaders,
-            self.deep_import_outcomes,
-            self.deep_import_calls,
-            self.probes,
-            self.standard_path_probe,
-            self.displaced_finder_probe,
+            self.detailed_capture,
+            self.capture_path_hook_calls,
+            self.capture_path_entry_finder_calls,
+            self.capture_loader_calls,
+            self.capture_import_results,
+            self.capture_import_calls,
+            self.checks,
+            self.standard_path_check,
+            self.displaced_finder_check,
         )
 
 
@@ -108,21 +108,22 @@ class _Invocation(_Record):
     path_hooks: bool | None
     importer_cache: bool | None
     sys_path: bool | None
-    deep: bool | None
-    deep_path_hooks: bool | None
-    deep_path_entry_finders: bool | None
-    deep_loaders: bool | None
-    deep_import_outcomes: bool | None
-    deep_import_calls: bool | None
-    probes: bool | None
-    standard_path_probe: bool | None
-    displaced_finder_probe: bool | None
+    detailed_capture: bool | None
+    capture_path_hook_calls: bool | None
+    capture_path_entry_finder_calls: bool | None
+    capture_loader_calls: bool | None
+    capture_import_results: bool | None
+    capture_import_calls: bool | None
+    checks: bool | None
+    standard_path_check: bool | None
+    displaced_finder_check: bool | None
 
 
 def _make_parser() -> _ArgumentParser:
     """Build the command-line grammar without importing target execution code."""
     parser = _ArgumentParser(
         prog=_program_name(sys.argv[0]),
+        allow_abbrev=False,
         description="Run a script or module under the metapathology import-machinery monitor.",
         epilog=(
             "Tool options must precede TARGET.\n"
@@ -160,40 +161,84 @@ def _make_parser() -> _ArgumentParser:
         choices=_COLOR_MODES,
         help="color text reports automatically, always, or never",
     )
-    capture = parser.add_argument_group("capture mechanisms")
-    capture.add_argument("--import-audit", action=argparse.BooleanOptionalAction)
-    capture.add_argument("--meta-path", action=argparse.BooleanOptionalAction)
-    capture.add_argument("--finder-attribution", action=argparse.BooleanOptionalAction)
-    capture.add_argument("--path-hooks", action=argparse.BooleanOptionalAction)
-    capture.add_argument("--importer-cache", action=argparse.BooleanOptionalAction)
-    capture.add_argument("--sys-path", action=argparse.BooleanOptionalAction)
-    deep = parser.add_argument_group("opt-in deep diagnostics (may perturb third-party identity checks)")
-    deep.add_argument("--deep", action=argparse.BooleanOptionalAction, help="enable or disable all deep mechanisms")
-    deep.add_argument(
-        "--deep-path-hooks", action=argparse.BooleanOptionalAction, help="capture delegated path-hook calls"
-    )
-    deep.add_argument(
-        "--deep-path-entry-finders",
+    capture = parser.add_argument_group("capture")
+    capture.add_argument(
+        "--import-audit",
         action=argparse.BooleanOptionalAction,
-        help="capture delegated path-entry finder decisions",
+        help="record when Python starts an uncached import search",
     )
-    deep.add_argument(
-        "--deep-loaders", action=argparse.BooleanOptionalAction, help="capture delegated loader creation and execution"
-    )
-    deep.add_argument(
-        "--deep-import-outcomes",
+    capture.add_argument(
+        "--meta-path",
         action=argparse.BooleanOptionalAction,
-        help="capture exact CPython import invocation outcomes",
+        help="record changes to sys.meta_path",
     )
-    deep.add_argument(
-        "--deep-import-calls",
+    capture.add_argument(
+        "--finder-attribution",
         action=argparse.BooleanOptionalAction,
-        help="capture builtins.__import__ calls, including sys.modules cache hits",
+        help="record calls to writable meta-path finder instances",
     )
-    probes = parser.add_argument_group("report-time probes (may invoke current import state)")
-    probes.add_argument("--probes", action=argparse.BooleanOptionalAction, help="enable or disable all probes")
-    probes.add_argument("--standard-path-probe", action=argparse.BooleanOptionalAction)
-    probes.add_argument("--displaced-finder-probe", action=argparse.BooleanOptionalAction)
+    capture.add_argument(
+        "--path-hooks",
+        action=argparse.BooleanOptionalAction,
+        help="record changes to sys.path_hooks",
+    )
+    capture.add_argument(
+        "--importer-cache",
+        action=argparse.BooleanOptionalAction,
+        help="record snapshots and changes in sys.path_importer_cache",
+    )
+    capture.add_argument(
+        "--sys-path",
+        action=argparse.BooleanOptionalAction,
+        help="record changes to sys.path",
+    )
+    detailed = parser.add_argument_group("detailed capture (slower and more intrusive)")
+    detailed.add_argument(
+        "--detailed-capture",
+        action=argparse.BooleanOptionalAction,
+        help="enable or disable every detailed capture mechanism",
+    )
+    detailed.add_argument(
+        "--capture-path-hook-calls",
+        action=argparse.BooleanOptionalAction,
+        help="record calls to path hooks",
+    )
+    detailed.add_argument(
+        "--capture-path-entry-finder-calls",
+        action=argparse.BooleanOptionalAction,
+        help="record calls to path-entry finders",
+    )
+    detailed.add_argument(
+        "--capture-loader-calls",
+        action=argparse.BooleanOptionalAction,
+        help="record loader creation and execution calls",
+    )
+    detailed.add_argument(
+        "--capture-import-results",
+        action=argparse.BooleanOptionalAction,
+        help="record whether exact CPython import searches loaded or failed",
+    )
+    detailed.add_argument(
+        "--capture-import-calls",
+        action=argparse.BooleanOptionalAction,
+        help="record builtins.__import__ calls, including module-cache hits",
+    )
+    checks = parser.add_argument_group("current-state checks (run while building the report)")
+    checks.add_argument(
+        "--checks",
+        action=argparse.BooleanOptionalAction,
+        help="enable or disable every current-state check",
+    )
+    checks.add_argument(
+        "--standard-path-check",
+        action=argparse.BooleanOptionalAction,
+        help="compare custom finder results with PathFinder's current result",
+    )
+    checks.add_argument(
+        "--displaced-finder-check",
+        action=argparse.BooleanOptionalAction,
+        help="check selected finders displaced from the importer cache",
+    )
     parser.add_argument("-m", dest="is_module", action="store_true", help="run TARGET as a module")
     parser.add_argument(
         "target",
@@ -291,19 +336,19 @@ def _run(invocation: _Invocation) -> int:
                 path_hooks=invocation.path_hooks,
                 importer_cache=invocation.importer_cache,
                 sys_path=invocation.sys_path,
-                deep=metapathology.DeepConfig(
-                    enabled=invocation.deep,
-                    path_hooks=invocation.deep_path_hooks,
-                    path_entry_finders=invocation.deep_path_entry_finders,
-                    loaders=invocation.deep_loaders,
-                    import_outcomes=invocation.deep_import_outcomes,
-                    import_calls=invocation.deep_import_calls,
+                detailed=metapathology.DetailedCaptureConfig(
+                    enabled=invocation.detailed_capture,
+                    path_hooks=invocation.capture_path_hook_calls,
+                    path_entry_finders=invocation.capture_path_entry_finder_calls,
+                    loaders=invocation.capture_loader_calls,
+                    import_results=invocation.capture_import_results,
+                    import_calls=invocation.capture_import_calls,
                 ),
             ),
             analysis=metapathology.AnalysisConfig(
-                probes=invocation.probes,
-                standard_path_probe=invocation.standard_path_probe,
-                displaced_finder_probe=invocation.displaced_finder_probe,
+                checks=invocation.checks,
+                standard_path_check=invocation.standard_path_check,
+                displaced_finder_check=invocation.displaced_finder_check,
             ),
         )
     except ValueError as exc:
@@ -329,7 +374,7 @@ def _run(invocation: _Invocation) -> int:
                 local={"__name__": "__console__", "__doc__": None, "metapathology": metapathology},
                 exitmsg="",
             )
-            monitor.record_target_outcome(exit_code=exit_code)
+            monitor.record_program_outcome(exit_code=exit_code)
             return exit_code
         sys.argv = [target, *invocation.target_args]
         if invocation.is_module:
@@ -344,13 +389,13 @@ def _run(invocation: _Invocation) -> int:
             runpy.run_path(target, run_name="__main__")
     except SystemExit as exc:
         exit_code = _exit_code(exc)
-        monitor.record_target_outcome(exit_code=exit_code)
+        monitor.record_program_outcome(exit_code=exit_code)
     except Exception as exc:
         traceback.print_exc()
         exit_code = 1
-        monitor.record_target_outcome(exception=exc, exit_code=exit_code)
+        monitor.record_program_outcome(exception=exc, exit_code=exit_code)
     else:
-        monitor.record_target_outcome(exit_code=exit_code)
+        monitor.record_program_outcome(exit_code=exit_code)
     finally:
         # Reporting is diagnostic-only and must not replace the target's exit
         # status when stderr or a configured file is unusable.

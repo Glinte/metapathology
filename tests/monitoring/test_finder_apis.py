@@ -1,4 +1,4 @@
-"""Conservative meta-path finder protocol inspection."""
+"""Conservative meta-path finder API inspection."""
 
 from support import PythonRunner
 
@@ -93,36 +93,36 @@ replacement_finder = LegacyFinder()
 sys.meta_path = [replacement_finder, *sys.meta_path]
 import fractions
 document = json.loads(metapathology.render_report(format="json"))
-legacy_contracts = [item for item in document["finder_contracts"] if item["finder_type_name"] == "LegacyFinder"]
-contract = next(item for item in legacy_contracts if item["finder_id"] == hex(id(finder)))
-assert contract["category"] == "legacy_only", contract
-assert contract["find_spec"] == {
+legacy_apis = [item for item in document["finder_apis"] if item["finder_type_name"] == "LegacyFinder"]
+observation = next(item for item in legacy_apis if item["finder_id"] == hex(id(finder)))
+assert observation["category"] == "legacy_only", observation
+assert observation["find_spec"] == {
     "availability": "absent",
     "defined_by": None,
     "evidence": "class_mro",
 }
-assert contract["find_module"]["availability"] == "callable"
-assert contract["observation"] == "mutation"
-assert contract["observation_event_ref"].startswith("event:")
-event_id = contract["observation_event_ref"]
+assert observation["find_module"]["availability"] == "callable"
+assert observation["observation"] == "change"
+assert observation["observation_event_ref"].startswith("event:")
+event_id = observation["observation_event_ref"]
 mutation = next(event for event in document["timeline"] if event["id"] == event_id)
-assert mutation["kind"] == "meta_path_mutation"
+assert mutation["kind"] == "meta_path_change"
 assert mutation["data"]["added"] == ["LegacyFinder"]
-replacement_contract = next(item for item in legacy_contracts if item["finder_id"] == hex(id(replacement_finder)))
-assert replacement_contract["observation"] == "reassignment"
-assert replacement_contract["observation_event_ref"] is None
-finding = next(item for item in document["findings"] if item["kind"] == "legacy_finder_contract")
+replacement_observation = next(item for item in legacy_apis if item["finder_id"] == hex(id(replacement_finder)))
+assert replacement_observation["observation"] == "replacement"
+assert replacement_observation["observation_event_ref"] is None
+finding = next(item for item in document["findings"] if item["kind"] == "legacy_finder_api")
 assert finding["subject"] == {"kind": "finder", "value": "LegacyFinder"}
-assert finding["data"]["finder_contract_ref"] == f"finder-contract:{hex(id(finder))}"
+assert finding["data"]["finder_api_ref"] == f"finder-api:{hex(id(finder))}"
 assert any(
-    contract["id"] == finding["data"]["finder_contract_ref"] and contract["finder_id"] == hex(id(finder))
-    for contract in document["finder_contracts"]
+    observation["id"] == finding["data"]["finder_api_ref"] and observation["finder_id"] == hex(id(finder))
+    for observation in document["finder_apis"]
 )
-assert finding["evidence"]["level"] == "captured"
+assert finding["evidence"]["level"] == "observed"
 assert finding["evidence"]["event_refs"] == [event_id]
 text = metapathology.render_report()
 assert "[legacy-only] LegacyFinder" in text, text
-assert "[legacy-finder-contract] LegacyFinder" in text, text
+assert "[legacy-finder-api] LegacyFinder" in text, text
 assert "CPython 3.12+" in text, text
 metapathology.uninstall()
 assert finder.__dict__ == before
@@ -130,7 +130,7 @@ print("OK")
 """
 
 
-def test_contract_report_links_mutation_and_restores_finder(python_runner: PythonRunner) -> None:
+def test_finder_api_report_links_mutation_and_restores_finder(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(CONTRACT_REPORT)
 
     assert proc.stdout.strip() == "OK"

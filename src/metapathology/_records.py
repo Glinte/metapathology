@@ -38,14 +38,14 @@ if TYPE_CHECKING:
     ]
     CacheState = Literal["unavailable", "missing", "none", "object"]
     ProtocolAvailability = Literal["callable", "non_callable", "indeterminate", "absent"]
-    LocationsState = Literal["not_applicable", "captured", "post_hoc", "deferred", "failed"]
-    DeepBoundary = Literal[
+    LocationsState = Literal["not_applicable", "captured", "current_state", "deferred", "failed"]
+    ImportMechanismBoundary = Literal[
         "path_entry_finder",
         "loader_create_module",
         "loader_exec_module",
         "path_hook",
     ]
-    DeepOutcome = Literal[
+    ImportMechanismOutcome = Literal[
         "started",
         "loaded",
         "failed",
@@ -56,7 +56,7 @@ if TYPE_CHECKING:
         "unobserved_reentrant",
     ]
     SearchPathKind = Literal["sys_path", "parent_path", "path_entry"]
-    FinderContractObservation = Literal["install", "reassignment", "mutation"]
+    FinderAPIObservationKind = Literal["install", "replacement", "change"]
 else:
 
     def _cast(_type: object, value: object) -> object:
@@ -74,7 +74,7 @@ def type_name(obj: object) -> str:
     return type.__getattribute__(cls, "__name__")
 
 
-class ObjectRef(_Record):
+class ObjectIdentity(_Record):
     """Plain identity metadata for an observed foreign object."""
 
     object_id: int
@@ -82,7 +82,7 @@ class ObjectRef(_Record):
     name: str | None = None
 
     @classmethod
-    def of(cls, obj: object) -> "ObjectRef":
+    def of(cls, obj: object) -> "ObjectIdentity":
         """Reduce an arbitrary object to safe identity metadata without foreign dispatch.
 
         Captures a function/method's ``__name__`` when available (path hooks are
@@ -111,13 +111,13 @@ class FinderProtocol(_Record):
     defined_by: str | None
 
 
-class FinderContract(_Record):
+class FinderAPIObservation(_Record):
     """Protocol inventory captured before metapathology changes a finder."""
 
     finder_id: int
     finder_type_name: str
     position: int
-    observation: "FinderContractObservation"
+    observation: "FinderAPIObservationKind"
     observation_seq: int | None
     find_spec: FinderProtocol
     find_module: FinderProtocol
@@ -146,21 +146,21 @@ class ImporterCacheEntry(_Record):
     """
 
     path: str
-    finder: ObjectRef | None
+    finder: ObjectIdentity | None
 
 
 class ImporterCacheReplacement(_Record):
     """One cache path whose finder identity or negative status changed."""
 
     path: str
-    before: ObjectRef | None
-    after: ObjectRef | None
+    before: ObjectIdentity | None
+    after: ObjectIdentity | None
 
 
-class ImporterCacheDiff(_Record):
+class ImporterCacheChange(_Record):
     """A batch of importer-cache changes observed at one observation point."""
 
-    seq: int
+    sequence: int
     observation: str
     added: tuple[ImporterCacheEntry, ...]
     removed: tuple[ImporterCacheEntry, ...]
@@ -170,7 +170,7 @@ class ImporterCacheDiff(_Record):
     thread_name: str
 
 
-class ImportAuditStart(_Record):
+class ImportSearchStarted(_Record):
     """One CPython ``import`` audit event proving resolution started.
 
     The audit event has no matching completion signal. This record therefore
@@ -180,8 +180,8 @@ class ImportAuditStart(_Record):
     events.
     """
 
-    seq: int
-    attempt_id: int
+    sequence: int
+    search_id: int
     fullname: str
     meta_path_id: int
     meta_path_type_names: tuple[str, ...]
@@ -192,11 +192,11 @@ class ImportAuditStart(_Record):
     thread_id: int
 
 
-class MetaPathMutation(_Record):
+class MetaPathChange(_Record):
     """A mutating method call observed on the instrumented ``sys.meta_path`` list.
 
     Attributes:
-        seq: Position in the monitor's single event log; one counter is shared
+        sequence: Position in the monitor's single event log; one counter is shared
             by all record types so events can be interleaved chronologically.
         op: Name of the list method that mutated the list, e.g. ``"insert"``
             or ``"__setitem__"``.
@@ -211,7 +211,7 @@ class MetaPathMutation(_Record):
             without source lines (they are resolved at report time).
     """
 
-    seq: int
+    sequence: int
     op: "MutationOp"
     added: tuple[str, ...]
     removed: tuple[str, ...]
@@ -220,15 +220,15 @@ class MetaPathMutation(_Record):
     stack: "StackSummary"
 
 
-class MetaPathReassignment(_Record):
+class MetaPathReplacement(_Record):
     """``sys.meta_path`` was replaced wholesale, detected via the ``import`` audit event.
 
     Detection granularity is the next import after the fact, so every field
     describes the state *at detection time*, not at the moment of reassignment.
 
     Attributes:
-        seq: Position in the monitor's single event log (shared counter, see
-            :class:`MetaPathMutation`).
+        sequence: Position in the monitor's single event log (shared counter, see
+            :class:`MetaPathChange`).
         during_import: Name of the module whose import triggered detection.
             The reassignment happened some time before this import.
         old_contents: Display names of the abandoned instrumented list's
@@ -241,7 +241,7 @@ class MetaPathReassignment(_Record):
             attribute assignment raises no event, so that stack is unknowable).
     """
 
-    seq: int
+    sequence: int
     during_import: str
     old_contents: tuple[str, ...]
     new_contents: tuple[str, ...]
@@ -249,33 +249,33 @@ class MetaPathReassignment(_Record):
     stack: "StackSummary"
 
 
-class PathHooksMutation(_Record):
+class PathHooksChange(_Record):
     """A mutating method call observed on the instrumented ``sys.path_hooks`` list."""
 
-    seq: int
+    sequence: int
     op: "MutationOp"
-    added: tuple[ObjectRef, ...]
-    removed: tuple[ObjectRef, ...]
-    contents_after: tuple[ObjectRef, ...]
+    added: tuple[ObjectIdentity, ...]
+    removed: tuple[ObjectIdentity, ...]
+    contents_after: tuple[ObjectIdentity, ...]
     thread_name: str
     stack: "StackSummary"
 
 
-class PathHooksReassignment(_Record):
+class PathHooksReplacement(_Record):
     """``sys.path_hooks`` replacement detected at the next import audit event."""
 
-    seq: int
+    sequence: int
     during_import: str
-    old_contents: tuple[ObjectRef, ...]
-    new_contents: tuple[ObjectRef, ...]
+    old_contents: tuple[ObjectIdentity, ...]
+    new_contents: tuple[ObjectIdentity, ...]
     thread_name: str
     stack: "StackSummary"
 
 
-class SysPathMutation(_Record):
+class SysPathChange(_Record):
     """A mutating method call observed on the opt-in instrumented ``sys.path`` list."""
 
-    seq: int
+    sequence: int
     op: "MutationOp"
     added: tuple[str, ...]
     removed: tuple[str, ...]
@@ -284,10 +284,10 @@ class SysPathMutation(_Record):
     stack: "StackSummary"
 
 
-class SysPathReassignment(_Record):
+class SysPathReplacement(_Record):
     """``sys.path`` replacement detected at the next import audit event."""
 
-    seq: int
+    sequence: int
     during_import: str
     old_contents: tuple[str, ...]
     new_contents: tuple[str, ...]
@@ -295,27 +295,27 @@ class SysPathReassignment(_Record):
     stack: "StackSummary"
 
 
-class SpecSummary(_Record):
+class ModuleSpecSnapshot(_Record):
     """Import-safe semantic summary of a finder-produced module spec."""
 
-    spec: ObjectRef
-    loader: ObjectRef | None
-    origin: str | ObjectRef | None
-    cached: str | ObjectRef | None
+    spec: ObjectIdentity
+    loader: ObjectIdentity | None
+    origin: str | ObjectIdentity | None
+    cached: str | ObjectIdentity | None
     is_package: bool | None
     is_namespace: bool | None
-    submodule_search_locations: tuple[str | ObjectRef, ...] | None
+    submodule_search_locations: tuple[str | ObjectIdentity, ...] | None
     locations_state: "LocationsState"
     unavailable_fields: tuple[str, ...] = ()
 
 
-class FindSpecCall(_Record):
+class MetaPathFinderCall(_Record):
     """One ``find_spec`` call on an instrumented meta-path finder.
 
     Attributes:
-        seq: Position in the monitor's single event log (shared counter, see
-            :class:`MetaPathMutation`).
-        fullname: The module name that was probed.
+        sequence: Position in the monitor's single event log (shared counter, see
+            :class:`MetaPathChange`).
+        fullname: The module name that was checked.
         finder_type_name: Display name of the finder that was asked.
         finder_id: ``id()`` of that finder; stable because the monitor keeps a
             strong reference, and needed to tell apart two finders of the same
@@ -326,17 +326,17 @@ class FindSpecCall(_Record):
         origin: ``spec.origin`` when it is a string (a file path for
             filesystem imports), else None.
         search_path: Snapshot of the path passed to ``find_spec``, or of
-            ``sys.path`` for a top-level import. Used by report-time probes
+            ``sys.path`` for a top-level import. Used by report-time checks
             without substituting a mutable report-time search path.
         target_state: Identity-only snapshot of the reload target, when one
-            was passed to ``find_spec``. A report-time probe only reuses the
+            was passed to ``find_spec``. A report-time check only reuses the
             object if that exact identity remains available.
         exception_type_name: Type name of the exception if ``find_spec``
             raised instead of returning; ``found`` is False in that case.
         thread_name: Name of the thread that ran the import.
     """
 
-    seq: int
+    sequence: int
     fullname: str
     finder_type_name: str
     finder_id: int
@@ -345,7 +345,7 @@ class FindSpecCall(_Record):
     origin: str | None
     search_path: tuple[str, ...]
     search_path_kind: "SearchPathKind"
-    spec_summary: SpecSummary | None
+    spec_summary: ModuleSpecSnapshot | None
     exception_type_name: str | None
     thread_name: str
     thread_id: int
@@ -354,8 +354,8 @@ class FindSpecCall(_Record):
     target_state: ModuleCacheState | None = None
 
 
-class DeepDiagnosticCall(_Record):
-    """One call crossing an explicitly enabled deep-diagnostics boundary.
+class ImportMechanismCall(_Record):
+    """One call crossing an explicitly enabled detailed-diagnostics boundary.
 
     Attributes:
         returned_finder: Safe identity of the path-entry finder a successful
@@ -366,29 +366,29 @@ class DeepDiagnosticCall(_Record):
             for every other boundary and for hooks that raised or declined.
     """
 
-    seq: int
-    boundary: "DeepBoundary"
+    sequence: int
+    boundary: "ImportMechanismBoundary"
     object_id: int
     object_type_name: str
     fullname: str | None
     path: str | None
-    outcome: "DeepOutcome"
+    outcome: "ImportMechanismOutcome"
     exception_type_name: str | None
     thread_name: str
     thread_id: int
     module_state_before: ModuleCacheState | None = None
     module_state_after: ModuleCacheState | None = None
     target_state: ModuleCacheState | None = None
-    returned_finder: ObjectRef | None = None
+    returned_finder: ObjectIdentity | None = None
 
 
-class DeepImportEvent(_Record):
+class ImportResult(_Record):
     """Entry or exact completion observed at CPython's complete import boundary."""
 
-    seq: int
-    attempt_id: int
+    sequence: int
+    search_id: int
     fullname: str
-    outcome: "DeepOutcome"
+    outcome: "ImportMechanismOutcome"
     thread_id: int
     thread_name: str
 
@@ -399,12 +399,12 @@ class ImportCall(_Record):
     Unlike every other record, this one is captured even when the import is a
     ``sys.modules`` cache hit: the ``import`` audit event does not fire and no
     finder is called, so this is the only evidence that the code ran an import
-    statement at all. There is no ``attempt_id`` because a cache hit has no
+    statement at all. There is no ``search_id`` because a cache hit has no
     corresponding resolution start to link to.
 
     Attributes:
-        seq: Position in the monitor's single event log (shared counter, see
-            :class:`MetaPathMutation`).
+        sequence: Position in the monitor's single event log (shared counter, see
+            :class:`MetaPathChange`).
         name: The module name passed to ``__import__`` (the first argument);
             empty for ``from . import x``-style relative imports.
         fromlist: Names in the import's ``fromlist`` that were plain strings.
@@ -420,39 +420,39 @@ class ImportCall(_Record):
         thread_name: Name of the thread that ran the import.
     """
 
-    seq: int
+    sequence: int
     name: str
     fromlist: tuple[str, ...]
     level: int
     importing_module: str | None
     module_state_before: ModuleCacheState
-    outcome: "DeepOutcome"
+    outcome: "ImportMechanismOutcome"
     exception_type_name: str | None
     thread_id: int
     thread_name: str
 
 
-class StandardFinderCall(_Record):
+class PathFinderCall(_Record):
     """A captured aggregate call to a shared standard finder."""
 
-    seq: int
-    attempt_id: int
+    sequence: int
+    search_id: int
     fullname: str
     finder_type_name: str
-    spec_summary: SpecSummary
+    spec_summary: ModuleSpecSnapshot
     thread_id: int
     thread_name: str
 
 
-class InternalError(_Record):
+class MonitoringError(_Record):
     """An exception raised inside metapathology's own instrumentation.
 
     Recorded instead of raised: an exception escaping a hook would abort the
     user's import, which a diagnostic tool must never do.
 
     Attributes:
-        seq: Position in the monitor's single event log (shared counter, see
-            :class:`MetaPathMutation`).
+        sequence: Position in the monitor's single event log (shared counter, see
+            :class:`MetaPathChange`).
         where: Short label of the failing code path, e.g. ``"audit_hook"``.
         exception_type_name: Type name of the caught exception.
         message: Optional pre-sanitized detail. The monitor leaves this unset
@@ -460,26 +460,26 @@ class InternalError(_Record):
             machinery can execute arbitrary code while an import is in flight.
     """
 
-    seq: int
+    sequence: int
     where: str
     exception_type_name: str
     message: str | None = None
 
 
-# Everything the monitor records goes into one chronological log; ``seq`` orders records across types.
+# Everything the monitor records goes into one chronological log; ``sequence`` orders records across types.
 MonitorEvent = (
-    DeepDiagnosticCall
-    | DeepImportEvent
-    | FindSpecCall
-    | ImportAuditStart
+    ImportMechanismCall
+    | ImportResult
+    | MetaPathFinderCall
+    | ImportSearchStarted
     | ImportCall
-    | ImporterCacheDiff
-    | InternalError
-    | MetaPathMutation
-    | MetaPathReassignment
-    | PathHooksMutation
-    | PathHooksReassignment
-    | StandardFinderCall
-    | SysPathMutation
-    | SysPathReassignment
+    | ImporterCacheChange
+    | MonitoringError
+    | MetaPathChange
+    | MetaPathReplacement
+    | PathHooksChange
+    | PathHooksReplacement
+    | PathFinderCall
+    | SysPathChange
+    | SysPathReplacement
 )

@@ -1,83 +1,82 @@
 # Frozen and embedded applications
 
-`python -m metapathology frozen-app.exe` cannot diagnose a frozen executable:
-it starts metapathology in an outer Python process, while the executable owns a
-different embedded interpreter and different import machinery. Generate a
-startup file and bundle it into the executable instead.
+Do not run a frozen executable as the target of an outer
+`python -m metapathology` process. The executable owns a different embedded
+interpreter and different import state. Generate a startup file and include it
+in the executable instead.
 
-All integrations activate the same stdlib-only runtime code and use the normal
-configuration variables. A useful starting point is:
+Configure reporting through environment variables, for example:
 
 ```text
-METAPATHOLOGY_REPORT=diagnostic.txt
-METAPATHOLOGY_DEEP=1
+METAPATHOLOGY_REPORT=diagnosis.json
+METAPATHOLOGY_CAPTURE_LOADER_CALLS=1
 ```
 
-Prefer only the relevant `METAPATHOLOGY_DEEP_*` variables when the default
-evidence is sufficient. Automatic filenames include the process ID, so child
-processes do not overwrite the parent report.
+Environment report names are automatically made process-safe, so child
+processes do not overwrite the parent's report.
 
 ## PyInstaller
 
-Generate an ordered PyInstaller runtime hook:
+Generate a runtime hook:
 
 ```console
 python -m metapathology.frozen_bootstrap generate pyinstaller metapathology-rthook.py
 pyinstaller --runtime-hook metapathology-rthook.py app.py
 ```
 
-The generated hook imports metapathology, so PyInstaller analyzes and collects
-the package. Explicit runtime hooks execute after PyInstaller establishes its
-frozen importer and before the application entry script. The frozen importer
-therefore appears in the initial snapshot; its installation cannot be
-attributed.
+PyInstaller runs explicit
+[runtime hooks](https://pyinstaller.org/en/latest/hooks.html#changing-runtime-behavior)
+after it establishes the frozen importer and before the application entry
+script. The frozen importer therefore appears in the initial snapshot;
+metapathology cannot show the code that installed it.
 
 ## Nuitka
 
-Nuitka does not provide the same documented universal runtime-hook interface.
-Generate a launcher for an importable application module and compile that
-launcher as the entry point:
+Generate a launcher for an importable application module and compile the
+launcher:
 
 ```console
 python -m metapathology.frozen_bootstrap generate nuitka metapathology-launcher.py --module app
 python -m nuitka --mode=standalone --include-module=app metapathology-launcher.py
 ```
 
-Use `--mode=onefile` instead when diagnosing one-file startup. The launcher
-activates monitoring and then imports and calls `main()` from the named module.
-Use `--callable NAME` when the entry callable has another name. This static
-import is intentional: Nuitka's compiled-module loader does not provide the
-`get_code()` operation required by `runpy`. The application must therefore
-expose an importable, no-argument entry callable. Code that relies on a
-source-file `__main__` identity or unusual multiprocessing re-entry should use
-an application-owned activation call instead.
+Use `--mode=onefile` for a one-file reproduction. See Nuitka's
+[standalone and one-file documentation](https://nuitka.net/user-documentation/user-manual.html).
+
+The application module must expose a no-argument `main()` function. Use
+`--callable NAME` for another name. The generated launcher uses a static import
+because Nuitka's compiled-module loader does not supply the `get_code()`
+operation needed by `runpy`.
+
+If the application depends on source-file `__main__` behavior or unusual
+multiprocessing startup, add an application-owned activation call instead.
 
 ## cx_Freeze
 
-Generate a cx_Freeze initialization script:
+Generate an initialization script:
 
 ```console
 python -m metapathology.frozen_bootstrap generate cx-freeze metapathology-init.py
 cxfreeze --script app.py --init-script metapathology-init.py --includes metapathology
 ```
 
-For a setup script, pass the generated path as
+In a setup script, pass the generated path as
 `Executable(script="app.py", init_script="metapathology-init.py")` and include
 `metapathology` in the `build_exe` `includes` option. The generated file
-implements cx_Freeze's initialization-script `run(name)` protocol after
-activation; it is not merely a top-level import fragment.
+implements cx_Freeze's initialization-script `run(name)` protocol.
 
 ## Embedded or application-owned CPython
 
-Generate the plain activation file:
+Generate a plain startup file:
 
 ```console
 python -m metapathology.frozen_bootstrap generate embedded metapathology-bootstrap.py
 ```
 
-Import or execute it immediately after initializing CPython and establishing
-the host's required import machinery, but before importing application code.
-An application that can edit its entry point may equivalently call:
+Import or execute it after the host has initialized CPython and installed the
+import machinery it needs, but before importing application code.
+
+An editable entry point can call the API directly:
 
 ```python
 import metapathology
@@ -85,17 +84,19 @@ import metapathology
 metapathology.activate_frozen("embedded", __file__)
 ```
 
-## Generation and failure behavior
+`activate_frozen()` requires both the integration name and the startup-file
+path; it is not a zero-argument replacement for `install()`.
+
+## Generated files and failures
 
 Generated files are deterministic Python source and are safe to inspect or
-check in. Generation refuses to replace an existing path; pass `--force` only
-after deciding that the existing regular file may be overwritten.
+check in. Generation refuses to replace an existing file unless `--force` is
+passed.
 
-Activation is best effort. Ordinary activation errors are reduced to a short
-message on standard error and application startup continues. Automatic report
-writes are atomic. An invalid or unwritable destination is recorded internally
-when possible and suppressed by the exit-report boundary.
+Activation is best effort. An ordinary activation error produces a short
+message on standard error and lets application startup continue. Report writes
+remain atomic.
 
-The report records the named integration, generated file, and `after freezer
-initialization` observation boundary. It does not claim to have witnessed
-finders or path hooks installed by the bootloader before that boundary.
+The report records the integration, startup file, and that monitoring began
+after freezer initialization. It does not claim to have observed finders or
+path hooks installed earlier by the bootloader.

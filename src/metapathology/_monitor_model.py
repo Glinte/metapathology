@@ -1,29 +1,29 @@
 """Immutable state contracts shared by monitoring and reporting."""
 
 from metapathology._record import _Record
-from metapathology._records import FinderContract, ImporterCacheEntry, MonitorEvent, ObjectRef
+from metapathology._records import FinderAPIObservation, ImporterCacheEntry, MonitorEvent, ObjectIdentity
 
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from typing import Literal
 
-    TargetOutcomeKind = Literal["completed", "raised"]
-    StandardFinderStatus = Literal[
+    ProgramOutcomeKind = Literal["completed", "raised"]
+    PathFinderCaptureStatus = Literal[
         "disabled",
         "unavailable_existing_profiler",
         "active_path_finder_aggregate",
         "unsupported_path_finder_boundary",
         "inactive_after_uninstall",
     ]
-    DeepImportOutcomesStatus = Literal[
+    ImportResultsCaptureStatus = Literal[
         "disabled",
         "refused_existing_profiler",
         "unsupported_boundary",
         "active_current_and_future_threading_threads_cache_hits_not_observed",
         "inactive_after_uninstall",
     ]
-    DeepImportCallsStatus = Literal[
+    ImportCallsCaptureStatus = Literal[
         "disabled",
         "active_all_threads_including_cache_hits",
         "inactive_after_uninstall",
@@ -78,10 +78,10 @@ class _FrozenBootstrapState(_Record):
     boundary: str
 
 
-class _TargetOutcomeState(_Record):
+class _ProgramOutcomeState(_Record):
     """Plain reduction of how the monitored target finished."""
 
-    kind: "TargetOutcomeKind"
+    kind: "ProgramOutcomeKind"
     exception_type_name: str | None
     missing_module: str | None
     exit_code: int | None
@@ -93,7 +93,7 @@ class MonitorSnapshot(_Record):
     cutoff_seq: int
     events: tuple[MonitorEvent, ...]
     skipped_finders: tuple[tuple[object, str], ...]
-    finder_contracts: tuple[FinderContract, ...]
+    finder_apis: tuple[FinderAPIObservation, ...]
     importer_cache: _ImporterCacheReportState
     retained_cache_finders: tuple[tuple[int, object], ...]
     early_site_bootstrap: _EarlySiteBootstrapState | None
@@ -105,10 +105,10 @@ class MonitorSnapshot(_Record):
     meta_path_enabled: bool
     finder_attribution_enabled: bool
     path_hooks_enabled: bool
-    initial_path_hooks: tuple[ObjectRef, ...]
+    initial_path_hooks: tuple[ObjectIdentity, ...]
     sys_path_enabled: bool
-    deep_diagnostics: tuple[str, ...]
-    deep_import_outcomes_status: "DeepImportOutcomesStatus"
-    deep_import_calls_status: "DeepImportCallsStatus"
-    standard_finder_status: "StandardFinderStatus"
-    target_outcome: _TargetOutcomeState | None
+    detailed_capture: tuple[str, ...]
+    import_results_capture_status: "ImportResultsCaptureStatus"
+    import_calls_capture_status: "ImportCallsCaptureStatus"
+    path_finder_capture_status: "PathFinderCaptureStatus"
+    program_outcome: _ProgramOutcomeState | None

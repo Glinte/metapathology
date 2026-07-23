@@ -11,12 +11,12 @@ from metapathology._module_metadata import module_cache_state
 from metapathology._monitor_model import _MISSING
 from metapathology._record import _Record
 from metapathology._records import (
-    FinderContract,
+    FinderAPIObservation,
     FinderProtocol,
-    FindSpecCall,
+    MetaPathFinderCall,
     ModuleCacheState,
+    ModuleSpecSnapshot,
     MonitorEvent,
-    SpecSummary,
     type_name,
 )
 from metapathology._spec import summarize_spec
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from typing import Protocol
     from typing import cast as _cast
 
-    from metapathology._records import FinderContractObservation, SearchPathKind
+    from metapathology._records import FinderAPIObservationKind, SearchPathKind
 
     _FindSpec = Callable[[str, Sequence[str] | None, ModuleType | None], ModuleSpec | None]
 
@@ -53,11 +53,11 @@ if TYPE_CHECKING:
         def _local(self) -> _ReentrancyState: ...
 
         @property
-        def _deep(self) -> _LoaderInstrumentation: ...
+        def _detailed(self) -> _LoaderInstrumentation: ...
 
         def _thread_id_locked(self) -> int: ...
 
-        def _record_internal_error(self, where: str, exc: BaseException) -> None: ...
+        def _record_monitoring_error(self, where: str, exc: BaseException) -> None: ...
 
         @staticmethod
         def _restore_attribute(obj: object, name: str, previous: object, installed: object) -> None: ...
@@ -89,7 +89,7 @@ class _FinderAttribution:
         # capture. A patch with original=None is an in-progress claim.
         self._patches: dict[int, _FinderPatch] = {}
         self._skipped: dict[int, tuple[object, str]] = {}
-        self._contracts: dict[int, FinderContract] = {}
+        self._apis: dict[int, FinderAPIObservation] = {}
         self._search_path_cache: list[tuple[str, ...]] = []
 
     def instrument(self, finder: object, monitor: "_FinderAttributionHost") -> None:
@@ -112,31 +112,31 @@ class _FinderAttribution:
             return
         self._commit_shadow(finder_id, finder, original, previous, wrapper, monitor)
 
-    def observe_contract(
+    def observe_api(
         self,
         finder: object,
         position: int,
-        observation: "FinderContractObservation",
-        seq: int | None,
+        observation_kind: "FinderAPIObservationKind",
+        sequence: int | None,
         monitor: "_FinderAttributionHost",
     ) -> None:
         """Inventory raw finder protocols without invoking attribute lookup."""
         finder_id = id(finder)
         with monitor._record_lock:
-            if finder_id in self._contracts:
+            if finder_id in self._apis:
                 return
-        contract = FinderContract(
+        observation = FinderAPIObservation(
             finder_id=finder_id,
             finder_type_name=type_name(finder),
             position=position,
-            observation=observation,
-            observation_seq=seq,
+            observation=observation_kind,
+            observation_seq=sequence,
             find_spec=self._inspect_protocol(finder, "find_spec"),
             find_module=self._inspect_protocol(finder, "find_module"),
         )
         with monitor._record_lock:
             if monitor._enabled:
-                self._contracts.setdefault(finder_id, contract)
+                self._apis.setdefault(finder_id, observation)
 
     def uninstall(self, monitor: "_FinderAttributionHost") -> None:
         """Restore owned shadows, then discard all capture-lifetime state."""
@@ -145,7 +145,7 @@ class _FinderAttribution:
         with monitor._record_lock:
             self._patches.clear()
             self._skipped.clear()
-            self._contracts.clear()
+            self._apis.clear()
             self._search_path_cache.clear()
 
     def skipped_names(self, monitor: "_FinderAttributionHost") -> list[tuple[str, str]]:
@@ -153,9 +153,9 @@ class _FinderAttribution:
         with monitor._record_lock:
             return [(type_name(finder), reason) for finder, reason in self._skipped.values()]
 
-    def snapshot_locked(self) -> tuple[tuple[tuple[object, str], ...], tuple[FinderContract, ...]]:
+    def snapshot_locked(self) -> tuple[tuple[tuple[object, str], ...], tuple[FinderAPIObservation, ...]]:
         """Copy report state while the caller holds the monitor record lock."""
-        return tuple(self._skipped.values()), tuple(self._contracts.values())
+        return tuple(self._skipped.values()), tuple(self._apis.values())
 
     def reuse_search_path_locked(self, snapshot: tuple[str, ...]) -> tuple[str, ...]:
         """Return a recent identity-equal snapshot while the shared lock is held."""
@@ -227,7 +227,7 @@ class _FinderAttribution:
         try:
             setattr(finder, "find_spec", original)
         except Exception as exc:
-            monitor._record_internal_error("instrument_finder", exc)
+            monitor._record_monitoring_error("instrument_finder", exc)
         self._skip(
             finder_id,
             finder,
@@ -257,7 +257,7 @@ class _FinderAttribution:
             original = getattr(finder, "find_spec", None)
         except Exception as exc:
             self._skip(finder_id, finder, "find_spec lookup raised", monitor)
-            monitor._record_internal_error("instrument_finder", exc)
+            monitor._record_monitoring_error("instrument_finder", exc)
             return None
         if callable(original):
             return _cast("_FindSpec", original)
@@ -334,12 +334,12 @@ class _FinderAttribution:
         try:
             loader_type_name: str | None = None
             origin: str | None = None
-            spec_summary: SpecSummary | None = None
+            spec_summary: ModuleSpecSnapshot | None = None
             if spec is not None:
                 spec_summary, loader = summarize_spec(spec, iterate_foreign_locations=False)
                 if loader is not None:
                     loader_type_name = type_name(loader)
-                    monitor._deep.instrument_loader(loader)
+                    monitor._detailed.instrument_loader(loader)
                 if type(spec_summary.origin) is str:
                     origin = spec_summary.origin
             thread_name = threading.current_thread().name
@@ -348,8 +348,8 @@ class _FinderAttribution:
                 search_path = self.reuse_search_path_locked(search_path)
                 monitor._seq += 1
                 monitor._events.append(
-                    FindSpecCall(
-                        seq=monitor._seq,
+                    MetaPathFinderCall(
+                        sequence=monitor._seq,
                         fullname=fullname,
                         finder_type_name=finder_type_name,
                         finder_id=finder_id,
@@ -368,7 +368,7 @@ class _FinderAttribution:
                     )
                 )
         except Exception as exc:
-            monitor._record_internal_error("record_find_spec", exc)
+            monitor._record_monitoring_error("record_find_spec", exc)
 
     @staticmethod
     def _snapshot_search_path(path: "Sequence[str] | None") -> tuple[str, ...]:

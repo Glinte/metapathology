@@ -1,19 +1,5 @@
 {
   "$defs": {
-    "BareEvidenceJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "detail": {
-          "enum": [
-            "bare"
-          ]
-        }
-      },
-      "required": [
-        "detail"
-      ],
-      "type": "object"
-    },
     "CaptureInfo": {
       "additionalProperties": false,
       "properties": {
@@ -76,75 +62,981 @@
       "required": [],
       "type": "object"
     },
-    "ClaimEvidenceJSON": {
+    "CheckRunJSON": {
       "additionalProperties": false,
       "properties": {
-        "claim": {
-          "$ref": "#/$defs/FindingClaimJSON"
+        "candidates": {
+          "type": "integer"
         },
-        "detail": {
-          "enum": [
-            "claim"
+        "capacity": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
           ]
+        },
+        "foreign_calls": {
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "standard_path",
+            "displaced_finder"
+          ]
+        },
+        "omitted": {
+          "type": "integer"
+        },
+        "results": {
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "disabled",
+            "unavailable"
+          ]
+        },
+        "unavailable_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [
-        "claim",
-        "detail"
-      ],
-      "type": "object"
-    },
-    "ContractEvidenceJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "detail": {
-          "enum": [
-            "contract"
-          ]
-        },
-        "finder_contract_ref": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "detail",
-        "finder_contract_ref"
+        "candidates",
+        "capacity",
+        "foreign_calls",
+        "kind",
+        "omitted",
+        "results",
+        "status",
+        "unavailable_reasons"
       ],
       "type": "object"
     },
     "CorrelationEvidenceJSON": {
       "additionalProperties": false,
       "properties": {
-        "attempt_refs": {
+        "detail": {
+          "enum": [
+            "correlation"
+          ]
+        },
+        "search_refs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "detail",
+        "search_refs"
+      ],
+      "type": "object"
+    },
+    "DiagnosticsInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "monitoring_error_refs": {
           "items": {
             "type": "string"
           },
           "type": "array"
         },
+        "report_errors": {
+          "items": {
+            "$ref": "#/$defs/ReportErrorJSON"
+          },
+          "type": "array"
+        },
+        "skipped_finders": {
+          "items": {
+            "$ref": "#/$defs/SkippedFinderJSON"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "monitoring_error_refs",
+        "report_errors",
+        "skipped_finders"
+      ],
+      "type": "object"
+    },
+    "EarlySiteBootstrapJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "activation_source": {
+          "type": "string"
+        },
+        "earlier_pth_files": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "path": {
+          "type": "string"
+        },
+        "site_packages": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "activation_source",
+        "earlier_pth_files",
+        "path",
+        "site_packages"
+      ],
+      "type": "object"
+    },
+    "EventEvidenceJSON": {
+      "additionalProperties": false,
+      "properties": {
         "detail": {
           "enum": [
-            "correlation"
+            "events_only"
           ]
         }
       },
       "required": [
-        "attempt_refs",
         "detail"
       ],
       "type": "object"
     },
-    "DeepCallEvidenceJSON": {
+    "EventJSON": {
       "additionalProperties": false,
       "properties": {
-        "deep_call": {
-          "$ref": "#/$defs/FindingDeepCallJSON"
-        },
-        "detail": {
-          "enum": [
-            "deep_call"
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImportSearchStartedDataJSON"
+            },
+            {
+              "$ref": "#/$defs/ImportMechanismCallDataJSON"
+            },
+            {
+              "$ref": "#/$defs/ImportResultDataJSON"
+            },
+            {
+              "$ref": "#/$defs/ImportCallDataJSON"
+            },
+            {
+              "$ref": "#/$defs/PathFinderCallDataJSON"
+            },
+            {
+              "$ref": "#/$defs/MetaPathFinderCallDataJSON"
+            },
+            {
+              "$ref": "#/$defs/ImporterCacheChangeDataJSON"
+            },
+            {
+              "$ref": "#/$defs/MetaPathChangeDataJSON"
+            },
+            {
+              "$ref": "#/$defs/ReassignmentDataJSON"
+            },
+            {
+              "$ref": "#/$defs/PathHooksChangeDataJSON"
+            },
+            {
+              "$ref": "#/$defs/PathHooksReplacementDataJSON"
+            },
+            {
+              "$ref": "#/$defs/SysPathChangeDataJSON"
+            },
+            {
+              "$ref": "#/$defs/MonitoringErrorDataJSON"
+            }
           ]
         },
-        "module_state_baseline": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "import_search_started",
+            "import_mechanism_call",
+            "import_result",
+            "import_call",
+            "path_finder_call",
+            "meta_path_finder_call",
+            "importer_cache_change",
+            "meta_path_change",
+            "meta_path_replacement",
+            "path_hooks_change",
+            "path_hooks_replacement",
+            "sys_path_change",
+            "sys_path_replacement",
+            "monitoring_error"
+          ]
+        },
+        "sequence": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "data",
+        "id",
+        "kind",
+        "sequence"
+      ],
+      "type": "object"
+    },
+    "ExplanationJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "alternatives": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "boundary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "candidate_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cause_finding_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence": {
+          "enum": [
+            "observed",
+            "correlated",
+            "inferred",
+            "unknown"
+          ]
+        },
+        "effect_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "event_refs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "finder_type_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "ambiguous_contention",
+            "observed_finder_result",
+            "finder",
+            "finder_changed_module_cache",
+            "module_replacement",
+            "namespace_candidate_hidden",
+            "missing_namespace_locations_failure",
+            "path",
+            "module_failed_after_loading",
+            "module_executed_again",
+            "standard_path_check",
+            "path_finder_precedence"
+          ]
+        },
+        "later_finders": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "next_observation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "omitted_location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "standard_search_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state_after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleStateJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state_before": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleStateJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subject": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "alternatives",
+        "boundary",
+        "candidate_path",
+        "cause_finding_ref",
+        "confidence",
+        "effect_status",
+        "event_refs",
+        "finder_type_name",
+        "id",
+        "kind",
+        "later_finders",
+        "next_observation",
+        "omitted_location",
+        "origin",
+        "standard_search_ref",
+        "state_after",
+        "state_before",
+        "subject"
+      ],
+      "type": "object"
+    },
+    "FinderAPIEvidenceJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "enum": [
+            "finder_api"
+          ]
+        },
+        "finder_api_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "detail",
+        "finder_api_ref"
+      ],
+      "type": "object"
+    },
+    "FinderAPIObservationJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "enum": [
+            "indeterminate",
+            "legacy_only",
+            "modern",
+            "modern_and_legacy",
+            "protocol_less"
+          ]
+        },
+        "find_module": {
+          "$ref": "#/$defs/ProtocolJSON"
+        },
+        "find_spec": {
+          "$ref": "#/$defs/ProtocolJSON"
+        },
+        "finder_id": {
+          "type": "string"
+        },
+        "finder_type_name": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "observation": {
+          "enum": [
+            "install",
+            "replacement",
+            "change"
+          ]
+        },
+        "observation_event_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "position": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "category",
+        "find_module",
+        "find_spec",
+        "finder_id",
+        "finder_type_name",
+        "id",
+        "observation",
+        "observation_event_ref",
+        "position"
+      ],
+      "type": "object"
+    },
+    "FinderCallEvidenceJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "enum": [
+            "finder_call"
+          ]
+        },
+        "finder_call": {
+          "$ref": "#/$defs/FindingFinderCallJSON"
+        }
+      },
+      "required": [
+        "detail",
+        "finder_call"
+      ],
+      "type": "object"
+    },
+    "FinderComparisonEvidenceJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "enum": [
+            "result_comparison"
+          ]
+        },
+        "finder_call": {
+          "$ref": "#/$defs/FindingFinderCallJSON"
+        },
+        "finder_result_comparison_ref": {
+          "type": "string"
+        },
+        "finder_result_refs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "structural_comparison": {
+          "$ref": "#/$defs/StructuralComparisonJSON"
+        }
+      },
+      "required": [
+        "detail",
+        "finder_call",
+        "finder_result_comparison_ref",
+        "finder_result_refs",
+        "structural_comparison"
+      ],
+      "type": "object"
+    },
+    "FinderResultComparisonJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "cached_differs": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "left_locations_state": {
+          "enum": [
+            "not_applicable",
+            "captured",
+            "current_state",
+            "deferred",
+            "failed",
+            "unavailable"
+          ]
+        },
+        "left_result_ref": {
+          "type": "string"
+        },
+        "loader_type_differs": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "locations_reordered": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "only_in_left_result": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "only_in_right_result": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "origin_differs": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "package_status_differs": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "right_locations_state": {
+          "enum": [
+            "not_applicable",
+            "captured",
+            "current_state",
+            "deferred",
+            "failed",
+            "unavailable"
+          ]
+        },
+        "right_result_ref": {
+          "type": "string"
+        },
+        "status_differs": {
+          "type": "boolean"
+        },
+        "structural_comparison": {
+          "$ref": "#/$defs/StructuralComparisonJSON"
+        }
+      },
+      "required": [
+        "cached_differs",
+        "complete",
+        "id",
+        "left_locations_state",
+        "left_result_ref",
+        "loader_type_differs",
+        "locations_reordered",
+        "only_in_left_result",
+        "only_in_right_result",
+        "origin_differs",
+        "package_status_differs",
+        "right_locations_state",
+        "right_result_ref",
+        "status_differs",
+        "structural_comparison"
+      ],
+      "type": "object"
+    },
+    "FinderResultJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_level": {
+          "enum": [
+            "observed",
+            "current_state_check"
+          ]
+        },
+        "exception_type_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finder_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finder_type_name": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "observed_finder_result",
+            "standard_path_check",
+            "displaced_finder_check"
+          ]
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "module": {
+          "type": "string"
+        },
+        "predicts_alternative_winner": {
+          "type": "boolean"
+        },
+        "purpose": {
+          "enum": [
+            "record_custom_finder_result",
+            "compare_with_current_pathfinder",
+            "check_displaced_importer_cache_finder"
+          ]
+        },
+        "search_path": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "search_path_kind": {
+          "enum": [
+            "sys_path",
+            "parent_path",
+            "path_entry"
+          ]
+        },
+        "search_path_phase": {
+          "enum": [
+            "import"
+          ]
+        },
+        "signals": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "source_event_refs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "spec": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleSpecSnapshotJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state_phase": {
+          "enum": [
+            "import",
+            "report"
+          ]
+        },
+        "status": {
+          "enum": [
+            "found",
+            "not_found",
+            "failed",
+            "target_unavailable",
+            "finder_unavailable",
+            "unsupported_finder"
+          ]
+        }
+      },
+      "required": [
+        "evidence_level",
+        "exception_type_name",
+        "finder_id",
+        "finder_type_name",
+        "id",
+        "kind",
+        "limitations",
+        "module",
+        "predicts_alternative_winner",
+        "purpose",
+        "search_path",
+        "search_path_kind",
+        "search_path_phase",
+        "signals",
+        "source_event_refs",
+        "spec",
+        "state_phase",
+        "status"
+      ],
+      "type": "object"
+    },
+    "FindingEvidenceJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "event_refs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "finder_call_status": {
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "current_state",
+            "observed",
+            "correlated",
+            "inferred_from_state"
+          ]
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "module_spec_status": {
+          "type": "string"
+        },
+        "module_state_after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleStateJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "module_state_before": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleStateJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "FindingFinderCallJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "event_ref": {
+          "type": "string"
+        },
+        "finder_id": {
+          "type": "string"
+        },
+        "finder_type_name": {
+          "type": "string"
+        },
+        "loader_type_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "search_path": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "search_path_kind": {
+          "enum": [
+            "sys_path",
+            "parent_path",
+            "path_entry"
+          ]
+        },
+        "spec": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleSpecSnapshotJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "event_ref",
+        "finder_id",
+        "finder_type_name",
+        "loader_type_name",
+        "origin",
+        "search_path",
+        "search_path_kind",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "FindingImportMechanismCallJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "boundary": {
+          "enum": [
+            "path_entry_finder",
+            "loader_create_module",
+            "loader_exec_module",
+            "path_hook"
+          ]
+        },
+        "event_ref": {
+          "type": "string"
+        },
+        "module_state_after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleStateJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "module_state_before": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleStateJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "started",
+            "loaded",
+            "failed",
+            "found",
+            "not_found",
+            "returned",
+            "raised",
+            "unobserved_reentrant"
+          ]
+        },
+        "target_state": {
           "anyOf": [
             {
               "$ref": "#/$defs/ModuleStateJSON"
@@ -156,13 +1048,250 @@
         }
       },
       "required": [
-        "deep_call",
-        "detail",
-        "module_state_baseline"
+        "boundary",
+        "event_ref",
+        "module_state_after",
+        "module_state_before",
+        "outcome",
+        "target_state"
       ],
       "type": "object"
     },
-    "DeepDiagnosticCallDataJSON": {
+    "FindingJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EventEvidenceJSON"
+            },
+            {
+              "$ref": "#/$defs/CorrelationEvidenceJSON"
+            },
+            {
+              "$ref": "#/$defs/FinderAPIEvidenceJSON"
+            },
+            {
+              "$ref": "#/$defs/FinderCallEvidenceJSON"
+            },
+            {
+              "$ref": "#/$defs/FinderComparisonEvidenceJSON"
+            },
+            {
+              "$ref": "#/$defs/ImportMechanismEvidenceJSON"
+            }
+          ]
+        },
+        "evidence": {
+          "$ref": "#/$defs/FindingEvidenceJSON"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "import_failed_after_state_change",
+            "finder_changed_module_cache",
+            "legacy_finder_api",
+            "module_replacement",
+            "missing_namespace_locations",
+            "module_without_spec",
+            "competing_path_hooks",
+            "module_hides_namespace",
+            "module_failed_after_loading",
+            "module_executed_again"
+          ]
+        },
+        "module": {
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "problem",
+            "risk",
+            "note"
+          ]
+        },
+        "signals": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subject": {
+          "$ref": "#/$defs/FindingSubjectJSON"
+        }
+      },
+      "required": [
+        "data",
+        "evidence",
+        "id",
+        "kind",
+        "module",
+        "severity",
+        "signals",
+        "subject"
+      ],
+      "type": "object"
+    },
+    "FindingSubjectJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "module",
+            "finder",
+            "path"
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "type": "object"
+    },
+    "FrameJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "filename": {
+          "type": "string"
+        },
+        "function": {
+          "type": "string"
+        },
+        "lineno": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "filename",
+        "function",
+        "lineno"
+      ],
+      "type": "object"
+    },
+    "FrozenBootstrapJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "boundary": {
+          "type": "string"
+        },
+        "integration": {
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "boundary",
+        "integration",
+        "path"
+      ],
+      "type": "object"
+    },
+    "ImportCallDataJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "enum": [
+            "import_call_wrapper"
+          ]
+        },
+        "exception_type_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fromlist": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "importing_module": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "level": {
+          "type": "integer"
+        },
+        "module_state_before": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleStateJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "started",
+            "loaded",
+            "failed",
+            "found",
+            "not_found",
+            "returned",
+            "raised",
+            "unobserved_reentrant"
+          ]
+        },
+        "thread_id": {
+          "type": "integer"
+        },
+        "thread_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence",
+        "exception_type_name",
+        "fromlist",
+        "importing_module",
+        "level",
+        "module_state_before",
+        "name",
+        "outcome",
+        "thread_id",
+        "thread_name"
+      ],
+      "type": "object"
+    },
+    "ImportMechanismCallDataJSON": {
       "additionalProperties": false,
       "properties": {
         "boundary": {
@@ -175,7 +1304,7 @@
         },
         "evidence": {
           "enum": [
-            "deep_delegation"
+            "detailed_delegation"
           ]
         },
         "exception_type_name": {
@@ -291,668 +1420,18 @@
       ],
       "type": "object"
     },
-    "DeepImportEventDataJSON": {
+    "ImportMechanismEvidenceJSON": {
       "additionalProperties": false,
       "properties": {
-        "attempt_ref": {
-          "type": "string"
-        },
-        "evidence": {
+        "detail": {
           "enum": [
-            "exact_import_boundary"
+            "import_mechanism_call"
           ]
         },
-        "fullname": {
-          "type": "string"
+        "import_mechanism_call": {
+          "$ref": "#/$defs/FindingImportMechanismCallJSON"
         },
-        "outcome": {
-          "enum": [
-            "started",
-            "loaded",
-            "failed",
-            "found",
-            "not_found",
-            "returned",
-            "raised",
-            "unobserved_reentrant"
-          ]
-        },
-        "thread_id": {
-          "type": "integer"
-        },
-        "thread_name": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "attempt_ref",
-        "evidence",
-        "fullname",
-        "outcome",
-        "thread_id",
-        "thread_name"
-      ],
-      "type": "object"
-    },
-    "DiagnosticsInfo": {
-      "additionalProperties": false,
-      "properties": {
-        "internal_error_refs": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "report_errors": {
-          "items": {
-            "$ref": "#/$defs/ReportErrorJSON"
-          },
-          "type": "array"
-        },
-        "skipped_finders": {
-          "items": {
-            "$ref": "#/$defs/SkippedFinderJSON"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "internal_error_refs",
-        "report_errors",
-        "skipped_finders"
-      ],
-      "type": "object"
-    },
-    "EarlySiteBootstrapJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "activation_source": {
-          "type": "string"
-        },
-        "earlier_pth_files": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "path": {
-          "type": "string"
-        },
-        "site_packages": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "activation_source",
-        "earlier_pth_files",
-        "path",
-        "site_packages"
-      ],
-      "type": "object"
-    },
-    "EventJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "data": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ImportAuditStartDataJSON"
-            },
-            {
-              "$ref": "#/$defs/DeepDiagnosticCallDataJSON"
-            },
-            {
-              "$ref": "#/$defs/DeepImportEventDataJSON"
-            },
-            {
-              "$ref": "#/$defs/ImportCallDataJSON"
-            },
-            {
-              "$ref": "#/$defs/StandardFinderCallDataJSON"
-            },
-            {
-              "$ref": "#/$defs/FindSpecCallDataJSON"
-            },
-            {
-              "$ref": "#/$defs/ImporterCacheDiffDataJSON"
-            },
-            {
-              "$ref": "#/$defs/MetaPathMutationDataJSON"
-            },
-            {
-              "$ref": "#/$defs/ReassignmentDataJSON"
-            },
-            {
-              "$ref": "#/$defs/PathHooksMutationDataJSON"
-            },
-            {
-              "$ref": "#/$defs/PathHooksReassignmentDataJSON"
-            },
-            {
-              "$ref": "#/$defs/SysPathMutationDataJSON"
-            },
-            {
-              "$ref": "#/$defs/InternalErrorDataJSON"
-            }
-          ]
-        },
-        "id": {
-          "type": "string"
-        },
-        "kind": {
-          "enum": [
-            "import_audit_start",
-            "deep_diagnostic_call",
-            "deep_import_event",
-            "import_call",
-            "standard_finder_call",
-            "find_spec_call",
-            "importer_cache_diff",
-            "meta_path_mutation",
-            "meta_path_reassignment",
-            "path_hooks_mutation",
-            "path_hooks_reassignment",
-            "sys_path_mutation",
-            "sys_path_reassignment",
-            "internal_error"
-          ]
-        },
-        "seq": {
-          "type": "integer"
-        }
-      },
-      "required": [
-        "data",
-        "id",
-        "kind",
-        "seq"
-      ],
-      "type": "object"
-    },
-    "ExplanationJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "alternatives": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "boundary": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "candidate_path": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "cause_finding_ref": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "confidence": {
-          "enum": [
-            "captured",
-            "correlated",
-            "inferred",
-            "unknown"
-          ]
-        },
-        "effect_status": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "event_refs": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "finder_type_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "id": {
-          "type": "string"
-        },
-        "kind": {
-          "enum": [
-            "ambiguous_contention",
-            "captured_claim",
-            "finder",
-            "finder_side_effect",
-            "module_replacement",
-            "namespace_candidate_displaced",
-            "namespace_truncation_failure",
-            "path",
-            "repeated_load_failure",
-            "repeated_loader_execution",
-            "standard_path_probe",
-            "standard_winner_precedence"
-          ]
-        },
-        "later_finders": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "next_observation": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "omitted_location": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "origin": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "standard_attempt_ref": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "state_after": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModuleStateJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "state_before": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModuleStateJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "subject": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "alternatives",
-        "boundary",
-        "candidate_path",
-        "cause_finding_ref",
-        "confidence",
-        "effect_status",
-        "event_refs",
-        "finder_type_name",
-        "id",
-        "kind",
-        "later_finders",
-        "next_observation",
-        "omitted_location",
-        "origin",
-        "standard_attempt_ref",
-        "state_after",
-        "state_before",
-        "subject"
-      ],
-      "type": "object"
-    },
-    "FindSpecCallDataJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "exception_type_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "finder_id": {
-          "type": "string"
-        },
-        "finder_type_name": {
-          "type": "string"
-        },
-        "found": {
-          "type": "boolean"
-        },
-        "fullname": {
-          "type": "string"
-        },
-        "loader_type_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "module_state_after": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModuleStateJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "module_state_before": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModuleStateJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "origin": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "search_path": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "search_path_kind": {
-          "enum": [
-            "sys_path",
-            "parent_path",
-            "path_entry"
-          ]
-        },
-        "spec": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SpecSummaryJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "target_state": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModuleStateJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "thread_id": {
-          "type": "integer"
-        },
-        "thread_name": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "exception_type_name",
-        "finder_id",
-        "finder_type_name",
-        "found",
-        "fullname",
-        "loader_type_name",
-        "module_state_after",
-        "module_state_before",
-        "origin",
-        "search_path",
-        "search_path_kind",
-        "spec",
-        "target_state",
-        "thread_id",
-        "thread_name"
-      ],
-      "type": "object"
-    },
-    "FinderContractJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "category": {
-          "enum": [
-            "indeterminate",
-            "legacy_only",
-            "modern",
-            "modern_and_legacy",
-            "protocol_less"
-          ]
-        },
-        "find_module": {
-          "$ref": "#/$defs/ProtocolJSON"
-        },
-        "find_spec": {
-          "$ref": "#/$defs/ProtocolJSON"
-        },
-        "finder_id": {
-          "type": "string"
-        },
-        "finder_type_name": {
-          "type": "string"
-        },
-        "id": {
-          "type": "string"
-        },
-        "observation": {
-          "enum": [
-            "install",
-            "reassignment",
-            "mutation"
-          ]
-        },
-        "observation_event_ref": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "position": {
-          "type": "integer"
-        }
-      },
-      "required": [
-        "category",
-        "find_module",
-        "find_spec",
-        "finder_id",
-        "finder_type_name",
-        "id",
-        "observation",
-        "observation_event_ref",
-        "position"
-      ],
-      "type": "object"
-    },
-    "FindingClaimJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "event_ref": {
-          "type": "string"
-        },
-        "finder_id": {
-          "type": "string"
-        },
-        "finder_type_name": {
-          "type": "string"
-        },
-        "loader_type_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "origin": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "search_path": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "search_path_kind": {
-          "enum": [
-            "sys_path",
-            "parent_path",
-            "path_entry"
-          ]
-        },
-        "spec": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SpecSummaryJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "event_ref",
-        "finder_id",
-        "finder_type_name",
-        "loader_type_name",
-        "origin",
-        "search_path",
-        "search_path_kind",
-        "spec"
-      ],
-      "type": "object"
-    },
-    "FindingDeepCallJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "boundary": {
-          "enum": [
-            "path_entry_finder",
-            "loader_create_module",
-            "loader_exec_module",
-            "path_hook"
-          ]
-        },
-        "event_ref": {
-          "type": "string"
-        },
-        "module_state_after": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModuleStateJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "module_state_before": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModuleStateJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "outcome": {
-          "enum": [
-            "started",
-            "loaded",
-            "failed",
-            "found",
-            "not_found",
-            "returned",
-            "raised",
-            "unobserved_reentrant"
-          ]
-        },
-        "target_state": {
+        "module_state_baseline": {
           "anyOf": [
             {
               "$ref": "#/$defs/ModuleStateJSON"
@@ -964,424 +1443,9 @@
         }
       },
       "required": [
-        "boundary",
-        "event_ref",
-        "module_state_after",
-        "module_state_before",
-        "outcome",
-        "target_state"
-      ],
-      "type": "object"
-    },
-    "FindingEvidenceJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "event_refs": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "finder_claim": {
-          "type": "string"
-        },
-        "level": {
-          "enum": [
-            "post_hoc",
-            "captured",
-            "correlated",
-            "structural_inference"
-          ]
-        },
-        "limitations": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "module_spec": {
-          "type": "string"
-        },
-        "module_state_after": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModuleStateJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "module_state_before": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModuleStateJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "outcome": {
-          "type": "string"
-        }
-      },
-      "required": [],
-      "type": "object"
-    },
-    "FindingJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "data": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/BareEvidenceJSON"
-            },
-            {
-              "$ref": "#/$defs/CorrelationEvidenceJSON"
-            },
-            {
-              "$ref": "#/$defs/ContractEvidenceJSON"
-            },
-            {
-              "$ref": "#/$defs/ClaimEvidenceJSON"
-            },
-            {
-              "$ref": "#/$defs/RouteEvidenceJSON"
-            },
-            {
-              "$ref": "#/$defs/DeepCallEvidenceJSON"
-            }
-          ]
-        },
-        "evidence": {
-          "$ref": "#/$defs/FindingEvidenceJSON"
-        },
-        "id": {
-          "type": "string"
-        },
-        "kind": {
-          "enum": [
-            "failed_after_mutation",
-            "finder_side_effect",
-            "legacy_finder_contract",
-            "module_replacement",
-            "namespace_truncation",
-            "no_spec",
-            "path_hook_shadow",
-            "regular_module_shadows_namespace",
-            "repeated_load_failure",
-            "repeated_loader_execution"
-          ]
-        },
-        "module": {
-          "type": "string"
-        },
-        "severity": {
-          "enum": [
-            "actionable",
-            "warning",
-            "informational"
-          ]
-        },
-        "signals": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "subject": {
-          "$ref": "#/$defs/FindingSubjectJSON"
-        }
-      },
-      "required": [
-        "data",
-        "evidence",
-        "id",
-        "kind",
-        "module",
-        "severity",
-        "signals",
-        "subject"
-      ],
-      "type": "object"
-    },
-    "FindingSubjectJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "kind": {
-          "enum": [
-            "module",
-            "finder",
-            "path"
-          ]
-        },
-        "value": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "kind",
-        "value"
-      ],
-      "type": "object"
-    },
-    "FrameJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "filename": {
-          "type": "string"
-        },
-        "function": {
-          "type": "string"
-        },
-        "lineno": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "filename",
-        "function",
-        "lineno"
-      ],
-      "type": "object"
-    },
-    "FrozenBootstrapJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "boundary": {
-          "type": "string"
-        },
-        "integration": {
-          "type": "string"
-        },
-        "path": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "boundary",
-        "integration",
-        "path"
-      ],
-      "type": "object"
-    },
-    "ImportAttemptJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "evidence_event_refs": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "fullname": {
-          "type": "string"
-        },
-        "id": {
-          "type": "string"
-        },
-        "presence": {
-          "enum": [
-            "unknown",
-            "present_at_report",
-            "absent_at_report"
-          ]
-        },
-        "progress": {
-          "enum": [
-            "started",
-            "loaded",
-            "failed",
-            "found",
-            "not_found",
-            "returned",
-            "raised",
-            "unobserved_reentrant",
-            "unknown",
-            "finder_claimed",
-            "finder_raised"
-          ]
-        },
-        "start_event_ref": {
-          "type": "string"
-        },
-        "thread_id": {
-          "type": "integer"
-        },
-        "thread_name": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "evidence_event_refs",
-        "fullname",
-        "id",
-        "presence",
-        "progress",
-        "start_event_ref",
-        "thread_id",
-        "thread_name"
-      ],
-      "type": "object"
-    },
-    "ImportAuditStartDataJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "attempt_ref": {
-          "type": "string"
-        },
-        "evidence": {
-          "enum": [
-            "resolution_started"
-          ]
-        },
-        "fullname": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "importer_cache": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ObjectSizeJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "meta_path": {
-          "$ref": "#/$defs/MetaPathStateJSON"
-        },
-        "path_hooks_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "thread_id": {
-          "type": "integer"
-        },
-        "thread_name": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "attempt_ref",
-        "evidence",
-        "fullname",
-        "importer_cache",
-        "meta_path",
-        "path_hooks_id",
-        "thread_id",
-        "thread_name"
-      ],
-      "type": "object"
-    },
-    "ImportCallDataJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "evidence": {
-          "enum": [
-            "import_call_wrapper"
-          ]
-        },
-        "exception_type_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "fromlist": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "importing_module": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "level": {
-          "type": "integer"
-        },
-        "module_state_before": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModuleStateJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "name": {
-          "type": "string"
-        },
-        "outcome": {
-          "enum": [
-            "started",
-            "loaded",
-            "failed",
-            "found",
-            "not_found",
-            "returned",
-            "raised",
-            "unobserved_reentrant"
-          ]
-        },
-        "thread_id": {
-          "type": "integer"
-        },
-        "thread_name": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "evidence",
-        "exception_type_name",
-        "fromlist",
-        "importing_module",
-        "level",
-        "module_state_before",
-        "name",
-        "outcome",
-        "thread_id",
-        "thread_name"
+        "detail",
+        "import_mechanism_call",
+        "module_state_baseline"
       ],
       "type": "object"
     },
@@ -1445,48 +1509,172 @@
       ],
       "type": "object"
     },
-    "ImporterCacheComparisonJSON": {
+    "ImportResultDataJSON": {
       "additionalProperties": false,
       "properties": {
-        "change_event_refs": {
+        "evidence": {
+          "enum": [
+            "exact_import_boundary"
+          ]
+        },
+        "fullname": {
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "started",
+            "loaded",
+            "failed",
+            "found",
+            "not_found",
+            "returned",
+            "raised",
+            "unobserved_reentrant"
+          ]
+        },
+        "search_ref": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "integer"
+        },
+        "thread_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence",
+        "fullname",
+        "outcome",
+        "search_ref",
+        "thread_id",
+        "thread_name"
+      ],
+      "type": "object"
+    },
+    "ImportSearchJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_event_refs": {
           "items": {
             "type": "string"
           },
           "type": "array"
         },
-        "changed": {
+        "fullname": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "presence": {
+          "enum": [
+            "unknown",
+            "present_at_report",
+            "absent_at_report"
+          ]
+        },
+        "progress": {
+          "enum": [
+            "started",
+            "loaded",
+            "failed",
+            "found",
+            "not_found",
+            "returned",
+            "raised",
+            "unobserved_reentrant",
+            "unknown",
+            "finder_found",
+            "finder_raised"
+          ]
+        },
+        "start_event_ref": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "integer"
+        },
+        "thread_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_event_refs",
+        "fullname",
+        "id",
+        "presence",
+        "progress",
+        "start_event_ref",
+        "thread_id",
+        "thread_name"
+      ],
+      "type": "object"
+    },
+    "ImportSearchStartedDataJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "enum": [
+            "resolution_started"
+          ]
+        },
+        "fullname": {
           "anyOf": [
             {
-              "type": "boolean"
+              "type": "string"
             },
             {
               "type": "null"
             }
           ]
         },
-        "changed_paths": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+        "importer_cache": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ObjectSizeJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
-        "install_snapshot_ref": {
+        "meta_path": {
+          "$ref": "#/$defs/MetaPathStateJSON"
+        },
+        "path_hooks_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "search_ref": {
           "type": "string"
         },
-        "report_snapshot_ref": {
+        "thread_id": {
+          "type": "integer"
+        },
+        "thread_name": {
           "type": "string"
         }
       },
       "required": [
-        "change_event_refs",
-        "changed",
-        "changed_paths",
-        "install_snapshot_ref",
-        "report_snapshot_ref"
+        "evidence",
+        "fullname",
+        "importer_cache",
+        "meta_path",
+        "path_hooks_id",
+        "search_ref",
+        "thread_id",
+        "thread_name"
       ],
       "type": "object"
     },
-    "ImporterCacheDiffDataJSON": {
+    "ImporterCacheChangeDataJSON": {
       "additionalProperties": false,
       "properties": {
         "added": {
@@ -1528,6 +1716,47 @@
         "removed",
         "replaced",
         "thread_name"
+      ],
+      "type": "object"
+    },
+    "ImporterCacheComparisonJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "change_event_refs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "changed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "changed_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "install_snapshot_ref": {
+          "type": "string"
+        },
+        "report_snapshot_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "change_event_refs",
+        "changed",
+        "changed_paths",
+        "install_snapshot_ref",
+        "report_snapshot_ref"
       ],
       "type": "object"
     },
@@ -1621,33 +1850,6 @@
       ],
       "type": "object"
     },
-    "InternalErrorDataJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "exception_type_name": {
-          "type": "string"
-        },
-        "message": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "where": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "exception_type_name",
-        "message",
-        "where"
-      ],
-      "type": "object"
-    },
     "LoaderGroupJSON": {
       "additionalProperties": false,
       "properties": {
@@ -1682,7 +1884,7 @@
         },
         "evidence": {
           "enum": [
-            "post_hoc"
+            "current_state"
           ]
         },
         "groups": {
@@ -1764,22 +1966,22 @@
         },
         "name": {
           "enum": [
-            "meta_path_mutations",
-            "meta_path_reassignments",
-            "import_audit_starts",
+            "meta_path_changes",
+            "meta_path_replacements",
+            "import_searches",
             "finder_attribution",
-            "finder_contracts",
-            "deep_diagnostics",
-            "deep_import_outcomes",
-            "deep_import_calls",
-            "standard_finder_aggregate",
-            "resolution_route_analysis",
-            "path_hooks_mutations",
-            "path_hooks_reassignments",
-            "sys_path_mutations",
-            "sys_path_reassignments",
+            "finder_apis",
+            "detailed_capture",
+            "import_results",
+            "import_calls",
+            "path_finder_calls",
+            "finder_result_analysis",
+            "path_hooks_changes",
+            "path_hooks_replacements",
+            "sys_path_changes",
+            "sys_path_replacements",
             "importer_cache_snapshots",
-            "importer_cache_diffs"
+            "importer_cache_changes"
           ]
         },
         "observations": {
@@ -1812,7 +2014,7 @@
       ],
       "type": "object"
     },
-    "MetaPathMutationDataJSON": {
+    "MetaPathChangeDataJSON": {
       "additionalProperties": false,
       "properties": {
         "added": {
@@ -1865,6 +2067,130 @@
         "op",
         "removed",
         "stack",
+        "thread_name"
+      ],
+      "type": "object"
+    },
+    "MetaPathFinderCallDataJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "exception_type_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finder_id": {
+          "type": "string"
+        },
+        "finder_type_name": {
+          "type": "string"
+        },
+        "found": {
+          "type": "boolean"
+        },
+        "fullname": {
+          "type": "string"
+        },
+        "loader_type_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "module_state_after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleStateJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "module_state_before": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleStateJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "search_path": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "search_path_kind": {
+          "enum": [
+            "sys_path",
+            "parent_path",
+            "path_entry"
+          ]
+        },
+        "spec": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleSpecSnapshotJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModuleStateJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread_id": {
+          "type": "integer"
+        },
+        "thread_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "exception_type_name",
+        "finder_id",
+        "finder_type_name",
+        "found",
+        "fullname",
+        "loader_type_name",
+        "module_state_after",
+        "module_state_before",
+        "origin",
+        "search_path",
+        "search_path_kind",
+        "spec",
+        "target_state",
+        "thread_id",
         "thread_name"
       ],
       "type": "object"
@@ -1968,7 +2294,7 @@
         "spec": {
           "anyOf": [
             {
-              "$ref": "#/$defs/SpecSummaryJSON"
+              "$ref": "#/$defs/ModuleSpecSnapshotJSON"
             },
             {
               "type": "null"
@@ -1997,6 +2323,120 @@
         "reason",
         "spec",
         "spec_present"
+      ],
+      "type": "object"
+    },
+    "ModuleSpecSnapshotJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "cached": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/ImportObjectValueJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "is_namespace": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "is_package": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "loader": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImportObjectJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "locations_state": {
+          "enum": [
+            "not_applicable",
+            "captured",
+            "current_state",
+            "deferred",
+            "failed"
+          ]
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/ImportObjectValueJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "spec": {
+          "$ref": "#/$defs/ImportObjectJSON"
+        },
+        "submodule_search_locations": {
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/ImportObjectValueJSON"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unavailable_fields": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "cached",
+        "is_namespace",
+        "is_package",
+        "loader",
+        "locations_state",
+        "origin",
+        "spec",
+        "submodule_search_locations",
+        "unavailable_fields"
       ],
       "type": "object"
     },
@@ -2039,6 +2479,33 @@
       ],
       "type": "object"
     },
+    "MonitoringErrorDataJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "exception_type_name": {
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "where": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "exception_type_name",
+        "message",
+        "where"
+      ],
+      "type": "object"
+    },
     "ObjectSizeJSON": {
       "additionalProperties": false,
       "properties": {
@@ -2062,34 +2529,52 @@
       ],
       "type": "object"
     },
-    "PathHooksComparisonJSON": {
+    "PathFinderCallDataJSON": {
       "additionalProperties": false,
       "properties": {
-        "changed": {
+        "evidence": {
+          "enum": [
+            "observed_path_finder_boundary"
+          ]
+        },
+        "finder_type_name": {
+          "type": "string"
+        },
+        "fullname": {
+          "type": "string"
+        },
+        "search_ref": {
+          "type": "string"
+        },
+        "spec": {
           "anyOf": [
             {
-              "type": "boolean"
+              "$ref": "#/$defs/ModuleSpecSnapshotJSON"
             },
             {
               "type": "null"
             }
           ]
         },
-        "install_snapshot_ref": {
-          "type": "string"
+        "thread_id": {
+          "type": "integer"
         },
-        "report_snapshot_ref": {
+        "thread_name": {
           "type": "string"
         }
       },
       "required": [
-        "changed",
-        "install_snapshot_ref",
-        "report_snapshot_ref"
+        "evidence",
+        "finder_type_name",
+        "fullname",
+        "search_ref",
+        "spec",
+        "thread_id",
+        "thread_name"
       ],
       "type": "object"
     },
-    "PathHooksMutationDataJSON": {
+    "PathHooksChangeDataJSON": {
       "additionalProperties": false,
       "properties": {
         "added": {
@@ -2146,7 +2631,34 @@
       ],
       "type": "object"
     },
-    "PathHooksReassignmentDataJSON": {
+    "PathHooksComparisonJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "changed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "install_snapshot_ref": {
+          "type": "string"
+        },
+        "report_snapshot_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "changed",
+        "install_snapshot_ref",
+        "report_snapshot_ref"
+      ],
+      "type": "object"
+    },
+    "PathHooksReplacementDataJSON": {
       "additionalProperties": false,
       "properties": {
         "during_import": {
@@ -2212,63 +2724,6 @@
       ],
       "type": "object"
     },
-    "ProbeRunJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "candidates": {
-          "type": "integer"
-        },
-        "capacity": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "foreign_calls": {
-          "type": "integer"
-        },
-        "kind": {
-          "enum": [
-            "standard_path",
-            "displaced_finder"
-          ]
-        },
-        "omitted": {
-          "type": "integer"
-        },
-        "results": {
-          "type": "integer"
-        },
-        "status": {
-          "enum": [
-            "active",
-            "disabled",
-            "unavailable"
-          ]
-        },
-        "unavailable_reasons": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "candidates",
-        "capacity",
-        "foreign_calls",
-        "kind",
-        "omitted",
-        "results",
-        "status",
-        "unavailable_reasons"
-      ],
-      "type": "object"
-    },
     "ProcessInfo": {
       "additionalProperties": false,
       "properties": {
@@ -2316,6 +2771,51 @@
       },
       "required": [
         "pid"
+      ],
+      "type": "object"
+    },
+    "ProgramOutcomeJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "exception_type_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "missing_module": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "exception_type_name",
+        "exit_code",
+        "kind",
+        "missing_module"
       ],
       "type": "object"
     },
@@ -2411,302 +2911,6 @@
       ],
       "type": "object"
     },
-    "ResolutionRouteJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "evidence_level": {
-          "enum": [
-            "captured",
-            "live_probe"
-          ]
-        },
-        "exception_type_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "finder_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "finder_type_name": {
-          "type": "string"
-        },
-        "id": {
-          "type": "string"
-        },
-        "kind": {
-          "enum": [
-            "captured_claim",
-            "standard_path_probe",
-            "displaced_finder_probe"
-          ]
-        },
-        "limitations": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "module": {
-          "type": "string"
-        },
-        "predicts_alternative_winner": {
-          "type": "boolean"
-        },
-        "purpose": {
-          "enum": [
-            "record_selected_custom_meta_path_route",
-            "show_standard_path_route_bypassed_by_captured_claim",
-            "probe_displaced_importer_cache_finder"
-          ]
-        },
-        "search_path": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "search_path_kind": {
-          "enum": [
-            "sys_path",
-            "parent_path",
-            "path_entry"
-          ]
-        },
-        "search_path_phase": {
-          "enum": [
-            "import"
-          ]
-        },
-        "signals": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "source_event_refs": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "spec": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SpecSummaryJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "state_phase": {
-          "enum": [
-            "import",
-            "report"
-          ]
-        },
-        "status": {
-          "enum": [
-            "found",
-            "not_found",
-            "failed",
-            "target_unavailable",
-            "finder_unavailable",
-            "unsupported_finder"
-          ]
-        }
-      },
-      "required": [
-        "evidence_level",
-        "exception_type_name",
-        "finder_id",
-        "finder_type_name",
-        "id",
-        "kind",
-        "limitations",
-        "module",
-        "predicts_alternative_winner",
-        "purpose",
-        "search_path",
-        "search_path_kind",
-        "search_path_phase",
-        "signals",
-        "source_event_refs",
-        "spec",
-        "state_phase",
-        "status"
-      ],
-      "type": "object"
-    },
-    "RouteComparisonJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "cached_differs": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "complete": {
-          "type": "boolean"
-        },
-        "id": {
-          "type": "string"
-        },
-        "left_locations_state": {
-          "enum": [
-            "not_applicable",
-            "captured",
-            "post_hoc",
-            "deferred",
-            "failed",
-            "unavailable"
-          ]
-        },
-        "left_route_ref": {
-          "type": "string"
-        },
-        "loader_type_differs": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "locations_reordered": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "only_in_left_route": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "only_in_right_route": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "origin_differs": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "package_status_differs": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "right_locations_state": {
-          "enum": [
-            "not_applicable",
-            "captured",
-            "post_hoc",
-            "deferred",
-            "failed",
-            "unavailable"
-          ]
-        },
-        "right_route_ref": {
-          "type": "string"
-        },
-        "status_differs": {
-          "type": "boolean"
-        },
-        "structural_comparison": {
-          "$ref": "#/$defs/StructuralComparisonJSON"
-        }
-      },
-      "required": [
-        "cached_differs",
-        "complete",
-        "id",
-        "left_locations_state",
-        "left_route_ref",
-        "loader_type_differs",
-        "locations_reordered",
-        "only_in_left_route",
-        "only_in_right_route",
-        "origin_differs",
-        "package_status_differs",
-        "right_locations_state",
-        "right_route_ref",
-        "status_differs",
-        "structural_comparison"
-      ],
-      "type": "object"
-    },
-    "RouteEvidenceJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "claim": {
-          "$ref": "#/$defs/FindingClaimJSON"
-        },
-        "detail": {
-          "enum": [
-            "route"
-          ]
-        },
-        "route_comparison_ref": {
-          "type": "string"
-        },
-        "route_refs": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "structural_comparison": {
-          "$ref": "#/$defs/StructuralComparisonJSON"
-        }
-      },
-      "required": [
-        "claim",
-        "detail",
-        "route_comparison_ref",
-        "route_refs",
-        "structural_comparison"
-      ],
-      "type": "object"
-    },
     "SchemaVersion": {
       "additionalProperties": false,
       "properties": {
@@ -2730,20 +2934,20 @@
     "SeverityCountsJSON": {
       "additionalProperties": false,
       "properties": {
-        "actionable": {
+        "note": {
           "type": "integer"
         },
-        "informational": {
+        "problem": {
           "type": "integer"
         },
-        "warning": {
+        "risk": {
           "type": "integer"
         }
       },
       "required": [
-        "actionable",
-        "informational",
-        "warning"
+        "note",
+        "problem",
+        "risk"
       ],
       "type": "object"
     },
@@ -2808,171 +3012,9 @@
       ],
       "type": "object"
     },
-    "SpecSummaryJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "cached": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "$ref": "#/$defs/ImportObjectValueJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "is_namespace": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "is_package": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "loader": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ImportObjectJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "locations_state": {
-          "enum": [
-            "not_applicable",
-            "captured",
-            "post_hoc",
-            "deferred",
-            "failed"
-          ]
-        },
-        "origin": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "$ref": "#/$defs/ImportObjectValueJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "spec": {
-          "$ref": "#/$defs/ImportObjectJSON"
-        },
-        "submodule_search_locations": {
-          "anyOf": [
-            {
-              "items": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "$ref": "#/$defs/ImportObjectValueJSON"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "unavailable_fields": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "cached",
-        "is_namespace",
-        "is_package",
-        "loader",
-        "locations_state",
-        "origin",
-        "spec",
-        "submodule_search_locations",
-        "unavailable_fields"
-      ],
-      "type": "object"
-    },
-    "StandardFinderCallDataJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "attempt_ref": {
-          "type": "string"
-        },
-        "evidence": {
-          "enum": [
-            "captured_standard_finder_boundary"
-          ]
-        },
-        "finder_type_name": {
-          "type": "string"
-        },
-        "fullname": {
-          "type": "string"
-        },
-        "spec": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SpecSummaryJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "thread_id": {
-          "type": "integer"
-        },
-        "thread_name": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "attempt_ref",
-        "evidence",
-        "finder_type_name",
-        "fullname",
-        "spec",
-        "thread_id",
-        "thread_name"
-      ],
-      "type": "object"
-    },
     "StandardResolutionJSON": {
       "additionalProperties": false,
       "properties": {
-        "attempt_ref": {
-          "type": "string"
-        },
         "category": {
           "enum": [
             "namespace",
@@ -3002,7 +3044,7 @@
         },
         "evidence_level": {
           "enum": [
-            "captured",
+            "observed",
             "inferred"
           ]
         },
@@ -3038,6 +3080,9 @@
             }
           ]
         },
+        "search_ref": {
+          "type": "string"
+        },
         "state_phase": {
           "enum": [
             "import",
@@ -3046,7 +3091,6 @@
         }
       },
       "required": [
-        "attempt_ref",
         "category",
         "component_event_refs",
         "event_ref",
@@ -3056,6 +3100,7 @@
         "later_finders",
         "loader_type_name",
         "origin",
+        "search_ref",
         "state_phase"
       ],
       "type": "object"
@@ -3120,7 +3165,7 @@
       ],
       "type": "object"
     },
-    "SysPathMutationDataJSON": {
+    "SysPathChangeDataJSON": {
       "additionalProperties": false,
       "properties": {
         "added": {
@@ -3177,51 +3222,6 @@
       ],
       "type": "object"
     },
-    "TargetOutcomeJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "exception_type_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "exit_code": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "kind": {
-          "type": "string"
-        },
-        "missing_module": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "exception_type_name",
-        "exit_code",
-        "kind",
-        "missing_module"
-      ],
-      "type": "object"
-    },
     "ToolInfo": {
       "additionalProperties": false,
       "properties": {
@@ -3247,6 +3247,12 @@
     "capture": {
       "$ref": "#/$defs/CaptureInfo"
     },
+    "checks": {
+      "items": {
+        "$ref": "#/$defs/CheckRunJSON"
+      },
+      "type": "array"
+    },
     "diagnostics": {
       "$ref": "#/$defs/DiagnosticsInfo"
     },
@@ -3256,9 +3262,21 @@
       },
       "type": "array"
     },
-    "finder_contracts": {
+    "finder_apis": {
       "items": {
-        "$ref": "#/$defs/FinderContractJSON"
+        "$ref": "#/$defs/FinderAPIObservationJSON"
+      },
+      "type": "array"
+    },
+    "finder_result_comparisons": {
+      "items": {
+        "$ref": "#/$defs/FinderResultComparisonJSON"
+      },
+      "type": "array"
+    },
+    "finder_results": {
+      "items": {
+        "$ref": "#/$defs/FinderResultJSON"
       },
       "type": "array"
     },
@@ -3271,23 +3289,27 @@
     "generated_at": {
       "type": "string"
     },
-    "import_attempts": {
+    "import_searches": {
       "items": {
-        "$ref": "#/$defs/ImportAttemptJSON"
+        "$ref": "#/$defs/ImportSearchJSON"
       },
       "type": "array"
     },
     "loader_inventory": {
       "$ref": "#/$defs/LoaderInventoryInfo"
     },
-    "probes": {
-      "items": {
-        "$ref": "#/$defs/ProbeRunJSON"
-      },
-      "type": "array"
-    },
     "process": {
       "$ref": "#/$defs/ProcessInfo"
+    },
+    "program_outcome": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProgramOutcomeJSON"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "report_status": {
       "enum": [
@@ -3295,18 +3317,6 @@
         "partial",
         "generation_failed"
       ]
-    },
-    "resolution_routes": {
-      "items": {
-        "$ref": "#/$defs/ResolutionRouteJSON"
-      },
-      "type": "array"
-    },
-    "route_comparisons": {
-      "items": {
-        "$ref": "#/$defs/RouteComparisonJSON"
-      },
-      "type": "array"
     },
     "schema": {
       "$ref": "#/$defs/SchemaVersion"
@@ -3326,16 +3336,6 @@
     "summary": {
       "$ref": "#/$defs/SummaryInfo"
     },
-    "target_outcome": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/TargetOutcomeJSON"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "timeline": {
       "items": {
         "$ref": "#/$defs/EventJSON"
@@ -3348,23 +3348,23 @@
   },
   "required": [
     "capture",
+    "checks",
     "diagnostics",
     "explanations",
-    "finder_contracts",
+    "finder_apis",
+    "finder_result_comparisons",
+    "finder_results",
     "findings",
     "generated_at",
-    "import_attempts",
+    "import_searches",
     "loader_inventory",
-    "probes",
     "process",
+    "program_outcome",
     "report_status",
-    "resolution_routes",
-    "route_comparisons",
     "schema",
     "snapshots",
     "standard_resolutions",
     "summary",
-    "target_outcome",
     "timeline",
     "tool"
   ],

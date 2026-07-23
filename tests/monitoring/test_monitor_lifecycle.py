@@ -154,7 +154,7 @@ def test_install_warns_once_when_starting_on_unsupported_implementation(python_r
         "    assert metapathology.install(report_at_exit=False) is monitor\n"
         "metapathology.uninstall()\n"
         "assert len(caught) == 1, caught\n"
-        "warning = caught[0]\n"
-        "assert warning.category is RuntimeWarning, warning.category\n"
-        "assert str(warning.message) == monitor_module._UNSUPPORTED_IMPLEMENTATION_WARNING\n"
+        "risk = caught[0]\n"
+        "assert risk.category is RuntimeWarning, risk.category\n"
+        "assert str(risk.message) == monitor_module._UNSUPPORTED_IMPLEMENTATION_WARNING\n"
     )

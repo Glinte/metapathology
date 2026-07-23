@@ -34,7 +34,7 @@ MUTATION_OPERATIONS = st.lists(
 MUTATIONS = """
 import sys
 import metapathology
-from metapathology import MetaPathMutation
+from metapathology import MetaPathChange
 
 class DummyFinder:
     def find_spec(self, fullname, path=None, target=None):
@@ -50,7 +50,7 @@ assert popped is finder
 sys.meta_path[0:0] = [finder]
 del sys.meta_path[0]
 
-mutations = [e for e in monitor.events() if isinstance(e, MetaPathMutation)]
+mutations = [e for e in monitor.events() if isinstance(e, MetaPathChange)]
 ops = [m.op for m in mutations]
 assert ops == ["insert", "remove", "append", "pop", "__setitem__", "__delitem__"], ops
 assert mutations[0].added == ("DummyFinder",)
@@ -60,7 +60,7 @@ print("OK")
 """
 
 
-def test_meta_path_mutations_are_recorded_with_stacks(python_runner: PythonRunner) -> None:
+def test_meta_path_changes_are_recorded_with_stacks(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(MUTATIONS)
     assert "OK" in proc.stdout
 
@@ -68,7 +68,7 @@ def test_meta_path_mutations_are_recorded_with_stacks(python_runner: PythonRunne
 REASSIGNMENT = """
 import sys
 import metapathology
-from metapathology import MetaPathReassignment
+from metapathology import MetaPathReplacement
 
 monitor = metapathology.install(report_at_exit=False)
 instrumented_type = type(sys.meta_path)
@@ -77,7 +77,7 @@ assert type(sys.meta_path) is list
 
 import colorsys  # any not-yet-imported module: triggers the import audit event
 
-reassignments = [e for e in monitor.events() if isinstance(e, MetaPathReassignment)]
+reassignments = [e for e in monitor.events() if isinstance(e, MetaPathReplacement)]
 assert len(reassignments) == 1, reassignments
 assert reassignments[0].during_import == "colorsys"
 assert type(sys.meta_path) is instrumented_type  # reinstalled
@@ -85,7 +85,7 @@ print("OK")
 """
 
 
-def test_meta_path_reassignment_is_detected_and_reinstrumented(python_runner: PythonRunner) -> None:
+def test_meta_path_replacement_is_detected_and_reinstrumented(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(REASSIGNMENT)
     assert "OK" in proc.stdout
 
@@ -94,12 +94,12 @@ IN_PLACE_REPEAT = """
 import sys
 
 import metapathology
-from metapathology import MetaPathMutation
+from metapathology import MetaPathChange
 
 monitor = metapathology.install(report_at_exit=False)
 
 sys.meta_path *= 2
-ops = [event.op for event in monitor.events() if isinstance(event, MetaPathMutation)]
+ops = [event.op for event in monitor.events() if isinstance(event, MetaPathChange)]
 assert "__imul__" in ops, ops
 print("OK")
 """
@@ -114,12 +114,12 @@ SORT_MUTATION = """
 import sys
 
 import metapathology
-from metapathology import MetaPathMutation
+from metapathology import MetaPathChange
 
 monitor = metapathology.install(report_at_exit=False)
 
 sys.meta_path.sort(key=id)
-ops = [event.op for event in monitor.events() if isinstance(event, MetaPathMutation)]
+ops = [event.op for event in monitor.events() if isinstance(event, MetaPathChange)]
 assert "sort" in ops, ops
 print("OK")
 """
@@ -130,7 +130,7 @@ def test_sort_mutation_is_recorded(python_runner: PythonRunner) -> None:
     assert "OK" in proc.stdout
 
 
-DEEP_COPY = """
+DETAILED_COPY = """
 import copy
 import sys
 
@@ -146,8 +146,8 @@ print("OK")
 """
 
 
-def test_instrumented_meta_path_can_be_deep_copied(python_runner: PythonRunner) -> None:
-    proc = python_runner.run_code_ok(DEEP_COPY)
+def test_instrumented_meta_path_can_be_detailed_copied(python_runner: PythonRunner) -> None:
+    proc = python_runner.run_code_ok(DETAILED_COPY)
     assert "OK" in proc.stdout
 
 
@@ -155,7 +155,7 @@ MUTATION_SEQUENCE = """
 import sys
 
 import metapathology
-from metapathology import MetaPathMutation
+from metapathology import MetaPathChange
 
 operations = __OPERATIONS__
 
@@ -241,7 +241,7 @@ for op, first, second in operations:
     assert len(sys.meta_path) == len(expected)
     assert all(actual is wanted for actual, wanted in zip(sys.meta_path, expected))
 
-recorded_ops = [event.op for event in monitor.events() if isinstance(event, MetaPathMutation)]
+recorded_ops = [event.op for event in monitor.events() if isinstance(event, MetaPathChange)]
 assert recorded_ops == expected_ops, (recorded_ops, expected_ops)
 print("OK")
 """
@@ -296,7 +296,7 @@ EXTEND_PARTIAL_ITERATION = """
 import sys
 
 import metapathology
-from metapathology import MetaPathMutation
+from metapathology import MetaPathChange
 
 class DummyFinder:
     def find_spec(self, fullname, path=None, target=None):
@@ -324,7 +324,7 @@ except RuntimeError:
     pass
 assert list(sys.meta_path) == before + [second], (list(sys.meta_path), before)
 
-added = [event.added for event in monitor.events() if isinstance(event, MetaPathMutation)]
+added = [event.added for event in monitor.events() if isinstance(event, MetaPathChange)]
 assert ("DummyFinder",) in added, added  # partial additions must still be recorded
 print("OK")
 """
@@ -342,7 +342,7 @@ REASSIGNED_LIST_GOES_STALE = """
 import sys
 
 import metapathology
-from metapathology import MetaPathReassignment
+from metapathology import MetaPathReplacement
 
 class DummyFinder:
     def find_spec(self, fullname, path=None, target=None):
@@ -355,7 +355,7 @@ sys.meta_path = mine
 import colorsys  # first uncached import: detection swaps in an instrumented copy
 
 assert sys.meta_path is not mine
-assert [e for e in monitor.events() if isinstance(e, MetaPathReassignment)]
+assert [e for e in monitor.events() if isinstance(e, MetaPathReplacement)]
 mine.append(DummyFinder())  # mutates the stale list, not the live sys.meta_path
 assert not any(isinstance(f, DummyFinder) for f in sys.meta_path)
 print("OK")
@@ -422,7 +422,7 @@ FAILED_SORT_MUTATION = """
 import sys
 
 import metapathology
-from metapathology import MetaPathMutation
+from metapathology import MetaPathChange
 
 class ComparableFinder:
     comparisons = 0
@@ -453,7 +453,7 @@ else:
 
 assert [finder.value for finder in sys.meta_path] != [5, 1, 4, 2, 3]
 new_events = monitor.events()[event_count:]
-assert any(isinstance(event, MetaPathMutation) and event.op == "sort" for event in new_events), new_events
+assert any(isinstance(event, MetaPathChange) and event.op == "sort" for event in new_events), new_events
 print("OK")
 """
 

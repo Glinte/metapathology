@@ -10,13 +10,18 @@ docs_dir = "docs"
 site_dir = "site"
 nav = [
     { "Home" = "index.md" },
-    { "Usage" = "usage.md" },
-    { "Frozen applications" = "frozen.md" },
-    { "How it works" = "concepts.md" },
+    { "Get started" = "usage.md" },
     { "Reading the report" = "report.md" },
+    { "Choosing capture" = "capture.md" },
+    { "Startup timing" = "startup.md" },
+    { "Configuration" = "configuration.md" },
     { "Library API" = "api.md" },
+    { "JSON reports" = "json.md" },
+    { "Mental model" = "concepts.md" },
+    { "Frozen applications" = "frozen.md" },
     { "Speed and memory" = "performance.md" },
     { "Limitations" = "limitations.md" },
+    { "Migration" = "migration-0.6.md" },
     { "Development" = "development.md" },
 ]
 

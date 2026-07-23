@@ -5,20 +5,20 @@ import sys
 import time
 
 from metapathology._config import ResolvedAnalysisConfig
-from metapathology._deep_diagnostics import original_path_hook
-from metapathology._displaced_finder_probe import (
-    MAX_DISPLACED_FINDER_PROBES,
-    probe_displaced_finders,
+from metapathology._detailed_capture import original_path_hook
+from metapathology._displaced_finder_check import (
+    MAX_DISPLACED_FINDER_CHECKS,
+    check_displaced_finders,
 )
 from metapathology._module_metadata import ModuleMetadata, inspect_module
-from metapathology._records import ObjectRef, type_name
+from metapathology._records import ObjectIdentity, type_name
 from metapathology._report_analysis import (
     _AnalysisInputs,
     _causal_explanations,
     _IdAllocator,
-    _import_attempts,
+    _import_searches,
+    _module_failed_after_loading_findings,
     _namespace_displacement_findings,
-    _repeated_load_failure_findings,
     _report_summary,
     _standard_resolutions,
     _suspicious_findings,
@@ -26,26 +26,26 @@ from metapathology._report_analysis import (
 from metapathology._report_model import (
     AnalysisResult,
     CaptureInfo,
+    CheckRun,
     EarlySiteBootstrap,
     FrozenBootstrap,
     ImporterCacheSnapshot,
     LoaderInventory,
     MetaPathSnapshot,
     PathHooksSnapshot,
-    ProbeRun,
     ProcessInfo,
+    ProgramOutcome,
     ReportDocument,
     ReportError,
     SkippedFinder,
     StandardResolution,
-    TargetOutcome,
 )
 
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from metapathology._monitor_model import MonitorSnapshot
-    from metapathology._report_model import CausalExplanation, Finding, ResolutionRoute, RouteComparison
+    from metapathology._report_model import CausalExplanation, FinderResult, FinderResultComparison, Finding
 
 
 _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
@@ -54,15 +54,15 @@ _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 def capture_document(snapshot: "MonitorSnapshot", analysis: ResolvedAnalysisConfig) -> ReportDocument:
     """Copy evidence at one sequence cutoff before deriving any findings."""
     events = list(snapshot.events)
-    finder_contracts = list(snapshot.finder_contracts)
+    finder_apis = list(snapshot.finder_apis)
     importer_cache = snapshot.importer_cache
     report_errors: list[ReportError] = []
     current_meta_path = _current_meta_path_names(report_errors)
     current_path_hooks = _current_path_hooks(snapshot, report_errors)
     module_items = _module_items(report_errors)
     loader_inventory = _loader_inventory(module_items)
-    attempts = _import_attempts(events, module_items)
-    standard_resolutions = _standard_resolutions(events, attempts, loader_inventory.entries)
+    searches = _import_searches(events, module_items)
+    standard_resolutions = _standard_resolutions(events, searches, loader_inventory.entries)
     modules_since_install = _modules_since_install(snapshot.baseline_modules, module_items)
     skipped_finders = tuple(
         SkippedFinder(
@@ -81,14 +81,14 @@ def capture_document(snapshot: "MonitorSnapshot", analysis: ResolvedAnalysisConf
         current_importer_cache=importer_cache.latest_entries,
         module_items=module_items,
         module_metadata=loader_inventory.entries,
-        finder_contracts=finder_contracts,
-        attempts=attempts,
+        finder_apis=finder_apis,
+        searches=searches,
         report_errors=report_errors,
     )
-    findings, explanations, resolution_routes, route_comparisons, probes = _derive_findings(
+    findings, explanations, finder_results, finder_result_comparisons, checks = _derive_findings(
         inputs, standard_resolutions, snapshot, analysis
     )
-    summary = _report_summary(findings, explanations, attempts)
+    summary = _report_summary(findings, explanations, searches)
     process = _capture_process(report_errors)
     return ReportDocument(
         process=process,
@@ -114,20 +114,20 @@ def capture_document(snapshot: "MonitorSnapshot", analysis: ResolvedAnalysisConf
         ),
         sys_path_enabled=snapshot.sys_path_enabled,
         analysis=AnalysisResult(
-            attempts=attempts,
+            searches=searches,
             events=tuple(events),
             findings=findings,
             explanations=explanations,
-            resolution_routes=resolution_routes,
-            route_comparisons=route_comparisons,
+            finder_results=finder_results,
+            finder_result_comparisons=finder_result_comparisons,
             standard_resolutions=standard_resolutions,
-            finder_contracts=tuple(finder_contracts),
+            finder_apis=tuple(finder_apis),
             loader_inventory=loader_inventory,
             skipped_finders=skipped_finders,
             summary=summary,
-            target_outcome=_target_outcome(snapshot),
+            program_outcome=_program_outcome(snapshot),
             report_errors=tuple(report_errors),
-            probes=probes,
+            checks=checks,
         ),
     )
 
@@ -137,87 +137,92 @@ def _derive_findings(
     standard_resolutions: tuple[StandardResolution, ...],
     snapshot: "MonitorSnapshot",
     analysis: ResolvedAnalysisConfig,
-) -> "tuple[tuple[Finding, ...], tuple[CausalExplanation, ...], tuple[ResolutionRoute, ...], tuple[RouteComparison, ...], tuple[ProbeRun, ...]]":
-    """Run the finding/route/explanation pipeline from one captured snapshot.
+) -> "tuple[tuple[Finding, ...], tuple[CausalExplanation, ...], tuple[FinderResult, ...], tuple[FinderResultComparison, ...], tuple[CheckRun, ...]]":
+    """Run the finding/result/explanation pipeline from one captured snapshot.
 
     One allocator per element kind numbers ids in creation order; the shared
-    ``finding`` allocator carries across the corroborated-route, namespace, and
+    ``finding`` allocator carries across the corroborated-result, namespace, and
     repeated-load passes so the numbering stays contiguous.
     """
     finding_ids = _IdAllocator("finding")
-    route_ids = _IdAllocator("route")
+    result_ids = _IdAllocator("result")
     standard_available = snapshot.finder_attribution_enabled
-    findings, resolution_routes, route_comparisons = _suspicious_findings(
+    findings, finder_results, finder_result_comparisons = _suspicious_findings(
         inputs,
         finding_ids,
-        route_ids,
+        result_ids,
         _IdAllocator("comparison"),
-        analysis.standard_path_probe and standard_available,
+        analysis.standard_path_check and standard_available,
     )
     findings = (
         *findings,
-        *_namespace_displacement_findings(inputs.attempts, standard_resolutions, inputs.events, finding_ids),
+        *_namespace_displacement_findings(inputs.searches, standard_resolutions, inputs.events, finding_ids),
     )
-    findings = (*findings, *_repeated_load_failure_findings(inputs.attempts, standard_resolutions, finding_ids))
+    findings = (*findings, *_module_failed_after_loading_findings(inputs.searches, standard_resolutions, finding_ids))
     explanations = _causal_explanations(
-        findings, inputs.attempts, standard_resolutions, route_comparisons, _IdAllocator("explanation"), inputs.events
+        findings,
+        inputs.searches,
+        standard_resolutions,
+        finder_result_comparisons,
+        _IdAllocator("explanation"),
+        inputs.events,
     )
-    standard_routes = tuple(route for route in resolution_routes if route.kind == "standard_path_probe")
-    if not analysis.standard_path_probe:
-        standard_run = ProbeRun("standard_path", "disabled", (), 0, 0, 0, None, 0)
+    standard_results = tuple(result for result in finder_results if result.kind == "standard_path_check")
+    if not analysis.standard_path_check:
+        standard_run = CheckRun("standard_path", "disabled", (), 0, 0, 0, None, 0)
     elif not standard_available:
-        standard_run = ProbeRun("standard_path", "unavailable", ("finder_attribution_disabled",), 0, 0, 0, None, 0)
+        standard_run = CheckRun("standard_path", "unavailable", ("finder_attribution_disabled",), 0, 0, 0, None, 0)
     else:
-        standard_run = ProbeRun(
+        standard_run = CheckRun(
             "standard_path",
             "active",
             (),
-            len(standard_routes),
-            len(standard_routes),
-            sum(route.status != "target_unavailable" for route in standard_routes),
+            len(standard_results),
+            len(standard_results),
+            sum(result.status != "target_unavailable" for result in standard_results),
             None,
             0,
         )
-    displaced_available = snapshot.importer_cache.enabled and "path_entry_finders" in snapshot.deep_diagnostics
-    if not analysis.displaced_finder_probe:
-        displaced_routes: tuple[ResolutionRoute, ...] = ()
-        displaced_run = ProbeRun("displaced_finder", "disabled", (), 0, 0, 0, MAX_DISPLACED_FINDER_PROBES, 0)
+    displaced_available = snapshot.importer_cache.enabled and "path_entry_finders" in snapshot.detailed_capture
+    if not analysis.displaced_finder_check:
+        displaced_results: tuple[FinderResult, ...] = ()
+        displaced_run = CheckRun("displaced_finder", "disabled", (), 0, 0, 0, MAX_DISPLACED_FINDER_CHECKS, 0)
     elif not displaced_available:
         reasons = []
         if not snapshot.importer_cache.enabled:
             reasons.append("importer_cache_disabled")
-        if "path_entry_finders" not in snapshot.deep_diagnostics:
-            reasons.append("deep_path_entry_finders_disabled")
-        displaced_routes = ()
-        displaced_run = ProbeRun(
+        if "path_entry_finders" not in snapshot.detailed_capture:
+            reasons.append("detailed_path_entry_finders_disabled")
+        displaced_results = ()
+        displaced_run = CheckRun(
             "displaced_finder",
             "unavailable",
             tuple(reasons),
             0,
             0,
             0,
-            MAX_DISPLACED_FINDER_PROBES,
+            MAX_DISPLACED_FINDER_CHECKS,
             0,
         )
     else:
-        displaced_routes, displaced_run = probe_displaced_finders(
-            inputs.events, snapshot.retained_cache_finders, route_ids.next_id
+        displaced_results, displaced_run = check_displaced_finders(
+            inputs.events, snapshot.retained_cache_finders, result_ids.next_id
         )
     return (
         findings,
         explanations,
-        (*resolution_routes, *displaced_routes),
-        route_comparisons,
+        (*finder_results, *displaced_results),
+        finder_result_comparisons,
         (standard_run, displaced_run),
     )
 
 
-def _target_outcome(snapshot: "MonitorSnapshot") -> TargetOutcome | None:
+def _program_outcome(snapshot: "MonitorSnapshot") -> ProgramOutcome | None:
     """Reduce how the monitored target finished to report-safe plain data."""
-    outcome_state = snapshot.target_outcome
+    outcome_state = snapshot.program_outcome
     if outcome_state is None:
         return None
-    return TargetOutcome(
+    return ProgramOutcome(
         outcome_state.kind,
         outcome_state.exception_type_name,
         outcome_state.missing_module,
@@ -275,10 +280,10 @@ def _capture_info(snapshot: "MonitorSnapshot", modules_since_install: tuple[str,
         modules_since_install=modules_since_install,
         early_site_bootstrap=early_site_bootstrap,
         frozen_bootstrap=frozen_bootstrap,
-        deep_diagnostics=snapshot.deep_diagnostics,
-        deep_import_outcomes_status=snapshot.deep_import_outcomes_status,
-        deep_import_calls_status=snapshot.deep_import_calls_status,
-        standard_finder_status=snapshot.standard_finder_status,
+        detailed_capture=snapshot.detailed_capture,
+        import_results_capture_status=snapshot.import_results_capture_status,
+        import_calls_capture_status=snapshot.import_calls_capture_status,
+        path_finder_capture_status=snapshot.path_finder_capture_status,
     )
 
 
@@ -294,12 +299,12 @@ def _current_meta_path_names(report_errors: list[ReportError]) -> tuple[str, ...
 def _current_path_hooks(
     snapshot: "MonitorSnapshot",
     report_errors: list[ReportError],
-) -> tuple[ObjectRef, ...] | None:
+) -> tuple[ObjectIdentity, ...] | None:
     """Copy current path-hook identities when path-hooks monitoring is active."""
     if not snapshot.path_hooks_enabled:
         return None
     try:
-        return tuple(ObjectRef.of(original_path_hook(hook)) for hook in list(sys.path_hooks))
+        return tuple(ObjectIdentity.of(original_path_hook(hook)) for hook in list(sys.path_hooks))
     except Exception as exc:
         report_errors.append(ReportError("snapshot.path_hooks", type_name(exc)))
         return None

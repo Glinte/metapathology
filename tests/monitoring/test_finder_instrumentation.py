@@ -8,7 +8,7 @@ import sys
 from importlib.machinery import ModuleSpec
 
 import metapathology
-from metapathology import FindSpecCall
+from metapathology import MetaPathFinderCall
 
 class DummyLoader(importlib.abc.Loader):
     def create_module(self, spec):
@@ -28,7 +28,7 @@ sys.meta_path.insert(0, DummyFinder())
 import dummy_mod
 assert dummy_mod.value == 42
 
-calls = [e for e in monitor.events() if isinstance(e, FindSpecCall)]
+calls = [e for e in monitor.events() if isinstance(e, MetaPathFinderCall)]
 wins = [c for c in calls if c.fullname == "dummy_mod" and c.found]
 assert wins, calls
 assert wins[-1].finder_type_name == "DummyFinder"
@@ -47,7 +47,7 @@ print("OK")
 """
 
 
-def test_find_spec_calls_are_attributed_to_the_claiming_finder(python_runner: PythonRunner) -> None:
+def test_meta_path_finder_calls_are_attributed_to_the_claiming_finder(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(ATTRIBUTION)
     assert "OK" in proc.stdout
 
@@ -56,7 +56,7 @@ FIND_SPEC_METADATA_SNAPSHOTS = """
 import sys
 
 import metapathology
-from metapathology import FindSpecCall
+from metapathology import MetaPathFinderCall
 
 class DummyFinder:
     def find_spec(self, fullname, path=None, target=None):
@@ -69,7 +69,7 @@ monitor = metapathology.install(report_at_exit=False)
 shared_path = ["first", "second"]
 finder.find_spec("first_call", shared_path)
 finder.find_spec("second_call", shared_path)
-calls = [event for event in monitor.events() if isinstance(event, FindSpecCall)]
+calls = [event for event in monitor.events() if isinstance(event, MetaPathFinderCall)]
 assert calls[-2].search_path == ("first", "second")
 assert calls[-1].search_path == ("first", "second")
 assert calls[-2].finder_id == id(finder)
@@ -79,13 +79,13 @@ assert calls[-1].finder_type_name == "DummyFinder"
 
 shared_path.append("third")
 finder.find_spec("changed_path", shared_path)
-calls = [event for event in monitor.events() if isinstance(event, FindSpecCall)]
+calls = [event for event in monitor.events() if isinstance(event, MetaPathFinderCall)]
 assert calls[-3].search_path == ("first", "second")
 assert calls[-1].search_path == ("first", "second", "third")
 
 for index in range(10):
     finder.find_spec(f"distinct_{index}", [f"path_{index}"])
-calls = [event for event in monitor.events() if isinstance(event, FindSpecCall)]
+calls = [event for event in monitor.events() if isinstance(event, MetaPathFinderCall)]
 assert [call.search_path for call in calls[-10:]] == [(f"path_{index}",) for index in range(10)]
 assert all(call.finder_id == id(finder) for call in calls)
 print("OK")
@@ -102,7 +102,7 @@ import json
 import sys
 
 import metapathology
-from metapathology import FindSpecCall
+from metapathology import MetaPathFinderCall
 
 class SideEffectFinder:
     def find_spec(self, fullname, path=None, target=None):
@@ -137,7 +137,7 @@ except RuntimeError:
 calls = {
     event.fullname: event
     for event in monitor.events()
-    if isinstance(event, FindSpecCall) and event.fullname.startswith("identity_")
+    if isinstance(event, MetaPathFinderCall) and event.fullname.startswith("identity_")
 }
 assert calls["identity_added"].module_state_before.state == "missing"
 assert calls["identity_added"].module_state_after.state == "object"
@@ -153,27 +153,27 @@ document = json.loads(metapathology.render_report(format="json"))
 event = next(
     item["data"]
     for item in document["timeline"]
-    if item["kind"] == "find_spec_call" and item["data"]["fullname"] == "identity_replaced"
+    if item["kind"] == "meta_path_finder_call" and item["data"]["fullname"] == "identity_replaced"
 )
 assert event["module_state_before"]["object_id"] == hex(id(original))
 assert event["module_state_after"]["object_id"] == hex(id(replacement))
-findings = [item for item in document["findings"] if item["kind"] == "finder_side_effect"]
+findings = [item for item in document["findings"] if item["kind"] == "finder_changed_module_cache"]
 assert {item["module"] for item in findings} == set(calls)
 raised = next(item for item in findings if item["module"] == "identity_raised")
-assert raised["evidence"]["level"] == "captured"
+assert raised["evidence"]["level"] == "observed"
 assert raised["evidence"]["outcome"] == "raised:RuntimeError"
 explanation = next(
     item for item in document["explanations"]
-    if item["kind"] == "finder_side_effect" and item["subject"] == "identity_replaced"
+    if item["kind"] == "finder_changed_module_cache" and item["subject"] == "identity_replaced"
 )
-assert explanation["confidence"] == "captured"
+assert explanation["confidence"] == "observed"
 assert explanation["state_before"]["object_id"] == hex(id(original))
 assert explanation["state_after"]["object_id"] == hex(id(replacement))
 text = metapathology.render_report()
-assert "[finder-side-effect] 'identity_replaced'" in text, text
+assert "[finder-changed-module-cache] 'identity_replaced'" in text, text
 assert "nested activity was not observed" in text, text
 assert "sys.modules object at" in text, text
-assert "[captured] SideEffectFinder returned None after changing sys.modules['identity_replaced']" in text, text
+assert "[observed] SideEffectFinder returned None after changing sys.modules['identity_replaced']" in text, text
 
 for name in tuple(calls):
     sys.modules.pop(name, None)
@@ -207,7 +207,7 @@ metapathology.install(report_at_exit=False)
 finder.find_spec("distutils")
 
 text = metapathology.render_report()
-assert "[finder-side-effect] 'distutils'" in text, text
+assert "[finder-changed-module-cache] 'distutils'" in text, text
 assert "DistutilsMetaFinder" in text, text
 assert "returning None" in text, text
 
@@ -219,7 +219,7 @@ print("OK")
 """
 
 
-def test_setuptools_3073_finder_side_effect_fixture(python_runner: PythonRunner) -> None:
+def test_setuptools_3073_finder_changed_module_cache_fixture(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(SETUPTOOLS_3073)
     assert proc.stdout.strip() == "OK"
 
@@ -227,7 +227,7 @@ def test_setuptools_3073_finder_side_effect_fixture(python_runner: PythonRunner)
 UNINSTALL_STOPS_RECORDING = """
 import sys
 import metapathology
-from metapathology import MetaPathMutation, MetaPathReassignment
+from metapathology import MetaPathChange, MetaPathReplacement
 
 class DummyFinder:
     def find_spec(self, fullname, path=None, target=None):
@@ -241,7 +241,7 @@ sys.meta_path = list(sys.meta_path)
 import colorsys  # audit hook must stay inert after uninstall
 
 events = monitor.events()
-assert not any(isinstance(e, (MetaPathMutation, MetaPathReassignment)) for e in events), events
+assert not any(isinstance(e, (MetaPathChange, MetaPathReplacement)) for e in events), events
 assert type(sys.meta_path) is list
 print("OK")
 """
@@ -284,7 +284,7 @@ HOSTILE_FINDER = """
 import sys
 
 import metapathology
-from metapathology import InternalError
+from metapathology import MonitoringError
 
 class HostileError(Exception):
     stringify_count = 0
@@ -305,7 +305,7 @@ sys.meta_path.append(finder)
 
 assert finder in sys.meta_path
 assert HostileError.stringify_count == 0
-errors = [event for event in monitor.events() if isinstance(event, InternalError)]
+errors = [event for event in monitor.events() if isinstance(event, MonitoringError)]
 assert any(event.where == "instrument_finder" for event in errors), errors
 assert HostileError.stringify_count == 0
 print("OK")
@@ -321,7 +321,7 @@ REENTRANT_FINDER = """
 import sys
 
 import metapathology
-from metapathology import FindSpecCall
+from metapathology import MetaPathFinderCall
 
 class ReentrantFinder:
     def __init__(self):
@@ -344,7 +344,7 @@ assert fractions.Fraction(1, 2).numerator == 1
 calls = [
     event
     for event in monitor.events()
-    if isinstance(event, FindSpecCall) and event.finder_id == id(finder)
+    if isinstance(event, MetaPathFinderCall) and event.finder_id == id(finder)
 ]
 names = [event.fullname for event in calls]
 assert "fractions" in names, calls
@@ -433,7 +433,7 @@ SLOTTED_FINDER_RESTORE = """
 import sys
 
 import metapathology
-from metapathology import FindSpecCall
+from metapathology import MetaPathFinderCall
 
 class SlottedFinder:
     __slots__ = ("find_spec",)
@@ -449,8 +449,8 @@ monitor = metapathology.install(report_at_exit=False)
 metapathology.uninstall()
 
 assert finder.find_spec is original_find_spec, finder.find_spec
-finder.find_spec("after_uninstall_probe")
-calls = [e for e in monitor.events() if isinstance(e, FindSpecCall) and e.fullname == "after_uninstall_probe"]
+finder.find_spec("after_uninstall_check")
+calls = [e for e in monitor.events() if isinstance(e, MetaPathFinderCall) and e.fullname == "after_uninstall_check"]
 assert not calls, calls  # a stranded wrapper keeps recording after uninstall
 print("OK")
 """
@@ -557,7 +557,7 @@ sys.meta_path.insert(0, finder)
 
 monitor = metapathology.install(report_at_exit=False)
 assert monitor.enabled
-assert finder.find_spec("probe") is None
+assert finder.find_spec("check") is None
 assert finder.find_spec.__wrapped__ is original
 metapathology.uninstall()
 assert isinstance(finder.find_spec, HostileCallable)
@@ -628,7 +628,7 @@ finder = DummyFinder(spec)
 sys.meta_path.insert(0, finder)
 monitor = install(report_at_exit=False)
 
-result = finder.find_spec("probe")
+result = finder.find_spec("check")
 assert result is spec
 assert not spec.accessed
 call = monitor.events()[-1]

@@ -19,11 +19,11 @@ Keep the three core mechanisms independently toggleable:
 2. A real `list` subclass observes all supported `sys.meta_path` mutations and their stacks. It must remain compatible with `isinstance(..., list)` checks.
 3. Finder attribution shadows `find_spec` in writable instance dictionaries and delegates unchanged. Never proxy finder objects or mutate shared stdlib finder classes.
 
-Optional deep monitoring applies the shared list observer to `sys.path` and related import state. It is exhaustive, may grow with observed mutations, and must restore ordinary state on uninstall.
+Optional detailed monitoring applies the shared list observer to `sys.path` and related import state. It is exhaustive, may grow with observed mutations, and must restore ordinary state on uninstall.
 
 `Monitor` owns observation and its mutable evidence. Reporting receives one immutable snapshot and must not acquire monitor locks or call back into live monitor components. Runtime code owns installation, atexit, and output policy. Analysis produces a format-neutral artifact that can support multiple exports from one capture.
 
-Captured custom-finder routes may be compared with a report-time `PathFinder` probe. Describe differences as current-state evidence, never as a prediction of what would have won. Promote differences to findings only when corroborated by an observed effect.
+Captured custom-finder results may be compared with a report-time `PathFinder` check. Describe differences as current-state evidence, never as a prediction of what would have won. Promote differences to findings only when corroborated by an observed effect.
 
 ## Import-hook correctness
 
@@ -48,10 +48,11 @@ Concurrency and randomized tests must be reproducible from a reported seed or ex
 
 - Source lives in `src/metapathology/` and is fully type-annotated. Tests are typed where practical.
 - Use built-in generics and `collections.abc`; keep imports at module scope.
-- Prefer small functions, explicit parameters, and straightforward ownership boundaries over speculative abstractions.
+- Prefer small functions, explicit parameters, and straightforward ownership over speculative abstractions.
 - Comments explain non-obvious reasons. Public and non-obvious APIs use Google-style docstrings.
 - Runtime dependencies remain forbidden. Justify any new development dependency.
 - Update the nearest public discovery surface only when public behavior changes. Keep internal design detail in focused docs or this file.
+- Follow `docs/internal/writing-guide.md`: write for the reader's next decision, disclose detail progressively, and keep one authoritative exhaustive reference.
 - Temporary compatibility code needs a `TODO` with a concrete removal trigger.
 
 ## Tooling and tests

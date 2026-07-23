@@ -5,10 +5,10 @@ import threading
 
 from metapathology._monitor_model import _ImporterCacheReportState
 from metapathology._records import (
-    ImporterCacheDiff,
+    ImporterCacheChange,
     ImporterCacheEntry,
     ImporterCacheReplacement,
-    ObjectRef,
+    ObjectIdentity,
 )
 
 TYPE_CHECKING = False
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from metapathology._monitor import Monitor
 
 
-def _cache_values_match(left: ObjectRef | None, right: ObjectRef | None) -> bool:
+def _cache_values_match(left: ObjectIdentity | None, right: ObjectIdentity | None) -> bool:
     """Compare captured cache values without relying on record identity."""
     if left is None or right is None:
         return left is right
@@ -25,8 +25,8 @@ def _cache_values_match(left: ObjectRef | None, right: ObjectRef | None) -> bool
 
 
 def _diff_importer_cache(
-    before: dict[str, ObjectRef | None],
-    after: dict[str, ObjectRef | None],
+    before: dict[str, ObjectIdentity | None],
+    after: dict[str, ObjectIdentity | None],
 ) -> tuple[
     tuple[ImporterCacheEntry, ...],
     tuple[ImporterCacheEntry, ...],
@@ -45,12 +45,12 @@ def _diff_importer_cache(
     return added, removed, replaced
 
 
-def _cache_entries(snapshot: dict[str, ObjectRef | None]) -> tuple[ImporterCacheEntry, ...]:
+def _cache_entries(snapshot: dict[str, ObjectIdentity | None]) -> tuple[ImporterCacheEntry, ...]:
     return tuple(ImporterCacheEntry(path, snapshot[path]) for path in sorted(snapshot))
 
 
 def _snapshot_importer_cache() -> tuple[
-    dict[str, ObjectRef | None],
+    dict[str, ObjectIdentity | None],
     int,
     dict[int, object],
     tuple[int, int],
@@ -58,7 +58,7 @@ def _snapshot_importer_cache() -> tuple[
     """Copy string-keyed cache state without converting foreign objects."""
     cache = sys.path_importer_cache
     raw_items = list(cache.items())
-    entries: dict[str, ObjectRef | None] = {}
+    entries: dict[str, ObjectIdentity | None] = {}
     finders: dict[int, object] = {}
     non_string_keys = 0
     for path, finder in raw_items:
@@ -68,7 +68,7 @@ def _snapshot_importer_cache() -> tuple[
         if finder is None:
             entries[path] = None
             continue
-        reference = ObjectRef.of(finder)
+        reference = ObjectIdentity.of(finder)
         entries[path] = reference
         finders[reference.object_id] = finder
     return entries, non_string_keys, finders, (id(cache), len(cache))
@@ -81,7 +81,7 @@ class _ImporterCacheObserver:
         self._monitor = monitor
         self._enabled = False
         self._initial_non_string_keys = 0
-        self._latest: dict[str, ObjectRef | None] | None = None
+        self._latest: dict[str, ObjectIdentity | None] | None = None
         self._latest_non_string_keys: int | None = None
         self._fingerprint: tuple[int, int] | None = None
         self._dirty = False
@@ -141,7 +141,7 @@ class _ImporterCacheObserver:
             with monitor._record_lock:
                 self._observation_active = False
                 self._dirty = True
-            monitor._record_internal_error("importer_cache_snapshot", exc)
+            monitor._record_monitoring_error("importer_cache_snapshot", exc)
             return
 
         thread_name = threading.current_thread().name
@@ -165,8 +165,8 @@ class _ImporterCacheObserver:
                 return
             monitor._seq += 1
             monitor._events.append(
-                ImporterCacheDiff(
-                    seq=monitor._seq,
+                ImporterCacheChange(
+                    sequence=monitor._seq,
                     observation=observation,
                     added=added,
                     removed=removed,

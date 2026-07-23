@@ -18,7 +18,7 @@ def _explanation(explanation_id: str, kind: "ExplanationKind", effect_status: "E
     return CausalExplanation(
         explanation_id=explanation_id,
         kind=kind,
-        confidence="captured",
+        confidence="observed",
         subject="contended.module",
         effect_status=effect_status,
         cause_finding_id=None,
@@ -66,7 +66,7 @@ sys.path.insert(0, sys.argv[1])
 metapathology.install(
     report_at_exit=False,
     capture=metapathology.CaptureConfig(
-        deep=metapathology.DeepConfig(import_outcomes=sys.argv[3] == "deep"),
+        detailed=metapathology.DetailedCaptureConfig(import_results=sys.argv[3] == "detailed"),
     ),
 )
 sys.meta_path.insert(0, TruncatingFinder())
@@ -79,15 +79,15 @@ else:
 
 document = json.loads(metapathology.render_report(format="json"))
 comparison = next(
-    item for item in document["route_comparisons"] if item["only_in_right_route"]
+    item for item in document["finder_result_comparisons"] if item["only_in_right_result"]
 )
-if sys.argv[3] == "deep":
-    finding = next(item for item in document["findings"] if item["kind"] == "namespace_truncation")
-    assert finding["severity"] == "actionable"
+if sys.argv[3] == "detailed":
+    finding = next(item for item in document["findings"] if item["kind"] == "missing_namespace_locations")
+    assert finding["severity"] == "problem"
     assert "meta_path_short_circuit" in finding["signals"]
-    assert finding["data"]["route_comparison_ref"] == comparison["id"]
+    assert finding["data"]["finder_result_comparison_ref"] == comparison["id"]
     explanation = document["explanations"][0]
-    assert explanation["kind"] == "namespace_truncation_failure"
+    assert explanation["kind"] == "missing_namespace_locations_failure"
     assert explanation["subject"] == "synthesis_ns.child"
     assert explanation["cause_finding_ref"] == finding["id"]
     assert explanation["omitted_location"] == os.path.join(sys.argv[1], "synthesis_ns")
@@ -97,31 +97,31 @@ if sys.argv[3] == "deep":
     assert explanation["next_observation"] is None
     text = metapathology.render_report()
     assert "[1] [correlated] 'synthesis_ns.child' failed" in text
-    assert "    [namespace-truncation] 'synthesis_ns':" in text
+    assert "    [missing-namespace-locations] 'synthesis_ns':" in text
     assert "why it matters:" in text
-    assert "this is an actionable finding based on correlated evidence" in text
+    assert "this is a problem finding based on correlated evidence" in text
     assert "cause: finding:" not in text
 else:
-    assert not any(item["kind"] == "namespace_truncation" for item in document["findings"])
-    assert not any(item["kind"] == "namespace_truncation_failure" for item in document["explanations"])
+    assert not any(item["kind"] == "missing_namespace_locations" for item in document["findings"])
+    assert not any(item["kind"] == "missing_namespace_locations_failure" for item in document["explanations"])
     text = metapathology.render_report()
     assert "modules found by a custom finder" in text
-    assert "[namespace-truncation]" not in text
+    assert "[missing-namespace-locations]" not in text
 print("OK")
 """
 
 
-def test_namespace_truncation_explains_descendant_failure_with_honest_confidence(
+def test_missing_namespace_locations_explains_descendant_failure_with_honest_confidence(
     python_runner: PythonRunner, tmp_path: Path
 ) -> None:
     omitted_root = tmp_path / "installed"
     child = omitted_root / "synthesis_ns" / "child"
     child.mkdir(parents=True)
     (child / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
-    claimed = tmp_path / "editable" / "synthesis_ns"
-    claimed.mkdir(parents=True)
+    finder_called = tmp_path / "editable" / "synthesis_ns"
+    finder_called.mkdir(parents=True)
 
-    for mode in ("default", "deep"):
-        proc = python_runner.run_code_ok(NAMESPACE_FAILURE, str(omitted_root), str(claimed), mode)
+    for mode in ("default", "detailed"):
+        proc = python_runner.run_code_ok(NAMESPACE_FAILURE, str(omitted_root), str(finder_called), mode)
         assert proc.returncode == 0, proc.stderr
         assert proc.stdout.strip() == "OK"

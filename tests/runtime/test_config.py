@@ -13,7 +13,7 @@ from hypothesis import strategies as st
 from metapathology._config import (
     AnalysisConfig,
     CaptureConfig,
-    DeepConfig,
+    DetailedCaptureConfig,
     InstallRequest,
     ReportTarget,
     _UnresolvedReportingOptions,
@@ -28,7 +28,7 @@ _BOOLEAN_FIELDS = st.sampled_from(
         ("import_audit", "METAPATHOLOGY_IMPORT_AUDIT", True),
         ("path_hooks", "METAPATHOLOGY_PATH_HOOKS", True),
         ("sys_path", "METAPATHOLOGY_SYS_PATH", False),
-        ("displaced_finder_probe", "METAPATHOLOGY_DISPLACED_FINDER_PROBE", False),
+        ("displaced_finder_check", "METAPATHOLOGY_DISPLACED_FINDER_CHECK", False),
     )
 )
 _ENVIRONMENT_BOOLEAN = st.one_of(
@@ -102,8 +102,8 @@ def test_defaults_resolve_to_one_immutable_request() -> None:
     assert request.capture.path_hooks is True
     assert request.capture.importer_cache is True
     assert request.capture.sys_path is False
-    assert request.analysis.standard_path_probe is True
-    assert request.analysis.displaced_finder_probe is False
+    assert request.analysis.standard_path_check is True
+    assert request.analysis.displaced_finder_check is False
     assert request.issues == ()
     with pytest.raises(AttributeError):
         setattr(request.capture, "sys_path", True)
@@ -113,21 +113,21 @@ def test_defaults_resolve_to_one_immutable_request() -> None:
     assert not hasattr(monitoring, "report_targets")
 
 
-def test_deep_and_probe_umbrellas_respect_explicit_overrides() -> None:
+def test_detailed_and_check_group_settings_respect_explicit_overrides() -> None:
     request = _resolve(
-        capture=CaptureConfig(deep=DeepConfig(enabled=True, loaders=False)),
-        analysis=AnalysisConfig(probes=True, standard_path_probe=False),
+        capture=CaptureConfig(detailed=DetailedCaptureConfig(enabled=True, loaders=False)),
+        analysis=AnalysisConfig(checks=True, standard_path_check=False),
         use_environment=False,
     )
 
     assert request.capture.sys_path is True
-    assert request.capture.deep.path_hooks is True
-    assert request.capture.deep.path_entry_finders is True
-    assert request.capture.deep.loaders is False
-    assert request.capture.deep.import_outcomes is True
-    assert request.capture.deep.import_calls is True
-    assert request.analysis.standard_path_probe is False
-    assert request.analysis.displaced_finder_probe is True
+    assert request.capture.detailed.path_hooks is True
+    assert request.capture.detailed.path_entry_finders is True
+    assert request.capture.detailed.loaders is False
+    assert request.capture.detailed.import_results is True
+    assert request.capture.detailed.import_calls is True
+    assert request.analysis.standard_path_check is False
+    assert request.analysis.displaced_finder_check is True
 
 
 @settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
@@ -154,12 +154,12 @@ def test_boolean_configuration_obeys_explicit_environment_default_precedence(
     elif attribute == "sys_path":
         capture = CaptureConfig(sys_path=explicit)
     else:
-        analysis = AnalysisConfig(displaced_finder_probe=explicit)
+        analysis = AnalysisConfig(displaced_finder_check=explicit)
 
     request = _resolve(capture=capture, analysis=analysis)
     resolved = (
         getattr(request.analysis, attribute)
-        if attribute == "displaced_finder_probe"
+        if attribute == "displaced_finder_check"
         else getattr(request.capture, attribute)
     )
     normalized = None if raw is None else raw.strip().lower()
@@ -234,8 +234,8 @@ def test_explicit_invalid_report_and_configuration_values_are_rejected() -> None
         _resolve(report_color="sometimes")
     with pytest.raises(TypeError, match="configuration fields must be bool or None"):
         _resolve(capture=CaptureConfig(path_hooks=cast("bool", 1)))
-    with pytest.raises(TypeError, match=r"capture\.deep must be a DeepConfig"):
-        _resolve(capture=CaptureConfig(deep=cast("DeepConfig", object())))
+    with pytest.raises(TypeError, match=r"capture\.detailed must be bool, DetailedCaptureConfig, or None"):
+        _resolve(capture=CaptureConfig(detailed=cast("DetailedCaptureConfig", object())))
 
 
 def test_report_destinations_are_reduced_separately(tmp_path: Path) -> None:

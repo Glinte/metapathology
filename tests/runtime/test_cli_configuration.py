@@ -33,6 +33,16 @@ def test_removed_report_format_flag_fails_before_running_target(tmp_path: Path) 
     assert not marker.exists()
 
 
+def test_removed_capture_and_probe_flags_are_not_accepted_as_abbreviations(tmp_path: Path) -> None:
+    script = tmp_path / "prog.py"
+    script.write_text("raise AssertionError('target ran')\n")
+
+    for option in ("--deep", "--deep-loaders", "--probes", "--standard-path-probe"):
+        proc = run_cli(option, str(script), cwd=tmp_path)
+        assert proc.returncode == 2
+        assert "unrecognized arguments" in proc.stderr
+
+
 def test_invalid_color_mode_fails_before_running_target(tmp_path: Path) -> None:
     marker = tmp_path / "target-ran"
     script = tmp_path / "prog.py"
@@ -112,18 +122,18 @@ def test_environment_writes_multiple_inferred_reports(tmp_path: Path) -> None:
     assert len(list(tmp_path.glob("env.*.json"))) == 1
 
 
-def test_deep_umbrella_enables_every_mechanism(tmp_path: Path) -> None:
+def test_detailed_group_option_enables_every_mechanism(tmp_path: Path) -> None:
     script = tmp_path / "prog.py"
     script.write_text(
         "import metapathology\n"
         "monitor = metapathology.get_monitor()\n"
-        "print(monitor.deep_diagnostics, monitor.sys_path_enabled)\n"
+        "print(monitor.detailed_capture, monitor.sys_path_enabled)\n"
     )
 
-    proc = run_cli("--deep", str(script), cwd=tmp_path)
+    proc = run_cli("--detailed-capture", str(script), cwd=tmp_path)
 
     assert proc.returncode == 0, proc.stderr
-    assert "('path_hooks', 'path_entry_finders', 'loaders', 'import_outcomes', 'import_calls') True" in proc.stdout
+    assert "('path_hooks', 'path_entry_finders', 'loaders', 'import_results', 'import_calls') True" in proc.stdout
 
 
 def test_capture_environment_and_explicit_cli_values_have_consistent_precedence(tmp_path: Path) -> None:
@@ -131,22 +141,22 @@ def test_capture_environment_and_explicit_cli_values_have_consistent_precedence(
     script.write_text(
         "import metapathology\n"
         "monitor = metapathology.get_monitor()\n"
-        "print(monitor.path_hooks_enabled, monitor.importer_cache_enabled, monitor.deep_diagnostics)\n"
+        "print(monitor.path_hooks_enabled, monitor.importer_cache_enabled, monitor.detailed_capture)\n"
     )
     env = dict(os.environ)
     env.update(
         {
             "METAPATHOLOGY_PATH_HOOKS": "off",
             "METAPATHOLOGY_IMPORTER_CACHE": "false",
-            "METAPATHOLOGY_DEEP": "yes",
-            "METAPATHOLOGY_DEEP_LOADERS": "0",
-            "METAPATHOLOGY_DEEP_IMPORT_OUTCOMES": "1",
+            "METAPATHOLOGY_DETAILED_CAPTURE": "yes",
+            "METAPATHOLOGY_CAPTURE_LOADER_CALLS": "0",
+            "METAPATHOLOGY_CAPTURE_IMPORT_RESULTS": "1",
         }
     )
 
     proc = run_cli(
         "--path-hooks",
-        "--no-deep-import-outcomes",
+        "--no-capture-import-results",
         str(script),
         cwd=tmp_path,
         env=env,

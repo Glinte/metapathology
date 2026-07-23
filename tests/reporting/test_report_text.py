@@ -1,4 +1,4 @@
-"""Human report content: bypass detection and the no-spec bucket."""
+"""Human report content: bypass detection and the module-without-spec bucket."""
 
 import zipfile
 from pathlib import Path
@@ -34,23 +34,23 @@ assert module.VALUE == 7
 
 text = metapathology.render_report()
 document = json.loads(metapathology.render_report(format="json"))
-routes = [item for item in document["resolution_routes"] if item["module"] == target_name]
-captured = next(item for item in routes if item["kind"] == "captured_claim")
-probe = next(item for item in routes if item["kind"] == "standard_path_probe")
-assert probe["evidence_level"] == "live_probe", probe
-assert probe["state_phase"] == "report", probe
-assert probe["predicts_alternative_winner"] is False, probe
+results = [item for item in document["finder_results"] if item["module"] == target_name]
+captured = next(item for item in results if item["kind"] == "observed_finder_result")
+check = next(item for item in results if item["kind"] == "standard_path_check")
+assert check["evidence_level"] == "current_state_check", check
+assert check["state_phase"] == "report", check
+assert check["predicts_alternative_winner"] is False, check
 assert "meta_path_short_circuit" in captured["signals"], captured
 assert not any(item["module"] == target_name for item in document["findings"])
 print(text)
 """
 
 
-def test_finder_shadowing_path_hooks_reports_neutral_route_difference(
+def test_finder_shadowing_path_hooks_reports_neutral_result_difference(
     python_runner: PythonRunner, tmp_path: Path
 ) -> None:
     # The module file is in cwd, so the standard path machinery *would* find it
-    # with a plain SourceFileLoader; the sneaky finder claims it first.
+    # with a plain SourceFileLoader; the sneaky finder finder_calls it first.
     module_file = tmp_path / "real_mod.py"
     module_file.write_text("VALUE = 7\n")
     proc = python_runner.run_code_ok(BYPASS, "real_mod", str(module_file))
@@ -60,13 +60,14 @@ def test_finder_shadowing_path_hooks_reports_neutral_route_difference(
     assert "real_mod" in proc.stdout
     assert "SneakyLoader" in proc.stdout
     assert "SourceFileLoader" in proc.stdout
-    # Findings lead the report, and paths under the reported cwd are relativized.
-    assert proc.stdout.index("-- findings") < proc.stdout.index("-- event timeline")
+    # Result comparisons lead the raw event timeline, and paths under the
+    # reported cwd are relativized.
+    assert proc.stdout.index("-- modules found by a custom finder") < proc.stdout.index("-- event timeline")
     assert "origin 'real_mod.py'" in proc.stdout
     assert f"paths shown relative to: {tmp_path}" in proc.stdout
 
 
-def test_source_and_archive_routes_are_compared_without_classifying_a_defect(
+def test_source_and_archive_results_are_compared_without_classifying_a_defect(
     python_runner: PythonRunner, tmp_path: Path
 ) -> None:
     archive = tmp_path / "frozen-like.zip"
@@ -90,9 +91,9 @@ def test_source_and_archive_routes_are_compared_without_classifying_a_defect(
         "sys.meta_path.insert(0, Finder())\n"
         "import archive_conflict\n"
         "document = json.loads(metapathology.render_report(format='json'))\n"
-        "routes = [item for item in document['resolution_routes'] if item['module'] == 'archive_conflict']\n"
-        "probe = next(item for item in routes if item['kind'] == 'standard_path_probe')\n"
-        "assert probe['spec']['loader']['type_name'] == 'zipimporter'\n"
+        "results = [item for item in document['finder_results'] if item['module'] == 'archive_conflict']\n"
+        "check = next(item for item in results if item['kind'] == 'standard_path_check')\n"
+        "assert check['spec']['loader']['type_name'] == 'zipimporter'\n"
         "assert not any(item['module'] == 'archive_conflict' for item in document['findings'])\n"
         "assert '[frozen-source-conflict]' not in metapathology.render_report()\n"
         "print('OK')\n",
@@ -102,7 +103,7 @@ def test_source_and_archive_routes_are_compared_without_classifying_a_defect(
     assert proc.stdout.strip() == "OK"
 
 
-def test_module_invisible_to_path_machinery_has_a_not_found_standard_route(
+def test_module_invisible_to_path_machinery_has_a_not_found_standard_result(
     python_runner: PythonRunner, tmp_path: Path
 ) -> None:
     # The module file lives in a directory that is not on sys.path, so the
@@ -127,14 +128,14 @@ metapathology.install(report_at_exit=False)
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 text = metapathology.render_report()
-assert "informational (1):" in text, text
-assert "[no-spec]" in text, text
+assert "note (1):" in text, text
+assert "[module-without-spec]" in text, text
 assert "ghost_mod" in text, text
 print("OK")
 """
 
 
-def test_manually_registered_module_is_flagged_as_no_spec(python_runner: PythonRunner) -> None:
+def test_manually_registered_module_is_flagged_as_module_without_spec(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(NO_SPEC)
     assert "OK" in proc.stdout
 
@@ -159,12 +160,8 @@ def test_standard_unwrapped_finders_are_explained(python_runner: PythonRunner) -
     ) in proc.stdout
     assert "unobservable" not in proc.stdout
     assert "sys.meta_path (unchanged since install):" in proc.stdout
-    assert "Nothing was recorded for:" in proc.stdout
-    assert (
-        "sys.meta_path mutations, sys.meta_path reassignments, "
-        "sys.path_hooks mutations, sys.path_hooks reassignments" in proc.stdout
-    )
-    assert "-- sys.path_hooks mutations (0) --" not in proc.stdout
+    assert "Nothing was recorded for:" not in proc.stdout
+    assert "-- sys.path_hooks changes (0) --" not in proc.stdout
 
 
 PATH_REMOVED_AFTER_IMPORT = """

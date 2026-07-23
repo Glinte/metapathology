@@ -5,14 +5,14 @@ import os
 from metapathology._module_metadata import ModuleMetadata
 from metapathology._record import _Record
 from metapathology._records import (
-    DeepDiagnosticCall,
-    FinderContract,
-    FindSpecCall,
+    FinderAPIObservation,
     ImporterCacheEntry,
+    ImportMechanismCall,
+    MetaPathFinderCall,
     ModuleCacheState,
+    ModuleSpecSnapshot,
     MonitorEvent,
-    ObjectRef,
-    SpecSummary,
+    ObjectIdentity,
 )
 
 TYPE_CHECKING = False
@@ -21,63 +21,72 @@ if TYPE_CHECKING:
     from typing import Literal
 
     from metapathology._monitor_model import (
-        DeepImportCallsStatus,
-        DeepImportOutcomesStatus,
-        StandardFinderStatus,
-        TargetOutcomeKind,
+        ImportCallsCaptureStatus,
+        ImportResultsCaptureStatus,
+        PathFinderCaptureStatus,
+        ProgramOutcomeKind,
     )
-    from metapathology._records import DeepOutcome, SearchPathKind
+    from metapathology._records import ImportMechanismOutcome, SearchPathKind
 
-    ExplanationConfidence = Literal["captured", "correlated", "inferred", "unknown"]
+    ExplanationConfidence = Literal["observed", "correlated", "inferred", "unknown"]
     ExplanationKind = Literal[
         "ambiguous_contention",
-        "captured_claim",
+        "observed_finder_result",
         "finder",
-        "finder_side_effect",
+        "finder_changed_module_cache",
         "module_replacement",
-        "namespace_candidate_displaced",
-        "namespace_truncation_failure",
+        "namespace_candidate_hidden",
+        "missing_namespace_locations_failure",
         "path",
-        "repeated_load_failure",
-        "repeated_loader_execution",
-        "standard_path_probe",
-        "standard_winner_precedence",
+        "module_failed_after_loading",
+        "module_executed_again",
+        "standard_path_check",
+        "path_finder_precedence",
     ]
-    FindingSeverity = Literal["actionable", "warning", "informational"]
+    FindingSeverity = Literal["problem", "risk", "note"]
     FindingSubjectKind = Literal["module", "finder", "path"]
     FindingKind = Literal[
-        "failed_after_mutation",
-        "finder_side_effect",
-        "legacy_finder_contract",
+        "import_failed_after_state_change",
+        "finder_changed_module_cache",
+        "legacy_finder_api",
         "module_replacement",
-        "namespace_truncation",
-        "no_spec",
-        "path_hook_shadow",
-        "regular_module_shadows_namespace",
-        "repeated_load_failure",
-        "repeated_loader_execution",
+        "missing_namespace_locations",
+        "module_without_spec",
+        "competing_path_hooks",
+        "module_hides_namespace",
+        "module_failed_after_loading",
+        "module_executed_again",
     ]
-    FindingEvidenceLevel = Literal["post_hoc", "captured", "correlated", "structural_inference"]
-    FindingDetail = Literal["bare", "correlation", "contract", "claim", "route", "deep_call"]
+    FindingEvidenceLevel = Literal["current_state", "observed", "correlated", "inferred_from_state"]
+    FindingDetail = Literal[
+        "events_only",
+        "correlation",
+        "finder_api",
+        "finder_call",
+        "result_comparison",
+        "import_mechanism_call",
+    ]
     ImportPresence = Literal["unknown", "present_at_report", "absent_at_report"]
     ResolutionCategory = Literal["namespace", "built_in", "frozen", "source", "bytecode", "extension", "zip"]
     StatePhase = Literal["import", "report"]
-    StandardEvidenceLevel = Literal["captured", "inferred"]
-    RouteKind = Literal["captured_claim", "standard_path_probe", "displaced_finder_probe"]
-    RoutePurpose = Literal[
-        "record_selected_custom_meta_path_route",
-        "show_standard_path_route_bypassed_by_captured_claim",
-        "probe_displaced_importer_cache_finder",
+    StandardEvidenceLevel = Literal["observed", "inferred"]
+    FinderResultKind = Literal["observed_finder_result", "standard_path_check", "displaced_finder_check"]
+    FinderResultPurpose = Literal[
+        "record_custom_finder_result",
+        "compare_with_current_pathfinder",
+        "check_displaced_importer_cache_finder",
     ]
-    RouteEvidenceLevel = Literal["captured", "live_probe"]
-    RouteStatus = Literal[
+    FinderResultEvidenceLevel = Literal["observed", "current_state_check"]
+    FinderResultStatus = Literal[
         "found", "not_found", "failed", "target_unavailable", "finder_unavailable", "unsupported_finder"
     ]
-    ProbeKind = Literal["standard_path", "displaced_finder"]
-    ProbeStatus = Literal["active", "disabled", "unavailable"]
+    CheckKind = Literal["standard_path", "displaced_finder"]
+    CheckStatus = Literal["active", "disabled", "unavailable"]
     SearchPathPhase = Literal["import"]
-    LocationsComparisonState = Literal["not_applicable", "captured", "post_hoc", "deferred", "failed", "unavailable"]
-    ImportProgress = DeepOutcome | Literal["unknown", "finder_claimed", "finder_raised"]
+    LocationsComparisonState = Literal[
+        "not_applicable", "captured", "current_state", "deferred", "failed", "unavailable"
+    ]
+    ImportSearchProgress = ImportMechanismOutcome | Literal["unknown", "finder_found", "finder_raised"]
     EffectStatus = (
         ResolutionCategory
         | Literal[
@@ -101,10 +110,10 @@ class ReportError(_Record):
     exception_type_name: str
 
 
-class TargetOutcome(_Record):
-    """Plain reduction of how the monitored target finished."""
+class ProgramOutcome(_Record):
+    """Plain reduction of how the monitored program finished."""
 
-    kind: "TargetOutcomeKind"
+    kind: "ProgramOutcomeKind"
     exception_type_name: str | None
     missing_module: str | None
     exit_code: int | None
@@ -113,9 +122,9 @@ class TargetOutcome(_Record):
 class ReportSummary(_Record):
     """Counts and top references shared by the text verdict and JSON summary."""
 
-    actionable: int
-    warning: int
-    informational: int
+    problem: int
+    risk: int
+    note: int
     unresolved_import_count: int
     top_finding_id: str | None
     top_explanation_id: str | None
@@ -130,30 +139,30 @@ class SkippedFinder(_Record):
 
 
 class LoaderInventory(_Record):
-    """Post-hoc metadata copied from one ``sys.modules`` snapshot."""
+    """Current metadata copied from one ``sys.modules`` snapshot."""
 
     available: bool
     entries: tuple[ModuleMetadata, ...]
     non_string_keys: int
 
 
-class ImportAttempt(_Record):
-    """Conservative report-time correlation of one import audit start."""
+class ImportSearch(_Record):
+    """Conservative report-time correlation of one observed import search."""
 
-    attempt_id: int
+    search_id: int
     fullname: str
     start_event_seq: int
     event_seqs: tuple[int, ...]
     thread_id: int
     thread_name: str
-    progress: "ImportProgress"
+    progress: "ImportSearchProgress"
     presence: "ImportPresence"
 
 
 class StandardResolution(_Record):
     """Captured or conservatively inferred standard resolution evidence."""
 
-    attempt_id: int
+    search_id: int
     fullname: str
     finder_type_name: str
     category: "ResolutionCategory"
@@ -166,21 +175,21 @@ class StandardResolution(_Record):
     later_finders: tuple[str, ...]
 
 
-class ResolutionRoute(_Record):
-    """One captured or probed route to resolving a module name."""
+class FinderResult(_Record):
+    """One observed or current-state result for a module search."""
 
-    route_id: str
+    result_id: str
     module: str
-    kind: "RouteKind"
-    purpose: "RoutePurpose"
+    kind: "FinderResultKind"
+    purpose: "FinderResultPurpose"
     limitations: tuple[str, ...]
-    evidence_level: "RouteEvidenceLevel"
+    evidence_level: "FinderResultEvidenceLevel"
     state_phase: "StatePhase"
     predicts_alternative_winner: bool
     finder_type_name: str
     finder_id: int | None
-    status: "RouteStatus"
-    spec_summary: SpecSummary | None
+    status: "FinderResultStatus"
+    spec_summary: ModuleSpecSnapshot | None
     exception_type_name: str | None
     source_event_seqs: tuple[int, ...]
     search_path: tuple[str, ...]
@@ -191,19 +200,19 @@ class ResolutionRoute(_Record):
     @classmethod
     def _for_comparison(
         cls,
-        route_id: str,
-        summary: SpecSummary | None,
+        result_id: str,
+        summary: ModuleSpecSnapshot | None,
         *,
-        status: "RouteStatus" = "found",
-    ) -> "ResolutionRoute":
-        """Construct the minimal synthetic route used by focused value tests."""
+        status: "FinderResultStatus" = "found",
+    ) -> "FinderResult":
+        """Construct the minimal synthetic result used by focused value tests."""
         return cls(
-            route_id=route_id,
+            result_id=result_id,
             module="test",
-            kind="captured_claim",
-            purpose="record_selected_custom_meta_path_route",
+            kind="observed_finder_result",
+            purpose="record_custom_finder_result",
             limitations=(),
-            evidence_level="captured",
+            evidence_level="observed",
             state_phase="import",
             predicts_alternative_winner=False,
             finder_type_name="test",
@@ -219,21 +228,21 @@ class ResolutionRoute(_Record):
 
     def compare(
         self,
-        other: "ResolutionRoute",
+        other: "FinderResult",
         *,
         comparison_id: str,
         structural_comparison: "StructuralComparison",
-    ) -> "RouteComparison":
-        """Compare two independent routes without assigning either authority."""
+    ) -> "FinderResultComparison":
+        """Compare two independent results without assigning either authority."""
         left = self.spec_summary
         right = other.spec_summary
         if left is None or right is None:
-            return _incomplete_route_comparison(comparison_id, self, other, structural_comparison)
+            return _incomplete_result_comparison(comparison_id, self, other, structural_comparison)
         location_difference = _compare_locations(left, right)
-        return RouteComparison(
+        return FinderResultComparison(
             comparison_id=comparison_id,
-            left_route_id=self.route_id,
-            right_route_id=other.route_id,
+            left_result_id=self.result_id,
+            right_result_id=other.result_id,
             status_differs=self.status != other.status,
             complete=_comparison_is_complete(left, right),
             loader_type_differs=_loader_difference(left, right),
@@ -242,8 +251,8 @@ class ResolutionRoute(_Record):
             package_status_differs=(
                 None if left.is_package is None or right.is_package is None else left.is_package != right.is_package
             ),
-            only_in_left_route=location_difference[0],
-            only_in_right_route=location_difference[1],
+            only_in_left_result=location_difference[0],
+            only_in_right_result=location_difference[1],
             locations_reordered=location_difference[2],
             left_locations_state=left.locations_state,
             right_locations_state=right.locations_state,
@@ -261,20 +270,20 @@ class StructuralComparison(_Record):
     evidence_level: 'Literal["structural_comparison"]' = "structural_comparison"
 
 
-class RouteComparison(_Record):
-    """Neutral semantic differences between two resolution routes."""
+class FinderResultComparison(_Record):
+    """Neutral semantic differences between two finder results."""
 
     comparison_id: str
-    left_route_id: str
-    right_route_id: str
+    left_result_id: str
+    right_result_id: str
     status_differs: bool
     complete: bool
     loader_type_differs: bool | None
     origin_differs: bool | None
     cached_differs: bool | None
     package_status_differs: bool | None
-    only_in_left_route: tuple[str, ...]
-    only_in_right_route: tuple[str, ...]
+    only_in_left_result: tuple[str, ...]
+    only_in_right_result: tuple[str, ...]
     locations_reordered: bool | None
     left_locations_state: "LocationsComparisonState"
     right_locations_state: "LocationsComparisonState"
@@ -289,23 +298,23 @@ class RouteComparison(_Record):
                 self.origin_differs is True,
                 self.cached_differs is True,
                 self.package_status_differs is True,
-                bool(self.only_in_left_route),
-                bool(self.only_in_right_route),
+                bool(self.only_in_left_result),
+                bool(self.only_in_right_result),
                 self.locations_reordered is True,
             )
         )
 
 
-def _incomplete_route_comparison(
+def _incomplete_result_comparison(
     comparison_id: str,
-    left: ResolutionRoute,
-    right: ResolutionRoute,
+    left: FinderResult,
+    right: FinderResult,
     structural_comparison: StructuralComparison,
-) -> RouteComparison:
-    return RouteComparison(
+) -> FinderResultComparison:
+    return FinderResultComparison(
         comparison_id,
-        left.route_id,
-        right.route_id,
+        left.result_id,
+        right.result_id,
         left.status != right.status,
         False,
         None,
@@ -321,7 +330,7 @@ def _incomplete_route_comparison(
     )
 
 
-def _loader_difference(left: SpecSummary, right: SpecSummary) -> bool | None:
+def _loader_difference(left: ModuleSpecSnapshot, right: ModuleSpecSnapshot) -> bool | None:
     if "loader:missing" in left.unavailable_fields or "loader:missing" in right.unavailable_fields:
         return None
     left_type = None if left.loader is None else left.loader.type_name
@@ -330,19 +339,19 @@ def _loader_difference(left: SpecSummary, right: SpecSummary) -> bool | None:
 
 
 def _safe_path_value_changed(
-    left: str | ObjectRef | None,
-    right: str | ObjectRef | None,
+    left: str | ObjectIdentity | None,
+    right: str | ObjectIdentity | None,
 ) -> bool | None:
     if type(left) is str and type(right) is str:
         return _path_key(left) != _path_key(right)
     if left is None and right is None:
         return False
-    if isinstance(left, ObjectRef) or isinstance(right, ObjectRef):
+    if isinstance(left, ObjectIdentity) or isinstance(right, ObjectIdentity):
         return None
     return True
 
 
-def _comparison_is_complete(left: SpecSummary, right: SpecSummary) -> bool:
+def _comparison_is_complete(left: ModuleSpecSnapshot, right: ModuleSpecSnapshot) -> bool:
     incomplete_location_states = ("deferred", "failed")
     locations_complete = not (left.is_package is True and left.locations_state in incomplete_location_states)
     locations_complete = locations_complete and not (
@@ -352,8 +361,8 @@ def _comparison_is_complete(left: SpecSummary, right: SpecSummary) -> bool:
 
 
 def _compare_locations(
-    left: SpecSummary,
-    right: SpecSummary,
+    left: ModuleSpecSnapshot,
+    right: ModuleSpecSnapshot,
 ) -> tuple[tuple[str, ...], tuple[str, ...], bool | None]:
     left_locations = _string_locations(left)
     right_locations = _string_locations(right)
@@ -366,7 +375,7 @@ def _compare_locations(
     return only_in_left, only_in_right, reordered
 
 
-def _string_locations(summary: SpecSummary) -> tuple[str, ...] | None:
+def _string_locations(summary: ModuleSpecSnapshot) -> tuple[str, ...] | None:
     locations = summary.submodule_search_locations
     if locations is None or any(type(location) is not str for location in locations):
         return None
@@ -396,56 +405,61 @@ def _path_key(path: str) -> str:
     return os.path.normcase(os.path.abspath(path))
 
 
-class BareEvidence(_Record):
+class EventEvidence(_Record):
     """Finding carrying no structured evidence beyond its supporting events."""
 
-    detail: 'Literal["bare"]' = "bare"
+    detail: 'Literal["events_only"]' = "events_only"
 
 
 class CorrelationEvidence(_Record):
-    """Finding correlated across several import attempts by shared route."""
+    """Finding correlated across several import searches."""
 
-    attempt_ids: tuple[int, ...]
+    search_ids: tuple[int, ...]
     detail: 'Literal["correlation"]' = "correlation"
 
 
-class ContractEvidence(_Record):
-    """Finding backed by one observed finder contract."""
+class FinderAPIEvidence(_Record):
+    """Finding backed by one observed finder API."""
 
-    finder_contract: FinderContract
-    detail: 'Literal["contract"]' = "contract"
-
-
-class ClaimEvidence(_Record):
-    """Finding backed by one captured ``find_spec`` claim."""
-
-    claim: FindSpecCall
-    detail: 'Literal["claim"]' = "claim"
+    finder_api: FinderAPIObservation
+    detail: 'Literal["finder_api"]' = "finder_api"
 
 
-class RouteEvidence(_Record):
-    """Finding backed by a captured claim compared against a probed route."""
+class FinderCallEvidence(_Record):
+    """Finding backed by one observed ``find_spec`` call."""
 
-    claim: FindSpecCall
-    route_ids: tuple[str, ...]
-    route_comparison_id: str
+    finder_call: MetaPathFinderCall
+    detail: 'Literal["finder_call"]' = "finder_call"
+
+
+class FinderComparisonEvidence(_Record):
+    """Finding backed by an observed finder call and current-state comparison."""
+
+    finder_call: MetaPathFinderCall
+    result_ids: tuple[str, ...]
+    result_comparison_id: str
     structural_comparison: StructuralComparison
-    detail: 'Literal["route"]' = "route"
+    detail: 'Literal["result_comparison"]' = "result_comparison"
 
 
-class DeepCallEvidence(_Record):
-    """Finding backed by one deep-diagnostic delegation boundary."""
+class ImportMechanismEvidence(_Record):
+    """Finding backed by one detailed import-mechanism call."""
 
-    deep_call: DeepDiagnosticCall
+    import_mechanism_call: ImportMechanismCall
     module_state_baseline: ModuleCacheState | None = None
-    detail: 'Literal["deep_call"]' = "deep_call"
+    detail: 'Literal["import_mechanism_call"]' = "import_mechanism_call"
 
 
 # Evidence variants are a total function of ``Finding.kind``: each kind always
 # builds exactly one variant (see ``_report_analysis``). Consumers narrow on the
 # variant type instead of re-checking optional fields.
 FindingEvidence = (
-    BareEvidence | CorrelationEvidence | ContractEvidence | ClaimEvidence | RouteEvidence | DeepCallEvidence
+    EventEvidence
+    | CorrelationEvidence
+    | FinderAPIEvidence
+    | FinderCallEvidence
+    | FinderComparisonEvidence
+    | ImportMechanismEvidence
 )
 
 
@@ -455,63 +469,63 @@ class Finding(_Record):
     finding_id: str
     kind: "FindingKind"
     module: str
-    evidence: FindingEvidence = BareEvidence()
-    evidence_level: "FindingEvidenceLevel" = "post_hoc"
+    evidence: FindingEvidence = EventEvidence()
+    evidence_level: "FindingEvidenceLevel" = "current_state"
     limitations: tuple[str, ...] = ()
     subject_kind: "FindingSubjectKind" = "module"
     supporting_event_seqs: tuple[int, ...] = ()
-    severity: "FindingSeverity" = "warning"
+    severity: "FindingSeverity" = "risk"
     signals: tuple[str, ...] = ()
 
 
-def finding_claim(finding: "Finding") -> FindSpecCall | None:
-    """Return the captured claim a finding carries, regardless of its kind."""
+def finding_finder_call(finding: "Finding") -> MetaPathFinderCall | None:
+    """Return the observed finder call carried by a finding."""
     evidence = finding.evidence
-    if isinstance(evidence, (ClaimEvidence, RouteEvidence)):
-        return evidence.claim
+    if isinstance(evidence, (FinderCallEvidence, FinderComparisonEvidence)):
+        return evidence.finder_call
     return None
 
 
-def finding_deep_call(finding: "Finding") -> DeepDiagnosticCall | None:
-    """Return the deep-diagnostic boundary a finding carries, if any."""
+def finding_import_mechanism_call(finding: "Finding") -> ImportMechanismCall | None:
+    """Return the detailed import-mechanism call carried by a finding."""
     evidence = finding.evidence
-    return evidence.deep_call if isinstance(evidence, DeepCallEvidence) else None
+    return evidence.import_mechanism_call if isinstance(evidence, ImportMechanismEvidence) else None
 
 
 def finding_structural_comparison(finding: "Finding") -> StructuralComparison | None:
     """Return the structural comparison a finding carries, if any."""
     evidence = finding.evidence
-    return evidence.structural_comparison if isinstance(evidence, RouteEvidence) else None
+    return evidence.structural_comparison if isinstance(evidence, FinderComparisonEvidence) else None
 
 
-def finding_route_comparison_id(finding: "Finding") -> str | None:
-    """Return the route-comparison id a finding references, if any."""
+def finding_result_comparison_id(finding: "Finding") -> str | None:
+    """Return the finder-result comparison id referenced by a finding."""
     evidence = finding.evidence
-    return evidence.route_comparison_id if isinstance(evidence, RouteEvidence) else None
+    return evidence.result_comparison_id if isinstance(evidence, FinderComparisonEvidence) else None
 
 
-def finding_route_ids(finding: "Finding") -> tuple[str, ...]:
-    """Return the route ids a finding references, if any."""
+def finding_result_ids(finding: "Finding") -> tuple[str, ...]:
+    """Return the finder-result ids referenced by a finding."""
     evidence = finding.evidence
-    return evidence.route_ids if isinstance(evidence, RouteEvidence) else ()
+    return evidence.result_ids if isinstance(evidence, FinderComparisonEvidence) else ()
 
 
-def finding_finder_contract(finding: "Finding") -> FinderContract | None:
-    """Return the finder contract a finding carries, if any."""
+def finding_finder_api(finding: "Finding") -> FinderAPIObservation | None:
+    """Return the finder API evidence carried by a finding."""
     evidence = finding.evidence
-    return evidence.finder_contract if isinstance(evidence, ContractEvidence) else None
+    return evidence.finder_api if isinstance(evidence, FinderAPIEvidence) else None
 
 
-def finding_attempt_ids(finding: "Finding") -> tuple[int, ...]:
-    """Return the correlated attempt ids a finding carries, if any."""
+def finding_search_ids(finding: "Finding") -> tuple[int, ...]:
+    """Return the correlated import-search ids carried by a finding."""
     evidence = finding.evidence
-    return evidence.attempt_ids if isinstance(evidence, CorrelationEvidence) else ()
+    return evidence.search_ids if isinstance(evidence, CorrelationEvidence) else ()
 
 
 def finding_module_state_baseline(finding: "Finding") -> ModuleCacheState | None:
-    """Return the deep-call module-state baseline a finding carries, if any."""
+    """Return the detailed-call module-state baseline a finding carries, if any."""
     evidence = finding.evidence
-    return evidence.module_state_baseline if isinstance(evidence, DeepCallEvidence) else None
+    return evidence.module_state_baseline if isinstance(evidence, ImportMechanismEvidence) else None
 
 
 class CausalExplanation(_Record):
@@ -529,7 +543,7 @@ class CausalExplanation(_Record):
     event_seqs: tuple[int, ...]
     next_observation: str | None
     origin: str | None = None
-    standard_attempt_id: int | None = None
+    standard_search_id: int | None = None
     later_finders: tuple[str, ...] = ()
     boundary: str | None = None
     state_before: ModuleCacheState | None = None
@@ -574,10 +588,10 @@ class CaptureInfo(_Record):
     modules_since_install: tuple[str, ...] | None
     early_site_bootstrap: EarlySiteBootstrap | None
     frozen_bootstrap: FrozenBootstrap | None
-    deep_diagnostics: tuple[str, ...]
-    deep_import_outcomes_status: "DeepImportOutcomesStatus"
-    deep_import_calls_status: "DeepImportCallsStatus"
-    standard_finder_status: "StandardFinderStatus"
+    detailed_capture: tuple[str, ...]
+    import_results_capture_status: "ImportResultsCaptureStatus"
+    import_calls_capture_status: "ImportCallsCaptureStatus"
+    path_finder_capture_status: "PathFinderCaptureStatus"
 
 
 class MetaPathSnapshot(_Record):
@@ -597,8 +611,8 @@ class PathHooksSnapshot(_Record):
     """Install-time and report-time ``sys.path_hooks`` identities."""
 
     enabled: bool
-    initial: tuple[ObjectRef, ...]
-    current: tuple[ObjectRef, ...] | None
+    initial: tuple[ObjectIdentity, ...]
+    current: tuple[ObjectIdentity, ...] | None
 
 
 class ImporterCacheSnapshot(_Record):
@@ -613,11 +627,11 @@ class ImporterCacheSnapshot(_Record):
     coalesced: int
 
 
-class ProbeRun(_Record):
-    """Resource and availability summary for one report-time probe kind."""
+class CheckRun(_Record):
+    """Resource and availability summary for one report-time check kind."""
 
-    kind: "ProbeKind"
-    status: "ProbeStatus"
+    kind: "CheckKind"
+    status: "CheckStatus"
     unavailable_reasons: tuple[str, ...]
     candidates: int
     results: int
@@ -629,20 +643,20 @@ class ProbeRun(_Record):
 class AnalysisResult(_Record):
     """Everything derived at report time from the copied event log and state."""
 
-    attempts: tuple[ImportAttempt, ...]
+    searches: tuple[ImportSearch, ...]
     events: tuple[MonitorEvent, ...]
     findings: tuple[Finding, ...]
     explanations: tuple[CausalExplanation, ...]
-    resolution_routes: tuple[ResolutionRoute, ...]
-    route_comparisons: tuple[RouteComparison, ...]
+    finder_results: tuple[FinderResult, ...]
+    finder_result_comparisons: tuple[FinderResultComparison, ...]
     standard_resolutions: tuple[StandardResolution, ...]
-    finder_contracts: tuple[FinderContract, ...]
+    finder_apis: tuple[FinderAPIObservation, ...]
     loader_inventory: LoaderInventory
     skipped_finders: tuple[SkippedFinder, ...]
     summary: ReportSummary
-    target_outcome: TargetOutcome | None
+    program_outcome: ProgramOutcome | None
     report_errors: tuple[ReportError, ...]
-    probes: tuple[ProbeRun, ...] = ()
+    checks: tuple[CheckRun, ...] = ()
 
 
 class ReportDocument(_Record):

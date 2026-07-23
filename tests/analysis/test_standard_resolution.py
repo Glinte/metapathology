@@ -18,41 +18,41 @@ from support import PythonRunner
 
 from metapathology._report_analysis import (
     _IdAllocator,
-    _repeated_load_failure_findings,
+    _module_failed_after_loading_findings,
     _standard_spec_classification,
 )
-from metapathology._report_model import CorrelationEvidence, ImportAttempt, StandardResolution
+from metapathology._report_model import CorrelationEvidence, ImportSearch, StandardResolution
 from metapathology._spec import summarize_spec
 
 
-def test_repeated_load_failure_attaches_failed_attempt_without_own_resolution() -> None:
-    attempts = (
-        ImportAttempt(1, "native", 1, (1, 3), 1, "main", "loaded", "absent_at_report"),
-        ImportAttempt(2, "native", 10, (10, 15), 1, "main", "failed", "absent_at_report"),
-        ImportAttempt(3, "native", 11, (11, 12, 13), 1, "main", "failed", "absent_at_report"),
+def test_module_failed_after_loading_attaches_failed_attempt_without_own_resolution() -> None:
+    searches = (
+        ImportSearch(1, "native", 1, (1, 3), 1, "main", "loaded", "absent_at_report"),
+        ImportSearch(2, "native", 10, (10, 15), 1, "main", "failed", "absent_at_report"),
+        ImportSearch(3, "native", 11, (11, 12, 13), 1, "main", "failed", "absent_at_report"),
     )
     resolutions = (
         StandardResolution(
-            attempt_id=1,
+            search_id=1,
             fullname="native",
             finder_type_name="PathFinder",
             category="extension",
             loader_type_name="ExtensionFileLoader",
             origin="native.pyd",
-            evidence_level="captured",
+            evidence_level="observed",
             state_phase="import",
             event_seq=2,
             component_event_seqs=(),
             later_finders=(),
         ),
         StandardResolution(
-            attempt_id=3,
+            search_id=3,
             fullname="native",
             finder_type_name="PathFinder",
             category="extension",
             loader_type_name="ExtensionFileLoader",
             origin="native.pyd",
-            evidence_level="captured",
+            evidence_level="observed",
             state_phase="import",
             event_seq=12,
             component_event_seqs=(),
@@ -60,11 +60,11 @@ def test_repeated_load_failure_attaches_failed_attempt_without_own_resolution() 
         ),
     )
 
-    finding = _repeated_load_failure_findings(attempts, resolutions, _IdAllocator("finding"))[0]
+    finding = _module_failed_after_loading_findings(searches, resolutions, _IdAllocator("finding"))[0]
 
     assert {10, 15} <= set(finding.supporting_event_seqs)
     assert isinstance(finding.evidence, CorrelationEvidence)
-    assert finding.evidence.attempt_ids == (1, 2, 3)
+    assert finding.evidence.search_ids == (1, 2, 3)
 
 
 def test_standard_loader_categories_are_explicit() -> None:
@@ -104,7 +104,7 @@ def test_default_report_infers_namespace_before_later_finder(python_runner: Pyth
         "assert resolution['state_phase'] == 'report'\n"
         "assert resolution['event_ref'] is None\n"
         "assert resolution['later_finders'] == ['LaterFinder']\n"
-        "assert not any(event['kind'] == 'find_spec_call' "
+        "assert not any(event['kind'] == 'meta_path_finder_call' "
         "and event['data']['fullname'] == 'standard_namespace' "
         "and event['data']['finder_type_name'] == 'LaterFinder' for event in document['timeline'])\n"
         "text = metapathology.render_report()\n"
@@ -115,7 +115,7 @@ def test_default_report_infers_namespace_before_later_finder(python_runner: Pyth
     assert proc.stdout.strip() == "OK"
 
 
-def test_ordinary_standard_modules_do_not_claim_later_finders_are_relevant(
+def test_ordinary_standard_modules_do_not_finder_call_later_finders_are_relevant(
     python_runner: PythonRunner, tmp_path: Path
 ) -> None:
     (tmp_path / "ordinary_source.py").write_text("VALUE = 1\n", encoding="utf-8")
@@ -123,7 +123,7 @@ def test_ordinary_standard_modules_do_not_claim_later_finders_are_relevant(
         "import json, sys, metapathology\n"
         "class LaterFinder:\n"
         "    def find_spec(self, fullname, path=None, target=None): return None\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(import_outcomes=True)))\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(import_results=True)))\n"
         "sys.meta_path.append(LaterFinder())\n"
         "sys.path.insert(0, sys.argv[1])\n"
         "import ordinary_source\n"
@@ -131,7 +131,7 @@ def test_ordinary_standard_modules_do_not_claim_later_finders_are_relevant(
         "resolution = next(item for item in document['standard_resolutions'] "
         "if item['fullname'] == 'ordinary_source')\n"
         "assert resolution['later_finders'] == []\n"
-        "assert not any(item['kind'] == 'standard_winner_precedence' "
+        "assert not any(item['kind'] == 'path_finder_precedence' "
         "and item['subject'] == 'ordinary_source' for item in document['explanations'])\n"
         "print('OK')\n",
         str(tmp_path),
@@ -139,13 +139,13 @@ def test_ordinary_standard_modules_do_not_claim_later_finders_are_relevant(
     assert proc.stdout.strip() == "OK"
 
 
-def test_deep_report_captures_source_resolution(python_runner: PythonRunner, tmp_path: Path) -> None:
-    module_dir = tmp_path / "deep_standard"
+def test_detailed_report_captures_source_resolution(python_runner: PythonRunner, tmp_path: Path) -> None:
+    module_dir = tmp_path / "detailed_standard"
     module_dir.mkdir()
     (module_dir / "standard_source.py").write_text("VALUE = 1\n", encoding="utf-8")
     proc = python_runner.run_code_ok(
         "import json, sys, metapathology\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(enabled=True)))\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(enabled=True)))\n"
         f"sys.path.insert(0, {str(module_dir)!r})\n"
         "import standard_source\n"
         "document = json.loads(metapathology.render_report(format='json'))\n"
@@ -153,7 +153,7 @@ def test_deep_report_captures_source_resolution(python_runner: PythonRunner, tmp
         "if item['fullname'] == 'standard_source')\n"
         "assert resolution['category'] == 'source'\n"
         "assert resolution['loader_type_name'] == 'SourceFileLoader'\n"
-        "assert resolution['evidence_level'] == 'captured'\n"
+        "assert resolution['evidence_level'] == 'observed'\n"
         "assert resolution['state_phase'] == 'import'\n"
         "assert resolution['event_ref'] is not None\n"
         "assert resolution['component_event_refs']\n"
@@ -162,13 +162,13 @@ def test_deep_report_captures_source_resolution(python_runner: PythonRunner, tmp
         f"assert component['data']['path'] == {str(module_dir)!r}\n"
         "text = metapathology.render_report()\n"
         "assert 'PathFinder result capture: active path finder aggregate' in text\n"
-        "assert '[captured]' in text\n"
+        "assert '[observed]' in text\n"
         "print('OK')\n"
     )
     assert proc.stdout.strip() == "OK"
 
 
-def test_deep_report_explains_namespace_candidate_displaced_by_later_regular_module(
+def test_detailed_report_explains_namespace_candidate_hidden_by_later_regular_module(
     python_runner: PythonRunner, tmp_path: Path
 ) -> None:
     namespace_root = tmp_path / "namespace"
@@ -181,7 +181,7 @@ def test_deep_report_explains_namespace_candidate_displaced_by_later_regular_mod
     proc = python_runner.run_code_ok(
         "import json, sys, metapathology\n"
         "sys.path[:0] = sys.argv[1:3]\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(enabled=True)))\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(enabled=True)))\n"
         "import candidate_pkg\n"
         "try:\n"
         "    import candidate_pkg.child\n"
@@ -197,11 +197,11 @@ def test_deep_report_explains_namespace_candidate_displaced_by_later_regular_mod
         "    raise AssertionError('regular module unexpectedly allowed another child import')\n"
         "document = json.loads(metapathology.render_report(format='json'))\n"
         "finding = next(item for item in document['findings'] "
-        "if item['kind'] == 'regular_module_shadows_namespace')\n"
+        "if item['kind'] == 'module_hides_namespace')\n"
         "assert finding['module'] == 'candidate_pkg'\n"
-        "assert finding['severity'] == 'actionable'\n"
+        "assert finding['severity'] == 'problem'\n"
         "explanations = [item for item in document['explanations'] "
-        "if item['kind'] == 'namespace_candidate_displaced']\n"
+        "if item['kind'] == 'namespace_candidate_hidden']\n"
         "assert {item['subject'] for item in explanations} == "
         "{'candidate_pkg.child', 'candidate_pkg.other'}\n"
         "explanation = explanations[0]\n"
@@ -222,7 +222,9 @@ def test_deep_report_explains_namespace_candidate_displaced_by_later_regular_mod
     assert proc.stdout.strip() == "OK"
 
 
-def test_deep_report_correlates_repeated_failure_at_same_origin(python_runner: PythonRunner, tmp_path: Path) -> None:
+def test_detailed_report_correlates_repeated_failure_at_same_origin(
+    python_runner: PythonRunner, tmp_path: Path
+) -> None:
     module_dir = tmp_path / "repeated"
     module_dir.mkdir()
     module_file = module_dir / "repeated_source.py"
@@ -238,7 +240,7 @@ def test_deep_report_correlates_repeated_failure_at_same_origin(python_runner: P
     proc = python_runner.run_code_ok(
         "import json, sys, metapathology\n"
         "sys.path.insert(0, sys.argv[1])\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(enabled=True)))\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(enabled=True)))\n"
         "import repeated_source\n"
         "del sys.modules['repeated_source']\n"
         "try:\n"
@@ -255,23 +257,23 @@ def test_deep_report_correlates_repeated_failure_at_same_origin(python_runner: P
         "    raise AssertionError('third import unexpectedly loaded')\n"
         "document = json.loads(metapathology.render_report(format='json'))\n"
         "finding = next(item for item in document['findings'] "
-        "if item['kind'] == 'repeated_load_failure')\n"
+        "if item['kind'] == 'module_failed_after_loading')\n"
         "assert finding['module'] == 'repeated_source'\n"
-        "assert finding['severity'] == 'actionable'\n"
+        "assert finding['severity'] == 'problem'\n"
         "assert finding['evidence']['level'] == 'correlated'\n"
-        "assert {'same_loader', 'same_origin', 'earlier_attempt_loaded', "
-        "'later_attempt_failed'} <= set(finding['signals'])\n"
+        "assert {'same_loader', 'same_origin', 'earlier_search_loaded', "
+        "'later_search_failed'} <= set(finding['signals'])\n"
         "explanation = next(item for item in document['explanations'] "
-        "if item['kind'] == 'repeated_load_failure')\n"
+        "if item['kind'] == 'module_failed_after_loading')\n"
         "assert explanation['cause_finding_ref'] == finding['id']\n"
         "assert explanation['finder_type_name'] == 'SourceFileLoader'\n"
         "assert explanation['origin'] == sys.argv[2]\n"
         "assert explanation['effect_status'] == 'later_import_failed'\n"
-        "failed_attempts = [item for item in document['import_attempts'] "
+        "failed_searches = [item for item in document['import_searches'] "
         "if item['fullname'] == 'repeated_source' and item['progress'] == 'failed']\n"
-        "assert len(failed_attempts) == 2\n"
-        "assert {item['id'] for item in failed_attempts} < set(finding['data']['attempt_refs'])\n"
-        "assert {ref for attempt in failed_attempts for ref in attempt['evidence_event_refs']} "
+        "assert len(failed_searches) == 2\n"
+        "assert {item['id'] for item in failed_searches} < set(finding['data']['search_refs'])\n"
+        "assert {ref for attempt in failed_searches for ref in attempt['evidence_event_refs']} "
         "<= set(explanation['event_refs'])\n"
         "text = metapathology.render_report()\n"
         "assert \"same origin was selected again for 'repeated_source'\" in text\n"
@@ -298,4 +300,4 @@ def test_distributed_7782_fixture_explains_unreachable_editable_finder() -> None
     assert "[inferred] 'distributed': PathFinder produced namespace" in proc.stderr
     assert "later meta path entries were never reached: [_EditableFinder]" in proc.stderr
     assert "[inferred] PathFinder likely produced namespace for 'distributed' before later finders" in proc.stderr
-    assert "next step: rerun with --deep-import-outcomes to record the actual PathFinder result" in proc.stderr
+    assert "next step: rerun with --capture-import-results to record the actual PathFinder result" in proc.stderr

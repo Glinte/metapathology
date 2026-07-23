@@ -45,7 +45,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _SCRIPT_DIR.parent
 _WORKER = _SCRIPT_DIR / "_benchmark_worker.py"
 _DEFAULT_SCENARIOS = ("native", "attributed", "mutation")
-_DEEP_SCENARIO = "deep"
+_DETAILED_SCENARIO = "detailed"
 _STARTUP_CASES = ("process", "package_import", "monitor_api_import", "direct_script", "monitored_script")
 _COLORS = {False: "#6b7280", True: "#2563eb"}
 _DEFAULT_COUNTS = "100,1000,5000"
@@ -86,14 +86,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--quick", action="store_true", help="use two small points and one sample for a smoke run")
     scenario_group = parser.add_mutually_exclusive_group()
     scenario_group.add_argument(
-        "--include-deep",
+        "--include-detailed",
         action="store_true",
-        help="include the expensive opt-in deep-diagnostics import workload",
+        help="include the expensive opt-in detailed-capture import workload",
     )
     scenario_group.add_argument(
-        "--deep-only",
+        "--detailed-only",
         action="store_true",
-        help="run only the expensive opt-in deep-diagnostics import workload",
+        help="run only the expensive opt-in detailed-capture import workload",
     )
     args = parser.parse_args()
     try:
@@ -108,10 +108,10 @@ def _parse_args() -> argparse.Namespace:
         args.counts = [10, 50]
         args.repeats = 1
         args.memory_repeats = 1
-    if args.deep_only:
-        args.scenarios = (_DEEP_SCENARIO,)
-    elif args.include_deep:
-        args.scenarios = (*_DEFAULT_SCENARIOS, _DEEP_SCENARIO)
+    if args.detailed_only:
+        args.scenarios = (_DETAILED_SCENARIO,)
+    elif args.include_detailed:
+        args.scenarios = (*_DEFAULT_SCENARIOS, _DETAILED_SCENARIO)
     else:
         args.scenarios = _DEFAULT_SCENARIOS
     return args
@@ -358,7 +358,7 @@ def _plot_imports(rows: list[_Record], counts: list[int], output: Path, scenario
     slowdown_axis = axes.flat[3]
     memory_axis = axes.flat[4]
     report_axis = axes.flat[5]
-    colors = {"native": "#059669", "attributed": "#dc2626", "deep": "#7c3aed"}
+    colors = {"native": "#059669", "attributed": "#dc2626", "detailed": "#7c3aed"}
     for scenario in import_scenarios:
         color = colors[scenario]
         control = _median_series(rows, counts, scenario, "time", False, "elapsed_seconds")

@@ -1,7 +1,7 @@
 <h1 align="center">metapathology</h1>
 
 <p align="center">
-  Diagnose Python import hooks without changing import outcomes.
+  Find out which Python import hook handled a module—and what it prevented from running.
 </p>
 
 <p align="center">
@@ -9,149 +9,117 @@
   <a href="https://pypi.org/project/metapathology/"><img src="https://img.shields.io/pypi/pyversions/metapathology.svg" alt="Supported Python versions"></a>
   <a href="https://github.com/Glinte/metapathology/actions/workflows/test.yml"><img src="https://github.com/Glinte/metapathology/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://glinte.github.io/metapathology/"><img src="https://github.com/Glinte/metapathology/actions/workflows/docs.yml/badge.svg" alt="Documentation"></a>
-  <a href="https://sonarcloud.io/summary/new_code?id=Glinte_metapathology"><img src="https://sonarcloud.io/api/project_badges/measure?project=Glinte_metapathology&amp;metric=alert_status" alt="Quality gate status"></a>
 </p>
 
 > [!IMPORTANT]
-> The documentation is AI generated with rough handholding, they will read like
-> complete slop, sorry. It is accurate, but really annoying to read.
+> Documentation status: the prose is AI-assisted and under owner review. The
+> implementation, tests, and report schema are authoritative. Please report
+> anything unclear or inaccurate.
 
-Some Python packages customize how imports work: pytest rewrites test
-assertions, editable installs redirect imports to your source tree, beartype
-instruments modules as they load. These customizations plug into
-[Python's import system](https://docs.python.org/3/reference/import.html)
-through `sys.meta_path` and `sys.path_hooks` — and when two of them are active
-at once, one can silently prevent the other from ever seeing a module. The
-symptom is usually confusing: a feature quietly does nothing, or a module
-that clearly exists fails to import.
+Import hooks power assertion rewriting, editable installs, runtime type
+checking, tracing, and packaging tools. When two hooks claim the same module,
+the first one can quietly bypass the other. `metapathology` runs the failing
+program and records enough evidence to show that contention.
 
-`metapathology` runs your program and reports what the import system actually
-did:
+It observes imports; it never returns a module spec or changes which finder
+wins. Runtime code uses only the Python standard library and supports CPython
+3.10+.
 
-- which finder located each imported module;
-- where code changed `sys.meta_path`, `sys.path_hooks`,
-  `sys.path_importer_cache`, or `sys.path` (opt-in), with a stack trace; and
-- which modules were found without going through the usual `sys.path` search.
-
-It only observes. It never loads a module, returns a spec, or changes which
-finder wins, and everything it installs is removed on exit (except a CPython
-audit hook, which becomes a no-op because Python cannot unregister it).
-
-Full documentation: [glinte.github.io/metapathology](https://glinte.github.io/metapathology/).
-
-## Usage
-
-Requires CPython 3.10+. No runtime dependencies — it works even in an
-environment where other packages fail to import.
+## Start here
 
 ```console
-$ pip install metapathology
-$ python -m metapathology myscript.py --my-args
-$ python -m metapathology -m pytest tests/
-$ python -m metapathology                      # monitored interactive interpreter
+pip install metapathology
+python -m metapathology your_script.py --your-args
+python -m metapathology -m pytest tests/
 ```
 
-Your program runs normally; the report is printed to standard error when it
-exits. Use repeatable `--report` paths to export inferred formats from the
-same capture, for example `--report diagnostic.txt --report diagnostic.json`.
-Prefer
-`python -m metapathology` over the `metapathology` command so the tool runs in
-the same interpreter and virtual environment as your program.
+The program runs normally. A report is written to standard error when it
+finishes, including when it exits with an exception.
 
-If you cannot wrap the program (a notebook, an embedded interpreter, a
-`conftest.py`), call the [library API](https://glinte.github.io/metapathology/api/):
+Use files when the report is long or needs to be shared:
+
+```console
+python -m metapathology \
+  --report import-report.txt \
+  --report import-report.json \
+  -m pytest tests/
+```
+
+Options belong before the target. Arguments after the target belong to the
+target.
+
+## What to read first
+
+Start with the verdict and numbered findings. A result such as:
+
+```text
+[module-hides-namespace] 'example.plugins'
+```
+
+means the report found evidence of a specific import problem. Each finding
+links to the relevant finder calls, state changes, and import searches.
+
+“Found by a custom finder” is not automatically a problem. The default
+standard-path check compares that observed result with what `PathFinder`
+returns at report time. It describes current state; it does not predict which
+finder would have won earlier.
+
+## When wrapping is impossible
+
+The CLI is preferred because it starts monitoring before the target runs. For
+notebooks, embedded interpreters, or a `conftest.py`, install explicitly:
 
 ```python
 import metapathology
 
-metapathology.install()  # as early as possible
+metapathology.install()
 ```
 
-See [Using metapathology](https://glinte.github.io/metapathology/usage/) for
-all CLI options, report files, environment variables, and lifecycle control.
+Defaults cover the normal investigation. Detailed capture is an explicit
+opt-in:
 
-## Reading the report
-
-A real example: [beartype#556](https://github.com/beartype/beartype/issues/556),
-where `beartype.claw` silently did nothing in a scikit-build-core editable
-install. The report shows why in its first comparison — the editable-install
-finder found the module first, so beartype's path hook never saw it:
-
-```text
-== metapathology report ==
-target outcome: completed (exit status 0)
-verdict: no problems found; some modules were found by a custom finder instead of the standard path search — listed below for review
-...
--- modules found by a custom finder (1) --
-'myproject':
-    during the run: ScikitBuildRedirectingFinder, loader _ScikitBuildLoaderWrapper, origin 'src\myproject\__init__.py'
-    standard search at report time: PathFinder, loader BeartypeSourceFileLoader, same origin
-    differences: loader type
-    note: this finder ran before PathFinder, so the standard path search never saw the module
-
--- finder calls --
-ScikitBuildRedirectingFinder: called 365 times, found 1 module
-    myproject
+```python
+metapathology.install(
+    capture=metapathology.CaptureConfig(detailed=True),
+)
 ```
 
-The report leads with a verdict, then numbered findings when something looks
-wrong, then the supporting evidence: comparisons like the one above, finder
-call counts, an event timeline, and stack traces for every `sys.meta_path`
-and `sys.path_hooks` change. Deep reports also correlate failed descendant
-imports with a regular module that displaced an earlier namespace candidate,
-and later failures with an earlier successful load from the same loader and
-origin. [Reading the report](https://glinte.github.io/metapathology/report/)
-explains every section and finding category.
+Use `DetailedCaptureConfig` only when selecting individual detailed
+mechanisms. Use `AnalysisConfig` only when changing report-time checks.
 
 ## Overhead
 
-Rough figures from the [benchmarks](https://glinte.github.io/metapathology/performance/)
-(GitHub-hosted runners, CPython 3.10 and 3.14):
+In the published synthetic benchmarks, default capture made standard-only
+imports a median 1.10× as slow and imports seen by a custom finder 1.35× as
+slow. Retained report data was about 342 bytes and 974 bytes per import,
+respectively. Enabling every detailed mechanism was much heavier: a median
+13.08× import-time ratio and 4.01 KiB retained per import.
 
-- **Default monitoring:** imports take roughly 1.1–1.7× as long (median
-  ~1.1× when only standard finders run, ~1.35× with a custom finder), and
-  each import retains roughly 0.3–1 KB of memory for the report.
-- **`--deep` diagnostics:** imports take roughly 7–15× as long and retain
-  ~4 KB each. Use deep mode only in a controlled reproduction.
+See [Speed and memory](https://glinte.github.io/metapathology/performance/) for
+the full ranges, methodology, and benchmark runs. Use detailed capture only in
+a controlled reproduction.
 
-Every event is kept until the report is written, so memory grows with import
-activity. For a long-running process, use `metapathology.monitoring()` around
-the behavior of interest, then call `write_report()` once it is captured.
+## Important limitations
 
-## How it works
+- Monitoring starts when metapathology starts. Finders installed earlier,
+  including those from already-processed `.pth` files, appear only in the
+  initial snapshot.
+- Default capture retains every event until reporting, so memory grows with
+  import activity.
+- Detailed capture wraps more import machinery and has materially higher
+  overhead. Use it in a controlled reproduction.
+- Reports can contain paths, command-line arguments, and stack filenames.
+  Review them before sharing.
+- `uninstall()` restores ordinary lists and removes finder instrumentation.
+  CPython audit hooks cannot be removed, so the installed hook becomes inert.
 
-`metapathology` observes imports through several cooperating mechanisms: a
-[`sys.addaudithook()`](https://docs.python.org/3/library/sys.html#sys.addaudithook)
-callback records each import as it starts, `sys.meta_path` and
-`sys.path_hooks` are temporarily replaced with `list` subclasses that record
-every change with a stack trace, each finder's `find_spec()` method is wrapped
-to record whether it found the module, and `sys.path_importer_cache` is
-snapshotted at key points. At report time, modules found by a custom finder
-are compared with a fresh `PathFinder` search to reveal bypasses.
+Continue with the
+[getting-started guide](https://glinte.github.io/metapathology/usage/), then
+[reading the report](https://glinte.github.io/metapathology/report/).
+Configuration, capture coverage, JSON, startup timing, and limitations each
+have focused pages in the
+[full documentation](https://glinte.github.io/metapathology/).
 
-Use `--sys-path` when path ordering itself is suspect. It is
-opt-in because replacing the general-purpose `sys.path` list has a wider
-compatibility surface; `--deep` enables it with the other invasive observers.
-
-[How it works](https://glinte.github.io/metapathology/concepts/) walks through
-Python's import machinery and exactly what each mechanism can and cannot see.
-
-## Caveats
-
-- CPython only. Monitoring on other implementations emits a `RuntimeWarning`
-  because it relies on CPython's `import` audit event.
-- Monitoring starts when metapathology does. Finders installed earlier by
-  `.pth` files (this is how scikit-build-core's finder arrives) appear in the
-  initial snapshot without a stack trace. An
-  [optional bootstrap](https://glinte.github.io/metapathology/usage/#observe-later-pth-files)
-  can start monitoring during interpreter startup to catch some of them.
-- This is a debugging tool. It temporarily modifies `sys.meta_path`,
-  `sys.path_hooks`, and, when requested, `sys.path`; do not leave it enabled
-  in production.
-- Reports contain paths, command lines, and stack file names — review before
-  sharing.
-
-See [Limitations](https://glinte.github.io/metapathology/limitations/) for the
-complete list of observation boundaries. For frozen executables (PyInstaller,
-Nuitka, cx_Freeze) and embedded interpreters, see the
-[frozen application guide](https://glinte.github.io/metapathology/frozen/).
+For background on the machinery being inspected, see Python's
+[import system reference](https://docs.python.org/3/reference/import.html) and
+the [`sys.meta_path` documentation](https://docs.python.org/3/library/sys.html#sys.meta_path).

@@ -1,4 +1,4 @@
-"""Deep import-outcome capture and profiler interaction."""
+"""Detailed import-result capture and profiler interaction."""
 
 import json
 from pathlib import Path
@@ -53,11 +53,11 @@ sys.path.insert(0, sentinel)
 mode = sys.argv[1]
 if mode == "default":
     metapathology.install(report_at_exit=False)
-elif mode == "deep":
+elif mode == "detailed":
     metapathology.install(
         report_at_exit=False,
         capture=metapathology.CaptureConfig(
-            deep=metapathology.DeepConfig(
+            detailed=metapathology.DetailedCaptureConfig(
                 path_hooks=True,
                 path_entry_finders=True,
                 loaders=True,
@@ -77,9 +77,9 @@ print(json.dumps(outcomes))
 """
 
 
-def test_deep_monitoring_preserves_import_outcomes(python_runner: PythonRunner) -> None:
+def test_detailed_monitoring_preserves_import_results(python_runner: PythonRunner) -> None:
     outcomes = []
-    for mode in ("disabled", "default", "deep"):
+    for mode in ("disabled", "default", "detailed"):
         proc = python_runner.run_code_ok(EQUIVALENT_OUTCOMES, mode)
         assert proc.returncode == 0, proc.stderr
         outcomes.append(json.loads(proc.stdout))
@@ -104,11 +104,11 @@ def test_shared_loader_uses_each_call_actual_module_name(python_runner: PythonRu
         "loader = Loader()\n"
         "finder = Finder(loader)\n"
         "sys.meta_path.insert(0, finder)\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(loaders=True)))\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(loaders=True)))\n"
         "import shared_first, shared_second\n"
         "document = json.loads(metapathology.render_report(format='json'))\n"
         "calls = [event['data'] for event in document['timeline'] "
-        "if event['kind'] == 'deep_diagnostic_call' and event['data']['boundary'].startswith('loader_')]\n"
+        "if event['kind'] == 'import_mechanism_call' and event['data']['boundary'].startswith('loader_')]\n"
         "assert {(event['boundary'], event['fullname']) for event in calls} == {\n"
         "    ('loader_create_module', 'shared_first'), ('loader_exec_module', 'shared_first'),\n"
         "    ('loader_create_module', 'shared_second'), ('loader_exec_module', 'shared_second'),\n"
@@ -119,7 +119,7 @@ def test_shared_loader_uses_each_call_actual_module_name(python_runner: PythonRu
     )
 
 
-def test_partial_deep_install_and_hostile_cleanup_are_isolated(python_runner: PythonRunner) -> None:
+def test_partial_detailed_install_and_hostile_cleanup_are_isolated(python_runner: PythonRunner) -> None:
     python_runner.run_code_ok(
         "import sys\n"
         "import metapathology\n"
@@ -136,7 +136,7 @@ def test_partial_deep_install_and_hostile_cleanup_are_isolated(python_runner: Py
         "monitor = metapathology.install(\n"
         "    report_at_exit=False,\n"
         "    capture=metapathology.CaptureConfig(\n"
-        "        deep=metapathology.DeepConfig(\n"
+        "        detailed=metapathology.DetailedCaptureConfig(\n"
         "            path_hooks=True,\n"
         "            path_entry_finders=True,\n"
         "        )\n"
@@ -148,13 +148,13 @@ def test_partial_deep_install_and_hostile_cleanup_are_isolated(python_runner: Py
         "sys.path_hooks = HostileHooks()\n"
         "metapathology.uninstall()\n"
         "assert 'find_spec' not in ordinary.__dict__\n"
-        "where = [event.where for event in monitor.events() if isinstance(event, metapathology.InternalError)]\n"
-        "assert 'deep_path_entry_finder' in where\n"
-        "assert 'uninstall_deep_path_hooks' in where\n"
+        "where = [event.where for event in monitor.events() if isinstance(event, metapathology.MonitoringError)]\n"
+        "assert 'detailed_path_entry_finder' in where\n"
+        "assert 'uninstall_detailed_path_hooks' in where\n"
     )
 
 
-IMPORT_OUTCOMES = r"""
+IMPORT_RESULTS = r"""
 import json
 import sys
 import threading
@@ -166,52 +166,54 @@ class BrokenLoader:
     def exec_module(self, module): raise RuntimeError("broken")
 class BrokenFinder:
     def find_spec(self, fullname, path=None, target=None):
-        return ModuleSpec(fullname, BrokenLoader()) if fullname == "deep_outcome_broken" else None
+        return ModuleSpec(fullname, BrokenLoader()) if fullname == "detailed_outcome_broken" else None
 
-monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(import_outcomes=True)))
+monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(import_results=True)))
 sys.meta_path.insert(0, BrokenFinder())
-import deep_outcome_loaded
-del sys.modules["deep_outcome_loaded"]
-try: import deep_outcome_missing
+import detailed_outcome_loaded
+del sys.modules["detailed_outcome_loaded"]
+try: import detailed_outcome_missing
 except ModuleNotFoundError: pass
-try: import deep_outcome_broken
+try: import detailed_outcome_broken
 except RuntimeError: pass
-import deep_outcome_cached
-__import__("deep_outcome_cached")
-thread = threading.Thread(target=lambda: __import__("deep_outcome_threaded"))
+import detailed_outcome_cached
+__import__("detailed_outcome_cached")
+thread = threading.Thread(target=lambda: __import__("detailed_outcome_threaded"))
 thread.start(); thread.join()
 
 document = json.loads(metapathology.render_report(format="json"))
 by_name = {}
-for attempt in document["import_attempts"]:
+for attempt in document["import_searches"]:
     by_name.setdefault(attempt["fullname"], []).append(attempt)
-assert by_name["deep_outcome_loaded"][0]["progress"] == "loaded"
-assert by_name["deep_outcome_loaded"][0]["presence"] == "absent_at_report"
-assert by_name["deep_outcome_nested"][0]["progress"] == "loaded"
-assert by_name["deep_outcome_missing"][0]["progress"] == "failed"
-assert by_name["deep_outcome_broken"][0]["progress"] == "failed"
-assert by_name["deep_outcome_threaded"][0]["progress"] == "loaded"
-assert len(by_name["deep_outcome_cached"]) == 1
-assert not any(item["kind"] == "failed_after_mutation" for item in document["findings"])
-mechanism = next(item for item in document["capture"]["mechanisms"] if item["name"] == "deep_import_outcomes")
+assert by_name["detailed_outcome_loaded"][0]["progress"] == "loaded"
+assert by_name["detailed_outcome_loaded"][0]["presence"] == "absent_at_report"
+assert by_name["detailed_outcome_nested"][0]["progress"] == "loaded"
+assert by_name["detailed_outcome_missing"][0]["progress"] == "failed"
+assert by_name["detailed_outcome_broken"][0]["progress"] == "failed"
+assert by_name["detailed_outcome_threaded"][0]["progress"] == "loaded"
+assert len(by_name["detailed_outcome_cached"]) == 1
+assert not any(item["kind"] == "import_failed_after_state_change" for item in document["findings"])
+mechanism = next(item for item in document["capture"]["mechanisms"] if item["name"] == "import_results")
 assert mechanism["completeness"].endswith("cache_hits_not_observed")
 assert "import outcome observation:" in metapathology.render_report()
-assert "[failed-after-mutation]" not in metapathology.render_report()
+assert "[import-failed-after-state-change]" not in metapathology.render_report()
 metapathology.uninstall()
 assert sys.getprofile() is None and threading.getprofile() is None
 print("OK")
 """
 
 
-def test_exact_import_outcomes_and_runtime_coverage(python_runner: PythonRunner, tmp_path: Path) -> None:
-    for name in ("deep_outcome_nested", "deep_outcome_cached", "deep_outcome_threaded"):
+def test_exact_import_results_and_runtime_coverage(python_runner: PythonRunner, tmp_path: Path) -> None:
+    for name in ("detailed_outcome_nested", "detailed_outcome_cached", "detailed_outcome_threaded"):
         (tmp_path / f"{name}.py").write_text("VALUE = 1\n", encoding="utf-8")
-    (tmp_path / "deep_outcome_loaded.py").write_text("import deep_outcome_nested\nVALUE = 1\n", encoding="utf-8")
-    proc = python_runner.run_code_ok(IMPORT_OUTCOMES)
+    (tmp_path / "detailed_outcome_loaded.py").write_text(
+        "import detailed_outcome_nested\nVALUE = 1\n", encoding="utf-8"
+    )
+    proc = python_runner.run_code_ok(IMPORT_RESULTS)
     assert proc.stdout.strip() == "OK"
 
 
-def test_failed_after_mutation_requires_mutation_inside_failed_attempt(
+def test_import_failed_after_state_change_requires_mutation_inside_failed_attempt(
     python_runner: PythonRunner, tmp_path: Path
 ) -> None:
     (tmp_path / "mutated_during_resolution.py").write_text(
@@ -221,14 +223,14 @@ def test_failed_after_mutation_requires_mutation_inside_failed_attempt(
     proc = python_runner.run_code_ok(
         "import json, sys, metapathology\n"
         "sys.path.insert(0, sys.argv[1])\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(import_outcomes=True)))\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(import_results=True)))\n"
         "try:\n"
         "    import mutated_during_resolution\n"
         "except RuntimeError:\n"
         "    pass\n"
         "document = json.loads(metapathology.render_report(format='json'))\n"
         "finding = next(item for item in document['findings'] "
-        "if item['kind'] == 'failed_after_mutation')\n"
+        "if item['kind'] == 'import_failed_after_state_change')\n"
         "assert finding['module'] == 'mutated_during_resolution'\n"
         "assert len(finding['evidence']['event_refs']) == 3\n"
         "print('OK')\n",
@@ -237,21 +239,21 @@ def test_failed_after_mutation_requires_mutation_inside_failed_attempt(
     assert proc.stdout.strip() == "OK"
 
 
-def test_deep_outcomes_capture_path_finder_aggregate(python_runner: PythonRunner, tmp_path: Path) -> None:
+def test_detailed_outcomes_capture_path_finder_aggregate(python_runner: PythonRunner, tmp_path: Path) -> None:
     (tmp_path / "standard_aggregate_target.py").write_text("VALUE = 1\n", encoding="utf-8")
     proc = python_runner.run_code_ok(
         "import sys, metapathology\n"
         f"sys.path.insert(0, {str(tmp_path)!r})\n"
-        "monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(import_outcomes=True)))\n"
+        "monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(import_results=True)))\n"
         "import standard_aggregate_target\n"
         "events = [event for event in monitor.events() "
-        "if isinstance(event, metapathology.StandardFinderCall) "
+        "if isinstance(event, metapathology.PathFinderCall) "
         "and event.fullname == 'standard_aggregate_target']\n"
         "assert len(events) == 1, events\n"
         "event = events[0]\n"
         "assert event.finder_type_name == 'PathFinder'\n"
         "assert event.spec_summary.loader.type_name == 'SourceFileLoader'\n"
-        "assert event.attempt_id > 0\n"
+        "assert event.search_id > 0\n"
         "metapathology.uninstall()\n"
         "print('OK')\n"
     )
@@ -263,9 +265,9 @@ def test_exact_outcomes_refuse_an_existing_profiler(python_runner: PythonRunner)
         "import sys, metapathology\n"
         "profile = lambda frame, event, arg: None\n"
         "sys.setprofile(profile)\n"
-        "monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(import_outcomes=True)))\n"
-        "assert monitor.deep_import_outcomes_status == 'refused_existing_profiler'\n"
-        "assert monitor.standard_finder_status == 'unavailable_existing_profiler'\n"
+        "monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(import_results=True)))\n"
+        "assert monitor.import_results_capture_status == 'refused_existing_profiler'\n"
+        "assert monitor.path_finder_capture_status == 'unavailable_existing_profiler'\n"
         "assert sys.getprofile() is profile\n"
         "metapathology.uninstall()\n"
         "assert sys.getprofile() is profile\n"
@@ -278,7 +280,7 @@ def test_exact_outcomes_refuse_an_existing_profiler(python_runner: PythonRunner)
 def test_exact_outcomes_preserve_later_profiler_replacements(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(
         "import sys, threading, metapathology\n"
-        "monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(import_outcomes=True)))\n"
+        "monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(import_results=True)))\n"
         "sys_profile = lambda frame, event, arg: None\n"
         "thread_profile = lambda frame, event, arg: None\n"
         "sys.setprofile(sys_profile)\n"

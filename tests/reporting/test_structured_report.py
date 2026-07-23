@@ -9,7 +9,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from support import PythonRunner
 
-from metapathology._records import InternalError, MonitorEvent
+from metapathology._records import MonitorEvent, MonitoringError
 from metapathology._report_json import _json_events
 
 
@@ -26,13 +26,13 @@ class _CountingEvents:
 
 
 def test_json_event_projection_traverses_exhaustive_log_once() -> None:
-    events = _CountingEvents((InternalError(7, "audit_hook", "RuntimeError"),))
+    events = _CountingEvents((MonitoringError(7, "audit_hook", "RuntimeError"),))
 
-    timeline, counts, internal_error_refs = _json_events(events)
+    timeline, counts, monitoring_error_refs = _json_events(events)
 
     assert events.iterations == 1
-    assert timeline[0]["kind"] == "internal_error"
-    assert internal_error_refs == ["event:7"]
+    assert timeline[0]["kind"] == "monitoring_error"
+    assert monitoring_error_refs == ["event:7"]
     assert all(count == 0 for count in counts.values())
 
 
@@ -43,45 +43,45 @@ import types
 
 import metapathology
 
-class ProbeFinder:
+class CheckFinder:
     def find_spec(self, fullname, path=None, target=None):
         return None
 
 metapathology.install(report_at_exit=False)
-sys.path_importer_cache["structured-cache-probe"] = None
+sys.path_importer_cache["structured-cache-check"] = None
 sys.meta_path = list(sys.meta_path)
 sys.path_hooks = list(sys.path_hooks)
 import reassignment_mod
-def probe_hook(path):
+def check_hook(path):
     return None
-sys.path_hooks.append(probe_hook)
-sys.meta_path.insert(0, ProbeFinder())
+sys.path_hooks.append(check_hook)
+sys.meta_path.insert(0, CheckFinder())
 import observed_mod
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 document = json.loads(metapathology.render_report(format="json"))
 assert document["schema"] == {"major": 3, "minor": 0, "name": "metapathology.report"}
 assert document["report_status"] == "complete"
-assert isinstance(document["resolution_routes"], list)
-assert isinstance(document["route_comparisons"], list)
+assert isinstance(document["finder_results"], list)
+assert isinstance(document["finder_result_comparisons"], list)
 assert document["capture"]["early_site_bootstrap"] is None
 assert document["capture"]["frozen_bootstrap"] is None
-assert document["capture"]["cutoff_seq"] == max(event["seq"] for event in document["timeline"])
+assert document["capture"]["cutoff_seq"] == max(event["sequence"] for event in document["timeline"])
 assert document["snapshots"][0]["id"] == "snapshot:install"
 assert document["snapshots"][1]["id"] == "snapshot:report"
 kinds = {event["kind"] for event in document["timeline"]}
-assert "meta_path_mutation" in kinds, kinds
-assert "meta_path_reassignment" in kinds, kinds
-assert "path_hooks_mutation" in kinds, kinds
-assert "path_hooks_reassignment" in kinds, kinds
-assert "find_spec_call" in kinds, kinds
-assert "importer_cache_diff" in kinds, kinds
-assert "import_audit_start" in kinds, kinds
-assert all(event["id"] == f"event:{event['seq']}" for event in document["timeline"])
-stack_event = next(event for event in document["timeline"] if event["kind"] == "meta_path_mutation")
+assert "meta_path_change" in kinds, kinds
+assert "meta_path_replacement" in kinds, kinds
+assert "path_hooks_change" in kinds, kinds
+assert "path_hooks_replacement" in kinds, kinds
+assert "meta_path_finder_call" in kinds, kinds
+assert "importer_cache_change" in kinds, kinds
+assert "import_search_started" in kinds, kinds
+assert all(event["id"] == f"event:{event['sequence']}" for event in document["timeline"])
+stack_event = next(event for event in document["timeline"] if event["kind"] == "meta_path_change")
 assert set(stack_event["data"]["stack"][0]) == {"filename", "function", "lineno"}
-path_hook_event = next(event for event in document["timeline"] if event["kind"] == "path_hooks_mutation")
-assert path_hook_event["data"]["added"][0]["name"] == "probe_hook"
+path_hook_event = next(event for event in document["timeline"] if event["kind"] == "path_hooks_change")
+assert path_hook_event["data"]["added"][0]["name"] == "check_hook"
 assert path_hook_event["data"]["added"][0]["object_id"].startswith("0x")
 snapshot_ids = {snapshot["id"] for snapshot in document["snapshots"]}
 assert "snapshot:path-hooks:install" in snapshot_ids
@@ -89,28 +89,28 @@ assert "snapshot:path-hooks:report" in snapshot_ids
 assert "snapshot:importer-cache:install" in snapshot_ids
 assert "snapshot:importer-cache:report" in snapshot_ids
 mechanisms = {mechanism["name"]: mechanism for mechanism in document["capture"]["mechanisms"]}
-assert mechanisms["path_hooks_mutations"]["overflow_policy"] == "retain_all"
-assert mechanisms["path_hooks_mutations"]["retained"] >= 1
-assert mechanisms["finder_contracts"]["overflow_policy"] == "retain_all"
-assert mechanisms["finder_contracts"]["retained"] >= 4
-assert mechanisms["resolution_route_analysis"]["overflow_policy"] == "retain_all"
-assert mechanisms["resolution_route_analysis"]["shutdown"] == "synchronous_no_retry"
+assert mechanisms["path_hooks_changes"]["overflow_policy"] == "retain_all"
+assert mechanisms["path_hooks_changes"]["retained"] >= 1
+assert mechanisms["finder_apis"]["overflow_policy"] == "retain_all"
+assert mechanisms["finder_apis"]["retained"] >= 4
+assert mechanisms["finder_result_analysis"]["overflow_policy"] == "retain_all"
+assert mechanisms["finder_result_analysis"]["shutdown"] == "synchronous_no_retry"
 assert all(mechanism["shutdown"] == "synchronous_no_retry" for mechanism in mechanisms.values())
-assert mechanisms["resolution_route_analysis"]["retained"] == len(document["resolution_routes"])
-assert mechanisms["resolution_route_analysis"]["comparison_count"] == len(document["route_comparisons"])
+assert mechanisms["finder_result_analysis"]["retained"] == len(document["finder_results"])
+assert mechanisms["finder_result_analysis"]["comparison_count"] == len(document["finder_result_comparisons"])
 assert mechanisms["importer_cache_snapshots"]["capacity"] == 2
 assert mechanisms["importer_cache_snapshots"]["overflow_policy"] == "replace_latest"
-no_spec = next(finding for finding in document["findings"] if finding["kind"] == "no_spec")
-assert no_spec["module"] == "ghost_mod"
-assert no_spec["evidence"] == {
+module_without_spec = next(finding for finding in document["findings"] if finding["kind"] == "module_without_spec")
+assert module_without_spec["module"] == "ghost_mod"
+assert module_without_spec["evidence"] == {
     "event_refs": [],
-    "finder_claim": "not_recorded",
-    "level": "post_hoc",
+    "finder_call_status": "not_recorded",
+    "level": "current_state",
     "limitations": ["report_snapshot_cannot_identify_load_mechanism"],
-    "module_spec": "missing",
+    "module_spec_status": "missing",
 }
 assert document["diagnostics"]["report_errors"] == []
-assert document["loader_inventory"]["evidence"] == "post_hoc"
+assert document["loader_inventory"]["evidence"] == "current_state"
 assert document["loader_inventory"]["phase"] == "report"
 assert document["loader_inventory"]["available"] is True
 print("OK")
@@ -178,7 +178,7 @@ def test_one_captured_artifact_can_be_exported_in_multiple_formats(python_runner
         "text = _report.render_report(artifact, format='text')\n"
         "document = json.loads(_report.render_report(artifact, format='json'))\n"
         "assert document['capture']['cutoff_seq'] == cutoff\n"
-        "assert not any(item['fullname'] == 'fractions' for item in document['import_attempts'])\n"
+        "assert not any(item['fullname'] == 'fractions' for item in document['import_searches'])\n"
         "assert 'metapathology report' in text\n"
         "print('OK')\n"
     )
@@ -225,8 +225,8 @@ document = json.loads(metapathology.render_report(format="json"))
 
 ids = set()
 for section_name in (
-    "snapshots", "finder_contracts", "import_attempts", "resolution_routes",
-    "route_comparisons", "timeline", "findings", "explanations",
+    "snapshots", "finder_apis", "import_searches", "finder_results",
+    "finder_result_comparisons", "timeline", "findings", "explanations",
 ):
     for item in document[section_name]:
         assert item["id"] not in ids, item["id"]
@@ -270,7 +270,7 @@ import pathlib
 import sys
 
 import metapathology
-from metapathology import InternalError
+from metapathology import MonitoringError
 
 monitor = metapathology.install(report_at_exit=False)
 try:
@@ -280,12 +280,12 @@ except OSError:
 else:
     raise AssertionError("explicit write failure did not propagate")
 assert any(
-    isinstance(event, InternalError) and event.where == "report_write"
+    isinstance(event, MonitoringError) and event.where == "report_write"
     for event in monitor.events()
 )
 document = __import__("json").loads(metapathology.render_report(format="json"))
-assert "internal_error" in {event["kind"] for event in document["timeline"]}
-assert document["diagnostics"]["internal_error_refs"]
+assert "monitoring_error" in {event["kind"] for event in document["timeline"]}
+assert document["diagnostics"]["monitoring_error_refs"]
 print("OK")
 """
 
@@ -311,8 +311,8 @@ def test_report_document_uses_hand_written_slots(python_runner: PythonRunner) ->
         "        meta_path_enabled=False, finder_attribution_enabled=False,\n"
         "        baseline_module_count=0,\n"
         "        modules_since_install=(), early_site_bootstrap=None, frozen_bootstrap=None,\n"
-        "        deep_diagnostics=(), deep_import_outcomes_status='disabled',\n"
-        "        deep_import_calls_status='disabled', standard_finder_status='disabled',\n"
+        "        detailed_capture=(), import_results_capture_status='disabled',\n"
+        "        import_calls_capture_status='disabled', path_finder_capture_status='disabled',\n"
         "    ),\n"
         "    meta_path=MetaPathSnapshot(enabled=False, initial=(), current=()),\n"
         "    path_hooks=PathHooksSnapshot(enabled=False, initial=(), current=None),\n"
@@ -322,12 +322,12 @@ def test_report_document_uses_hand_written_slots(python_runner: PythonRunner) ->
         "    ),\n"
         "    sys_path_enabled=False,\n"
         "    analysis=AnalysisResult(\n"
-        "        attempts=(), events=(), findings=(), explanations=(), resolution_routes=(),\n"
-        "        route_comparisons=(), standard_resolutions=(), finder_contracts=(),\n"
+        "        searches=(), events=(), findings=(), explanations=(), finder_results=(),\n"
+        "        finder_result_comparisons=(), standard_resolutions=(), finder_apis=(),\n"
         "        loader_inventory=LoaderInventory(True, (), 0), skipped_finders=(),\n"
-        "        summary=ReportSummary(actionable=0, warning=0, informational=0,\n"
+        "        summary=ReportSummary(problem=0, risk=0, note=0,\n"
         "                              unresolved_import_count=0, top_finding_id=None, top_explanation_id=None),\n"
-        "        target_outcome=None, report_errors=(),\n"
+        "        program_outcome=None, report_errors=(),\n"
         "    ),\n"
         ")\n"
         "try:\n"

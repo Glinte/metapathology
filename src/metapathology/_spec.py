@@ -2,7 +2,7 @@
 
 from importlib.machinery import ModuleSpec
 
-from metapathology._records import ObjectRef, SpecSummary, type_name
+from metapathology._records import ModuleSpecSnapshot, ObjectIdentity, type_name
 
 TYPE_CHECKING = False
 
@@ -10,16 +10,16 @@ if TYPE_CHECKING:
     from metapathology._records import LocationsState
 
 
-def _safe_value(value: object) -> str | ObjectRef | None:
+def _safe_value(value: object) -> str | ObjectIdentity | None:
     if value is None or type(value) is str:
         return value
-    return ObjectRef.of(value)
+    return ObjectIdentity.of(value)
 
 
-def _safe_location(value: object) -> str | ObjectRef:
+def _safe_location(value: object) -> str | ObjectIdentity:
     if type(value) is str:
         return value
-    return ObjectRef.of(value)
+    return ObjectIdentity.of(value)
 
 
 def _spec_namespace(spec: object, unavailable: list[str]) -> dict[str, object]:
@@ -54,7 +54,7 @@ def _package_locations(
     missing: object,
     iterate_foreign_locations: bool,
     unavailable: list[str],
-) -> "tuple[bool | None, tuple[str | ObjectRef, ...] | None, LocationsState]":
+) -> "tuple[bool | None, tuple[str | ObjectIdentity, ...] | None, LocationsState]":
     if locations is missing:
         unavailable.append("submodule_search_locations:missing")
         return None, None, "failed"
@@ -67,7 +67,7 @@ def _package_locations(
     except Exception as exc:
         unavailable.append(f"submodule_search_locations:{type_name(exc)}")
         return True, None, "failed"
-    state = "captured" if type(locations) in (list, tuple) else "post_hoc"
+    state = "captured" if type(locations) in (list, tuple) else "current_state"
     return True, copied, state
 
 
@@ -75,7 +75,7 @@ def summarize_spec(
     spec: object,
     *,
     iterate_foreign_locations: bool,
-) -> tuple[SpecSummary, object | None]:
+) -> tuple[ModuleSpecSnapshot, object | None]:
     """Copy safe spec semantics without invoking arbitrary attribute access.
 
     Args:
@@ -108,9 +108,9 @@ def summarize_spec(
 
     safe_origin = _safe_value(origin)
     is_namespace = is_package and origin is None if is_package is not None else None
-    summary = SpecSummary(
-        spec=ObjectRef.of(spec),
-        loader=None if loader is None else ObjectRef.of(loader),
+    summary = ModuleSpecSnapshot(
+        spec=ObjectIdentity.of(spec),
+        loader=None if loader is None else ObjectIdentity.of(loader),
         origin=safe_origin,
         cached=_safe_value(cached),
         is_package=is_package,

@@ -39,10 +39,10 @@ def test_failed_warning_report_colors_outcome_and_finding_separately(tmp_path: P
     assert proc.returncode == 1
     assert "\x1b[1;31mtarget outcome:\x1b[0m" in proc.stderr
     assert "\x1b[33mverdict:\x1b[0m" in proc.stderr
-    assert "\x1b[33m[legacy-finder-contract]\x1b[0m" in proc.stderr
+    assert "\x1b[33m[legacy-finder-api]\x1b[0m" in proc.stderr
 
 
-def test_actionable_report_uses_red_compact_markers(tmp_path: Path) -> None:
+def test_problem_report_uses_red_compact_markers(tmp_path: Path) -> None:
     script = tmp_path / "prog.py"
     script.write_text(
         "import importlib.machinery, sys, types\n"
@@ -71,12 +71,12 @@ def test_actionable_report_uses_red_compact_markers(tmp_path: Path) -> None:
         "sys.modules['color_replacement'] = first\n"
     )
 
-    proc = run_cli("--deep-loaders", "--color", "always", str(script), cwd=tmp_path)
+    proc = run_cli("--capture-loader-calls", "--color", "always", str(script), cwd=tmp_path)
 
     assert proc.returncode == 0, proc.stderr
     assert "\x1b[32mtarget outcome:\x1b[0m" in proc.stderr
     assert "\x1b[1;31mverdict:\x1b[0m" in proc.stderr
-    assert "\x1b[1;31m[repeated-loader-execution]\x1b[0m" in proc.stderr
+    assert "\x1b[1;31m[module-executed-again]\x1b[0m" in proc.stderr
 
 
 def test_text_report_files_are_plain_in_auto_and_colored_when_forced(tmp_path: Path) -> None:
@@ -244,7 +244,7 @@ def test_target_failure_is_correlated_with_unresolved_imports(tmp_path: Path) ->
     assert proc.returncode == 1
     assert "target outcome: raised ModuleNotFoundError for 'missing_lazy_dependency'" in proc.stderr
     assert "the failed module appears under unresolved imports below" in proc.stderr
-    assert "most severe is [legacy-finder-contract] 'LazyImporter'" in proc.stderr
+    assert "most severe is [legacy-finder-api] 'LazyImporter'" in proc.stderr
     assert "-- imports that started but produced no module" in proc.stderr
     assert "'missing_lazy_dependency': import started at event #" in proc.stderr
     assert "(the failed module)" in proc.stderr
@@ -254,7 +254,7 @@ def test_target_failure_is_correlated_with_unresolved_imports(tmp_path: Path) ->
     proc = run_cli("--report", str(destination), str(script), cwd=tmp_path)
     assert proc.returncode == 1
     document = json.loads(next(tmp_path.glob("report.*.json")).read_text(encoding="utf-8"))
-    assert document["target_outcome"] == {
+    assert document["program_outcome"] == {
         "kind": "raised",
         "exception_type_name": "ModuleNotFoundError",
         "missing_module": "missing_lazy_dependency",

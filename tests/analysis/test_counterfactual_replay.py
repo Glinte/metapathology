@@ -1,4 +1,4 @@
-"""Resolution-route probe evidence and failure isolation."""
+"""Resolution-result check evidence and failure isolation."""
 
 from pathlib import Path
 
@@ -66,21 +66,21 @@ assert current_spec is not None
 assert type(current_spec.loader).__name__ == "CurrentLoader"
 
 document = json.loads(metapathology.render_report(format="json"))
-routes = [item for item in document["resolution_routes"] if item["module"] == "counterfactual_target"]
-captured = next(item for item in routes if item["kind"] == "captured_claim")
-probe = next(item for item in routes if item["kind"] == "standard_path_probe")
-assert probe["evidence_level"] == "live_probe"
-assert probe["state_phase"] == "report"
-assert probe["spec"]["loader"]["type_name"] == "CurrentLoader"
-assert probe["predicts_alternative_winner"] is False
-assert "skips_intervening_meta_path_finders" in probe["limitations"]
-route_comparison = next(
+results = [item for item in document["finder_results"] if item["module"] == "counterfactual_target"]
+captured = next(item for item in results if item["kind"] == "observed_finder_result")
+check = next(item for item in results if item["kind"] == "standard_path_check")
+assert check["evidence_level"] == "current_state_check"
+assert check["state_phase"] == "report"
+assert check["spec"]["loader"]["type_name"] == "CurrentLoader"
+assert check["predicts_alternative_winner"] is False
+assert "skips_intervening_meta_path_finders" in check["limitations"]
+result_comparison = next(
     item
-    for item in document["route_comparisons"]
-    if item["left_route_ref"] == captured["id"] and item["right_route_ref"] == probe["id"]
+    for item in document["finder_result_comparisons"]
+    if item["left_result_ref"] == captured["id"] and item["right_result_ref"] == check["id"]
 )
-assert route_comparison["loader_type_differs"] is True
-comparison = route_comparison["structural_comparison"]
+assert result_comparison["loader_type_differs"] is True
+comparison = result_comparison["structural_comparison"]
 assert comparison["evidence_level"] == "structural_comparison"
 assert comparison["path_hooks"] == {
     "changed": True,
@@ -105,7 +105,7 @@ print("OK")
 """
 
 
-def test_hook_reorder_and_cache_clear_change_live_probe_loader(
+def test_hook_reorder_and_cache_clear_change_current_state_check_loader(
     python_runner: PythonRunner,
     tmp_path: Path,
 ) -> None:
@@ -157,14 +157,14 @@ document = json.loads(metapathology.render_report(format="json"))
 assert {
     (error["where"], error["exception_type_name"])
     for error in document["diagnostics"]["report_errors"]
-} >= {("standard_path_probe", "RuntimeError")}
-probe = next(
+} >= {("standard_path_check", "RuntimeError")}
+check = next(
     item
-    for item in document["resolution_routes"]
-    if item["module"] == "failed_replay_target" and item["kind"] == "standard_path_probe"
+    for item in document["finder_results"]
+    if item["module"] == "failed_replay_target" and item["kind"] == "standard_path_check"
 )
-assert probe["status"] == "failed"
-assert probe["exception_type_name"] == "RuntimeError"
+assert check["status"] == "failed"
+assert check["exception_type_name"] == "RuntimeError"
 
 metapathology.uninstall()
 assert type(sys.meta_path) is list
@@ -175,7 +175,7 @@ print("OK")
 """
 
 
-def test_live_probe_failure_is_reported_without_blocking_cleanup(
+def test_current_state_check_failure_is_reported_without_blocking_cleanup(
     python_runner: PythonRunner,
     tmp_path: Path,
 ) -> None:
@@ -188,13 +188,13 @@ def test_live_probe_failure_is_reported_without_blocking_cleanup(
     assert proc.stdout.strip() == "OK"
 
 
-REPORT_PROBE_ISOLATION = r"""
+REPORT_CHECK_ISOLATION = r"""
 import json
 import sys
 from importlib.machinery import PathFinder
 
 import metapathology
-from metapathology import DeepDiagnosticCall
+from metapathology import ImportMechanismCall
 
 class DelegatingFinder:
     def find_spec(self, fullname, path=None, target=None):
@@ -205,33 +205,33 @@ sys.path.insert(0, module_dir)
 monitor = metapathology.install(
     report_at_exit=False,
     capture=metapathology.CaptureConfig(
-        deep=metapathology.DeepConfig(path_hooks=True, path_entry_finders=True),
+        detailed=metapathology.DetailedCaptureConfig(path_hooks=True, path_entry_finders=True),
     ),
 )
 sys.meta_path.insert(0, DelegatingFinder())
-import isolated_probe_target
+import isolated_check_target
 
-before = sum(isinstance(event, DeepDiagnosticCall) for event in monitor.events())
+before = sum(isinstance(event, ImportMechanismCall) for event in monitor.events())
 document = json.loads(metapathology.render_report(format="json"))
-after = sum(isinstance(event, DeepDiagnosticCall) for event in monitor.events())
+after = sum(isinstance(event, ImportMechanismCall) for event in monitor.events())
 assert after == before
-routes_by_id = {item["id"]: item for item in document["resolution_routes"]}
+results_by_id = {item["id"]: item for item in document["finder_results"]}
 comparison = next(
     item
-    for item in document["route_comparisons"]
-    if routes_by_id[item["left_route_ref"]]["module"] == "isolated_probe_target"
+    for item in document["finder_result_comparisons"]
+    if results_by_id[item["left_result_ref"]]["module"] == "isolated_check_target"
 )
 assert comparison["structural_comparison"]["path_hooks"]["changed"] is False
 print("OK")
 """
 
 
-def test_standard_path_probe_does_not_record_deep_evidence_or_wrapper_mutation(
+def test_standard_path_check_does_not_record_detailed_evidence_or_wrapper_mutation(
     python_runner: PythonRunner, tmp_path: Path
 ) -> None:
-    (tmp_path / "isolated_probe_target.py").write_text("VALUE = 7\n", encoding="utf-8")
+    (tmp_path / "isolated_check_target.py").write_text("VALUE = 7\n", encoding="utf-8")
 
-    proc = python_runner.run_code_ok(REPORT_PROBE_ISOLATION, str(tmp_path))
+    proc = python_runner.run_code_ok(REPORT_CHECK_ISOLATION, str(tmp_path))
 
     assert proc.stdout.strip() == "OK"
 
@@ -254,7 +254,7 @@ class ReloadLoader(SourceFileLoader):
 
 class TargetSensitivePathFinder:
     def find_spec(self, fullname, target=None):
-        if fullname != "reload_probe_target":
+        if fullname != "reload_check_target":
             return None
         loader_type = ReloadLoader if target is not None else InitialLoader
         return spec_from_file_location(fullname, source, loader=loader_type(fullname, source))
@@ -275,33 +275,33 @@ sys.path_hooks.insert(0, hook)
 sys.path_importer_cache.pop(module_dir, None)
 metapathology.install(report_at_exit=False)
 sys.meta_path.insert(0, DelegatingFinder())
-import reload_probe_target
-assert type(reload_probe_target.__loader__).__name__ == "InitialLoader"
-importlib.reload(reload_probe_target)
-assert type(reload_probe_target.__loader__).__name__ == "ReloadLoader"
+import reload_check_target
+assert type(reload_check_target.__loader__).__name__ == "InitialLoader"
+importlib.reload(reload_check_target)
+assert type(reload_check_target.__loader__).__name__ == "ReloadLoader"
 
 document = json.loads(metapathology.render_report(format="json"))
-probe = next(
+check = next(
     item
-    for item in document["resolution_routes"]
-    if item["module"] == "reload_probe_target" and item["kind"] == "standard_path_probe"
+    for item in document["finder_results"]
+    if item["module"] == "reload_check_target" and item["kind"] == "standard_path_check"
 )
-assert probe["status"] == "found"
-assert probe["spec"]["loader"]["type_name"] == "ReloadLoader"
-claim = next(
+assert check["status"] == "found"
+assert check["spec"]["loader"]["type_name"] == "ReloadLoader"
+finder_call = next(
     event
     for event in reversed(document["timeline"])
-    if event["kind"] == "find_spec_call"
-    and event["data"]["fullname"] == "reload_probe_target"
+    if event["kind"] == "meta_path_finder_call"
+    and event["data"]["fullname"] == "reload_check_target"
     and event["data"]["found"]
 )
-assert claim["data"]["target_state"]["object_id"] == hex(id(reload_probe_target))
+assert finder_call["data"]["target_state"]["object_id"] == hex(id(reload_check_target))
 print("OK")
 """
 
 
-def test_standard_path_probe_preserves_an_exact_reload_target(python_runner: PythonRunner, tmp_path: Path) -> None:
-    source = tmp_path / "reload_probe_target.py"
+def test_standard_path_check_preserves_an_exact_reload_target(python_runner: PythonRunner, tmp_path: Path) -> None:
+    source = tmp_path / "reload_check_target.py"
     source.write_text("VALUE = 7\n", encoding="utf-8")
 
     proc = python_runner.run_code_ok(RELOAD_TARGET, str(tmp_path), str(source))

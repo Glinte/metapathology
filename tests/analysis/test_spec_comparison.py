@@ -10,13 +10,13 @@ from hypothesis import given
 from hypothesis import strategies as st
 from support import PythonRunner
 
-from metapathology import ObjectRef, SpecSummary
-from metapathology._report_analysis import _compare_specs, _post_hoc_spec_summary
-from metapathology._report_model import ResolutionRoute, StructuralComparison
+from metapathology import ModuleSpecSnapshot, ObjectIdentity
+from metapathology._report_analysis import _compare_specs, _current_state_spec_summary
+from metapathology._report_model import FinderResult, StructuralComparison
 from metapathology._spec import summarize_spec
 
 
-def _summary(locations: list[str]) -> SpecSummary:
+def _summary(locations: list[str]) -> ModuleSpecSnapshot:
     spec = ModuleSpec("example", loader=None, is_package=True)
     spec.submodule_search_locations = locations
     return summarize_spec(spec, iterate_foreign_locations=False)[0]
@@ -32,8 +32,8 @@ def test_location_comparison_is_reflexive_and_reversible(left: list[str], right:
     reverse = _compare_specs(_summary(right), _summary(left))
 
     assert not same.has_differences()
-    assert forward.only_in_left_route == reverse.only_in_right_route
-    assert forward.only_in_right_route == reverse.only_in_left_route
+    assert forward.only_in_left_result == reverse.only_in_right_result
+    assert forward.only_in_right_result == reverse.only_in_left_result
     assert forward.locations_reordered is reverse.locations_reordered
     assert forward.package_status_differs is reverse.package_status_differs
     assert forward.origin_differs is reverse.origin_differs
@@ -56,11 +56,11 @@ def test_cached_path_is_captured_only_from_an_exact_string_origin() -> None:
     hostile = summarize_spec(hostile_spec, iterate_foreign_locations=False)[0]
 
     assert type(summary.cached) is str
-    assert isinstance(hostile.origin, ObjectRef)
+    assert isinstance(hostile.origin, ObjectIdentity)
     assert hostile.cached is None
 
 
-def test_route_comparison_preserves_package_origin_and_namespace_differences() -> None:
+def test_result_comparison_preserves_package_origin_and_namespace_differences() -> None:
     module_spec = ModuleSpec("example", loader=None)
     module = summarize_spec(module_spec, iterate_foreign_locations=False)[0]
     package = _summary(["a"])
@@ -77,12 +77,12 @@ def test_route_comparison_preserves_package_origin_and_namespace_differences() -
     extended = _summary(["a", "b"])
     base = _summary(["a"])
     extension_comparison = _compare_specs(extended, base)
-    assert extension_comparison.only_in_left_route == ("b",)
+    assert extension_comparison.only_in_left_result == ("b",)
 
 
-def test_route_value_comparison_reports_status_partial_evidence_and_differences() -> None:
-    left = ResolutionRoute._for_comparison("route:left", _summary(["a"]))
-    right = ResolutionRoute._for_comparison("route:right", None, status="not_found")
+def test_result_value_comparison_reports_status_partial_evidence_and_differences() -> None:
+    left = FinderResult._for_comparison("result:left", _summary(["a"]))
+    right = FinderResult._for_comparison("result:right", None, status="not_found")
 
     comparison = left.compare(
         right,
@@ -96,7 +96,7 @@ def test_route_value_comparison_reports_status_partial_evidence_and_differences(
     assert comparison.has_differences()
 
 
-def test_deferred_locations_are_attempted_only_from_the_same_post_hoc_spec() -> None:
+def test_deferred_locations_are_attempted_only_from_the_same_current_state_spec() -> None:
     class Locations:
         def __iter__(self) -> Iterator[object]:
             raise RuntimeError("broken locations")
@@ -107,7 +107,7 @@ def test_deferred_locations_are_attempted_only_from_the_same_post_hoc_spec() -> 
     module = types.ModuleType("example")
     module.__spec__ = spec
 
-    enriched = _post_hoc_spec_summary(module, observed)
+    enriched = _current_state_spec_summary(module, observed)
 
     assert observed.locations_state == "deferred"
     assert enriched.locations_state == "failed"
@@ -142,7 +142,7 @@ def test_report_time_location_copy_tolerates_coordinated_concurrent_change() -> 
     thread.join(timeout=2)
 
     assert not thread.is_alive()
-    assert summary.locations_state == "post_hoc"
+    assert summary.locations_state == "current_state"
     assert summary.submodule_search_locations == ("a", "b")
 
 
@@ -178,29 +178,29 @@ sys.meta_path.insert(0, TruncatingFinder(name, first + "/" + name))
 __import__(name)
 
 document = json.loads(metapathology.render_report(format="json"))
-routes = [item for item in document["resolution_routes"] if item["module"] == name]
-captured = next(item for item in routes if item["kind"] == "captured_claim")
-probe = next(item for item in routes if item["kind"] == "standard_path_probe")
+results = [item for item in document["finder_results"] if item["module"] == name]
+captured = next(item for item in results if item["kind"] == "observed_finder_result")
+check = next(item for item in results if item["kind"] == "standard_path_check")
 assert captured["search_path_kind"] == "sys_path"
 assert captured["spec"]["locations_state"] == "captured"
-assert probe["spec"]["locations_state"] == "post_hoc"
+assert check["spec"]["locations_state"] == "current_state"
 comparison = next(
     item
-    for item in document["route_comparisons"]
-    if item["left_route_ref"] == captured["id"] and item["right_route_ref"] == probe["id"]
+    for item in document["finder_result_comparisons"]
+    if item["left_result_ref"] == captured["id"] and item["right_result_ref"] == check["id"]
 )
-standard_only = comparison["only_in_right_route"]
+standard_only = comparison["only_in_right_result"]
 assert len(standard_only) == 1
 assert os.path.normcase(os.path.normpath(standard_only[0])) == os.path.normcase(os.path.normpath(second + "/" + name))
 assert not any(item["module"] == name for item in document["findings"])
 text = metapathology.render_report()
 assert "modules found by a custom finder" in text, text
-assert "[namespace-truncation]" not in text, text
+assert "[missing-namespace-locations]" not in text, text
 print("OK")
 """
 
 
-def test_namespace_route_difference_is_reported_neutrally_without_an_effect(
+def test_namespace_result_difference_is_reported_neutrally_without_an_effect(
     python_runner: PythonRunner,
     tmp_path: Path,
 ) -> None:
@@ -220,7 +220,7 @@ import sys
 from importlib.machinery import ModuleSpec
 
 import metapathology
-from metapathology import FindSpecCall
+from metapathology import MetaPathFinderCall
 
 class HostileLocations:
     def __iter__(self):
@@ -235,8 +235,8 @@ class Finder:
 finder = Finder()
 monitor = metapathology.install(report_at_exit=False)
 sys.meta_path.insert(0, finder)
-finder.find_spec("deferred_probe")
-call = next(event for event in reversed(monitor.events()) if isinstance(event, FindSpecCall))
+finder.find_spec("deferred_check")
+call = next(event for event in reversed(monitor.events()) if isinstance(event, MetaPathFinderCall))
 assert call.spec_summary.locations_state == "deferred"
 assert call.spec_summary.submodule_search_locations is None
 print("OK")

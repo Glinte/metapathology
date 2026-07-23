@@ -54,7 +54,7 @@ def _assert_frozen_run(executable: Path, build: Path, integration: str) -> None:
     assert len(reports) == 1
     report = reports[0].read_text(encoding="utf-8")
     assert f"frozen integration: {integration}" in report
-    assert "frozen observation boundary: after freezer initialization" in report
+    assert "frozen monitoring started: after freezer initialization" in report
     assert "fractions" in report
 
 

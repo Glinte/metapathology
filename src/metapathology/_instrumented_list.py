@@ -172,7 +172,7 @@ class _InstrumentedList(list["_ListItemT"]):
         self,
         memo: "dict[int, Any]",  # pyright: ignore[reportExplicitAny]
     ) -> list["_ListItemT"]:
-        """Deep-copy finders without traversing the monitor's locks and state."""
+        """Detailed-copy finders without traversing the monitor's locks and state."""
         return copy.deepcopy(list(self), memo)
 
     if TYPE_CHECKING:
@@ -266,7 +266,7 @@ class _InstrumentedMetaPath(_InstrumentedList["_MetaPathEntry"]):
         removed: tuple[object, ...],
         frame: "FrameType",
     ) -> None:
-        self._monitor._on_meta_path_mutation(self, op, added, removed, frame)
+        self._monitor._on_meta_path_change(self, op, added, removed, frame)
 
 
 class _InstrumentedPathHooks(_InstrumentedList["_PathHook"]):
@@ -284,7 +284,7 @@ class _InstrumentedPathHooks(_InstrumentedList["_PathHook"]):
         removed: tuple[object, ...],
         frame: "FrameType",
     ) -> None:
-        self._monitor._on_path_hooks_mutation(self, op, added, removed, frame)
+        self._monitor._on_path_hooks_change(self, op, added, removed, frame)
 
 
 class _InstrumentedSysPath(_InstrumentedList[str]):
@@ -299,4 +299,4 @@ class _InstrumentedSysPath(_InstrumentedList[str]):
         removed: tuple[object, ...],
         frame: "FrameType",
     ) -> None:
-        self._monitor._on_sys_path_mutation(self, op, added, removed, frame)
+        self._monitor._on_sys_path_change(self, op, added, removed, frame)

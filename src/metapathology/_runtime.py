@@ -84,7 +84,7 @@ class _AutomaticReporting:
             try:
                 _report.write_report(artifact, destination, format=target.format, color=target.color)
             except Exception as exc:
-                monitor._record_internal_error("report_write", exc)
+                monitor._record_monitoring_error("report_write", exc)
                 if first_error is None:
                     first_error = exc
         if first_error is not None:
@@ -338,16 +338,16 @@ def _resolve_report_analysis(analysis: AnalysisConfig | None) -> ResolvedAnalysi
         raise RuntimeError("metapathology.install() has not been called")
     if analysis is None:
         return active
-    values = (analysis.probes, analysis.standard_path_probe, analysis.displaced_finder_probe)
+    values = (analysis.checks, analysis.standard_path_check, analysis.displaced_finder_check)
     if any(value is not None and type(value) is not bool for value in values):
         raise TypeError("analysis configuration fields must be bool or None")
-    standard_default = active.standard_path_probe if analysis.probes is None else analysis.probes
-    displaced_default = active.displaced_finder_probe if analysis.probes is None else analysis.probes
+    standard_default = active.standard_path_check if analysis.checks is None else analysis.checks
+    displaced_default = active.displaced_finder_check if analysis.checks is None else analysis.checks
     return ResolvedAnalysisConfig(
-        standard_path_probe=standard_default if analysis.standard_path_probe is None else analysis.standard_path_probe,
-        displaced_finder_probe=displaced_default
-        if analysis.displaced_finder_probe is None
-        else analysis.displaced_finder_probe,
+        standard_path_check=standard_default if analysis.standard_path_check is None else analysis.standard_path_check,
+        displaced_finder_check=displaced_default
+        if analysis.displaced_finder_check is None
+        else analysis.displaced_finder_check,
     )
 
 
@@ -376,5 +376,5 @@ def _write_report(
     try:
         _report.write_report(artifact, destination, format=format, color=color)
     except Exception as exc:
-        monitor._record_internal_error("report_write", exc)
+        monitor._record_monitoring_error("report_write", exc)
         raise

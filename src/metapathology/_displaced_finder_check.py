@@ -1,7 +1,7 @@
-"""Bounded report-time probes of displaced importer-cache finders."""
+"""Bounded report-time checks of displaced importer-cache finders."""
 
-from metapathology._records import DeepDiagnosticCall, ImporterCacheDiff, ObjectRef, type_name
-from metapathology._report_model import ProbeRun, ResolutionRoute
+from metapathology._records import ImporterCacheChange, ImportMechanismCall, ObjectIdentity, type_name
+from metapathology._report_model import CheckRun, FinderResult
 from metapathology._spec import summarize_spec
 
 TYPE_CHECKING = False
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from metapathology._records import MonitorEvent
 
 
-MAX_DISPLACED_FINDER_PROBES = 16
+MAX_DISPLACED_FINDER_CHECKS = 16
 
 
 class _Candidate:
@@ -20,7 +20,7 @@ class _Candidate:
 
     def __init__(
         self,
-        finder: ObjectRef,
+        finder: ObjectIdentity,
         path: str,
         diff_seq: int,
         fullname: str,
@@ -36,14 +36,14 @@ class _Candidate:
 
 
 def _select_candidates(events: "list[MonitorEvent]") -> list[_Candidate]:
-    displaced: list[tuple[ObjectRef, str, int]] = []
+    displaced: list[tuple[ObjectIdentity, str, int]] = []
     for event in events:
-        if isinstance(event, ImporterCacheDiff):
+        if isinstance(event, ImporterCacheChange):
             displaced.extend(
-                (entry.finder, entry.path, event.seq) for entry in event.removed if entry.finder is not None
+                (entry.finder, entry.path, event.sequence) for entry in event.removed if entry.finder is not None
             )
             displaced.extend(
-                (replacement.before, replacement.path, event.seq)
+                (replacement.before, replacement.path, event.sequence)
                 for replacement in event.replaced
                 if replacement.before is not None
             )
@@ -52,34 +52,34 @@ def _select_candidates(events: "list[MonitorEvent]") -> list[_Candidate]:
     for finder, path, diff_seq in displaced:
         for event in events:
             if (
-                not isinstance(event, DeepDiagnosticCall)
+                not isinstance(event, ImportMechanismCall)
                 or event.boundary != "path_entry_finder"
                 or event.outcome != "not_found"
                 or event.path != path
                 or event.fullname is None
-                or event.seq <= diff_seq
+                or event.sequence <= diff_seq
             ):
                 continue
             key = (event.fullname, path, finder.object_id)
             if key not in seen:
                 seen.add(key)
                 candidates.append(
-                    _Candidate(finder, path, diff_seq, event.fullname, event.seq, event.target_state is not None)
+                    _Candidate(finder, path, diff_seq, event.fullname, event.sequence, event.target_state is not None)
                 )
     return candidates
 
 
-def probe_displaced_finders(
+def check_displaced_finders(
     events: "list[MonitorEvent]",
     retained_finders: tuple[tuple[int, object], ...],
-    next_route_id: "Callable[[], str]",
-) -> tuple[tuple[ResolutionRoute, ...], ProbeRun]:
-    """Probe evidence-selected displaced finders with a fixed synchronous budget."""
+    next_result_id: "Callable[[], str]",
+) -> tuple[tuple[FinderResult, ...], CheckRun]:
+    """Check evidence-selected displaced finders with a fixed synchronous budget."""
     candidates = _select_candidates(events)
     retained = dict(retained_finders)
-    routes: list[ResolutionRoute] = []
+    results: list[FinderResult] = []
     foreign_calls = 0
-    for candidate in candidates[:MAX_DISPLACED_FINDER_PROBES]:
+    for candidate in candidates[:MAX_DISPLACED_FINDER_CHECKS]:
         status = "not_found"
         summary = None
         exception_type_name = None
@@ -102,18 +102,18 @@ def probe_displaced_finders(
             except Exception as exc:
                 status = "failed"
                 exception_type_name = type_name(exc)
-        routes.append(
-            ResolutionRoute(
-                route_id=next_route_id(),
+        results.append(
+            FinderResult(
+                result_id=next_result_id(),
                 module=candidate.fullname,
-                kind="displaced_finder_probe",
-                purpose="probe_displaced_importer_cache_finder",
+                kind="displaced_finder_check",
+                purpose="check_displaced_importer_cache_finder",
                 limitations=(
                     "uses_report_time_finder_state",
                     "does_not_prove_loader_success",
                     "does_not_predict_alternative_winner",
                 ),
-                evidence_level="live_probe",
+                evidence_level="current_state_check",
                 state_phase="report",
                 predicts_alternative_winner=False,
                 finder_type_name=candidate.finder.type_name,
@@ -127,14 +127,14 @@ def probe_displaced_finders(
                 search_path_phase="import",
             )
         )
-    omitted = max(0, len(candidates) - MAX_DISPLACED_FINDER_PROBES)
-    return tuple(routes), ProbeRun(
+    omitted = max(0, len(candidates) - MAX_DISPLACED_FINDER_CHECKS)
+    return tuple(results), CheckRun(
         kind="displaced_finder",
         status="active",
         unavailable_reasons=(),
         candidates=len(candidates),
-        results=len(routes),
+        results=len(results),
         foreign_calls=foreign_calls,
-        capacity=MAX_DISPLACED_FINDER_PROBES,
+        capacity=MAX_DISPLACED_FINDER_CHECKS,
         omitted=omitted,
     )

@@ -1,123 +1,77 @@
-# Limitations and resource behavior
+# Limitations
 
-`metapathology` never risks changing your program's import behavior to get a
-better observation. That priority creates the boundaries below.
+Use these limits when interpreting missing evidence.
 
-## Platform and timing
+## Platform
 
-- Only CPython 3.10 and newer is supported. The implementation relies on the
-  CPython [`import` audit event][audit-events] and import-system internals.
-- Monitoring starts at `install()`. Modules imported earlier are a baseline;
-  nothing before installation is attributed.
-- Finders installed by [`.pth` files][site-pth] run before metapathology
-  under the normal CLI workflow. They appear in the initial `sys.meta_path`
-  snapshot, but there is no stack trace for their insertion. The
-  [optional startup bootstrap](usage.md#observe-later-pth-files) can catch
-  `.pth` files that sort after it in one site-packages directory on CPython
-  3.10–3.14; it cannot see earlier files, other site directories, or `-S`
-  startup.
+Metapathology supports CPython 3.10+. It relies on CPython's
+[audit events](https://docs.python.org/3/library/audit_events.html#audit-events)
+and reports a warning on other implementations.
 
-## What is not recorded
+## Monitoring starts late
 
-- **Cache hits.** An import satisfied from `sys.modules` never reaches the
-  finders and produces no event.
-- **Import outcomes**, by default. The `import` audit event fires when
-  resolution starts; success or failure is unknown unless
-  `--deep-import-outcomes` is enabled.
-- **Manual loading.** Code using
-  [`spec_from_file_location()`][spec-from-file] plus
-  [`exec_module()`][exec-module] skips the finder search entirely. The
-  resulting modules can only be recognized afterwards as
-  [`[no-spec]`](report.md#findings) findings.
-- **Some importlib entry points.** `importlib.import_module()` and
-  lower-level calls can resolve a module without firing the audit event, so
-  a finder call may appear in the report with no matching `import started:`
-  event.
-- **What happened inside a finder.** Finder wrappers record the target's
-  `sys.modules` state before and after each call. A change proves the finder
-  boundary altered it, not which nested action did, or whether temporary
-  objects existed in between.
-- **Loader activity**, unless `--deep-loaders` is enabled and the loader is
-  an instrumentable instance reached after activation. Standard class-based
-  loaders and legacy `load_module()` calls are never observed.
-- **Re-entrant activity.** Imports triggered from inside a monitor hook are
-  deliberately not observed (the re-entrancy guard that keeps the monitor
-  from breaking imports also blinds it there).
-- **C-level list changes.** Mutations made through CPython's `PyList_*` C
-  API bypass the instrumented lists.
-- **Short-lived cache changes.** `sys.path_importer_cache` is snapshotted at
-  install, around `sys.path_hooks` changes, and at report time; between
-  snapshots only the dictionary's identity and length are checked. A
-  same-size replacement or a clear-and-repopulate entirely between snapshots
-  can be missed.
-- **List replacement stacks.** `sys.meta_path = [...]` is detected at the
-  next import, so the exact assignment stack and assignment-time contents
-  are unavailable.
+Anything completed before installation is historical context, not observed
+activity. This includes finders added by already-processed `.pth` files. They
+appear in the initial snapshot without an installation stack.
 
-Several finding categories depend on deep options: exact failure correlation
-needs `--deep-import-outcomes`, module replacement needs `--deep-loaders`,
-and path-hook shadowing needs `--deep-path-hooks`. Without them the report
-falls back to weaker, clearly labeled inference.
+## The import audit event is only a start
 
-## The report-time comparison is diagnostic, not a replay
+CPython's `import` audit event precedes resolution. It:
 
-The ["modules found by a custom finder"](report.md#modules-found-by-a-custom-finder)
-section calls `PathFinder.find_spec()` at report time. The filesystem, path
-hooks, importer cache, and finder state may all have changed since the
-import, and the call skips other custom finders. It shows what the standard
-search finds *now*, not what would have happened during the run.
+- does not identify the winning finder;
+- does not cover `sys.modules` cache hits;
+- does not cover manual module execution; and
+- cannot by itself tell whether the import later succeeded.
 
-That call has the standard library's normal side effect of populating
-`sys.path_importer_cache`. One comparison runs per custom-found module, with
-no cap, so report time grows with the number of such modules.
+Enable the relevant detailed mechanism when those distinctions matter.
 
-Finder protocol inspection (`find_spec` / `find_module` availability) reads
-raw class and instance dictionaries only. A protocol reachable only through
-`__getattr__` or a descriptor is reported as absent or indeterminate rather
-than executed.
+## Attribution is deliberately conservative
 
-## Runtime changes and cleanup
+Finder attribution shadows `find_spec` only in writable instance dictionaries.
+Metapathology never proxies finder objects or changes shared standard-library
+finder classes. Unwritable and standard class finders may therefore appear only
+in aggregate or snapshot evidence.
 
-While monitoring, `sys.meta_path` and (by default) `sys.path_hooks` are
-`list` subclasses. Opt-in `sys.path` monitoring does the same to `sys.path`,
-and instance finders have their `find_spec` shadowed. No
-finder is replaced by a proxy, so `isinstance()` and identity checks keep
-working.
+Without meta-path observation, attribution covers finders present at
+installation only. Later additions are not instrumented.
 
-One known behavior change: when foreign code *replaces* a monitored list,
-recovery installs a fresh instrumented list and the replacement list goes
-stale. Code that kept a reference to the list it assigned and mutates that
-reference later no longer affects the live `sys` attribute.
+## List replacement recovery needs audit activity
 
-`uninstall()` restores plain lists (same objects, same order) and removes the
-finder shadows. Python cannot unregister an audit hook, so that callback
-remains as an inactive no-op.
+Meta-path observation itself owns only the reversible list observer. Direct
+assignment such as `sys.meta_path = [...]` is discovered when the next import
+audit event occurs. With import audit disabled, that recovery is unavailable.
 
-Use this tool during diagnosis, not as permanent application
-instrumentation.
+The same constraint applies to direct replacement of observed `sys.path_hooks`
+and `sys.path` lists.
 
-## Memory growth
+## Checks inspect current state
 
-Every recorded event is kept until the monitor is uninstalled — there is no
-event limit and nothing is silently dropped. Approximate costs, measured in
-the [benchmarks](performance.md):
+Standard-path and displaced-finder checks run while constructing the report.
+Files, hooks, caches, and finder state may have changed since import time.
+Results are labeled as current-state evidence and never claim an alternative
+historical winner.
 
-- an import start or finder call retains a fraction of a kilobyte to ~1 KB;
-- a `sys.meta_path` / `sys.path_hooks` / monitored `sys.path` change retains ~1.5 KB, because the
-  stack trace is stored;
-- deep diagnostics retain ~4 KB per import.
+Checks call finder methods supplied by Python or third-party packages.
+Exceptions are isolated and reported, but those methods can still have side
+effects.
 
-For a long-running or import-heavy process, install immediately before the
-behavior of interest, then call `write_report()` and `uninstall()` after
-capturing it.
+## Evidence is retained
 
-Report rendering copies the retained events into one document, so report
-time and JSON size are also proportional to captured activity. Reports
-tolerate concurrent imports from other threads; a report produced while
-daemon threads are importing may be slightly inconsistent but will not
-raise.
+Every event from an enabled capture mechanism is retained until reporting.
+There is no background queue, retry loop, or automatic eviction. Long-running
+or import-heavy programs can use substantial memory.
 
-[audit-events]: https://docs.python.org/3/library/audit_events.html#audit-events
-[site-pth]: https://docs.python.org/3/library/site.html
-[spec-from-file]: https://docs.python.org/3/library/importlib.html#importlib.util.spec_from_file_location
-[exec-module]: https://docs.python.org/3/library/importlib.html#importlib.abc.Loader.exec_module
+The displaced-finder check is the exception: it examines at most 16 candidates
+per report and states how many were omitted.
+
+## Reports may contain sensitive context
+
+Text and JSON can contain:
+
+- absolute or project-relative paths;
+- command-line arguments;
+- stack filenames and function names;
+- module and finder type names; and
+- object identities.
+
+Review reports before sharing.

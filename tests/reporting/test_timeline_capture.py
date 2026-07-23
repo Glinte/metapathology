@@ -10,7 +10,7 @@ import sys
 from importlib.machinery import PathFinder
 
 import metapathology
-from metapathology import FindSpecCall, ImportAuditStart, ImporterCacheDiff, PathHooksMutation
+from metapathology import MetaPathFinderCall, ImportSearchStarted, ImporterCacheChange, PathHooksChange
 
 class DelegatingFinder:
     def find_spec(self, fullname, path=None, target=None):
@@ -18,42 +18,42 @@ class DelegatingFinder:
             return PathFinder.find_spec(fullname, path, target)
         return None
 
-def probe_hook(path):
+def check_hook(path):
     raise ImportError
 
 monitor = metapathology.install(report_at_exit=False)
 sys.meta_path.insert(0, DelegatingFinder())
-sys.path_hooks.append(probe_hook)
-sys.path_importer_cache["timeline-cache-probe"] = None
+sys.path_hooks.append(check_hook)
+sys.path_importer_cache["timeline-cache-check"] = None
 sys.path_hooks.reverse()
 import timeline_target
 
 events = monitor.events()
-hook = next(event for event in events if isinstance(event, PathHooksMutation) and event.op == "append")
+hook = next(event for event in events if isinstance(event, PathHooksChange) and event.op == "append")
 cache = next(
     event
     for event in events
-    if isinstance(event, ImporterCacheDiff)
-    and any(entry.path == "timeline-cache-probe" for entry in event.added)
+    if isinstance(event, ImporterCacheChange)
+    and any(entry.path == "timeline-cache-check" for entry in event.added)
 )
-start = next(event for event in events if isinstance(event, ImportAuditStart) and event.fullname == "timeline_target")
-claim = next(
+start = next(event for event in events if isinstance(event, ImportSearchStarted) and event.fullname == "timeline_target")
+finder_call = next(
     event
     for event in events
-    if isinstance(event, FindSpecCall) and event.fullname == "timeline_target" and event.found
+    if isinstance(event, MetaPathFinderCall) and event.fullname == "timeline_target" and event.found
 )
-assert hook.seq < cache.seq < start.seq < claim.seq, (hook, cache, start, claim)
+assert hook.sequence < cache.sequence < start.sequence < finder_call.sequence, (hook, cache, start, finder_call)
 assert start.meta_path_id == id(sys.meta_path)
 assert start.meta_path_type_names[0] == "DelegatingFinder"
 assert start.path_hooks_id == id(sys.path_hooks)
 assert start.importer_cache_id == id(sys.path_importer_cache)
 assert start.importer_cache_size is not None
-assert start.attempt_id > 0
-assert start.thread_id == claim.thread_id
+assert start.search_id > 0
+assert start.thread_id == finder_call.thread_id
 
 text = metapathology.render_report()
-timeline = text.split("-- event timeline", 1)[1].split("-- sys.meta_path mutations", 1)[0]
-positions = [timeline.index(f"#{event.seq}") for event in (hook, cache, start, claim)]
+timeline = text.split("-- event timeline", 1)[1].split("-- sys.meta_path changes", 1)[0]
+positions = [timeline.index(f"#{event.sequence}") for event in (hook, cache, start, finder_call)]
 assert positions == sorted(positions), timeline
 assert "import started: 'timeline_target'" in timeline
 assert "Events are numbered in the order they were recorded" in timeline
@@ -63,25 +63,25 @@ assert document["schema"] == {"major": 3, "minor": 0, "name": "metapathology.rep
 audit = next(
     event
     for event in document["timeline"]
-    if event["kind"] == "import_audit_start" and event["data"]["fullname"] == "timeline_target"
+    if event["kind"] == "import_search_started" and event["data"]["fullname"] == "timeline_target"
 )
 assert audit["data"]["evidence"] == "resolution_started"
-assert audit["data"]["attempt_ref"] == f"attempt:{start.attempt_id}"
+assert audit["data"]["search_ref"] == f"search:{start.search_id}"
 assert audit["data"]["thread_id"] == start.thread_id
 assert audit["data"]["meta_path"]["entries"][0] == "DelegatingFinder"
 assert audit["data"]["meta_path"]["object_id"].startswith("0x")
 assert audit["data"]["path_hooks_id"].startswith("0x")
 assert audit["data"]["importer_cache"]["size"] >= 1
-attempt = next(item for item in document["import_attempts"] if item["fullname"] == "timeline_target")
-assert attempt["id"] == f"attempt:{start.attempt_id}"
-assert attempt["start_event_ref"] == f"event:{start.seq}"
-assert attempt["evidence_event_refs"] == [f"event:{claim.seq}"]
-assert attempt["progress"] == "finder_claimed"
-assert attempt["presence"] == "present_at_report"
+search = next(item for item in document["import_searches"] if item["fullname"] == "timeline_target")
+assert search["id"] == f"search:{start.search_id}"
+assert search["start_event_ref"] == f"event:{start.sequence}"
+assert search["evidence_event_refs"] == [f"event:{finder_call.sequence}"]
+assert search["progress"] == "finder_found"
+assert search["presence"] == "present_at_report"
 mechanisms = {item["name"]: item for item in document["capture"]["mechanisms"]}
-assert mechanisms["import_audit_starts"]["overflow_policy"] == "retain_all"
-assert mechanisms["import_audit_starts"]["completeness"] == "resolution_starts"
-assert mechanisms["import_audit_starts"]["retained"] >= 1
+assert mechanisms["import_searches"]["overflow_policy"] == "retain_all"
+assert mechanisms["import_searches"]["completeness"] == "resolution_starts"
+assert mechanisms["import_searches"]["retained"] >= 1
 print("OK")
 """
 
@@ -98,7 +98,7 @@ THREAD_IDENTITIES = r"""
 import threading
 
 import metapathology
-from metapathology import ImportAuditStart
+from metapathology import ImportSearchStarted
 
 monitor = metapathology.install(report_at_exit=False)
 
@@ -118,11 +118,11 @@ second.join()
 starts = {
     event.fullname: event
     for event in monitor.events()
-    if isinstance(event, ImportAuditStart) and event.fullname.startswith("thread_identity_")
+    if isinstance(event, ImportSearchStarted) and event.fullname.startswith("thread_identity_")
 }
 assert starts["thread_identity_first"].thread_name == starts["thread_identity_second"].thread_name
 assert starts["thread_identity_first"].thread_id != starts["thread_identity_second"].thread_id
-assert starts["thread_identity_first"].attempt_id != starts["thread_identity_second"].attempt_id
+assert starts["thread_identity_first"].search_id != starts["thread_identity_second"].search_id
 print("OK")
 """
 
@@ -142,39 +142,39 @@ import os
 import sys
 
 import metapathology
-from metapathology import ImportAuditStart, InternalError
+from metapathology import ImportSearchStarted, MonitoringError
 
 monitor = metapathology.install(report_at_exit=False)
 import colorsys
 first_count = sum(
-    isinstance(event, ImportAuditStart) and event.fullname == "colorsys"
+    isinstance(event, ImportSearchStarted) and event.fullname == "colorsys"
     for event in monitor.events()
 )
 import colorsys
 second_count = sum(
-    isinstance(event, ImportAuditStart) and event.fullname == "colorsys"
+    isinstance(event, ImportSearchStarted) and event.fullname == "colorsys"
     for event in monitor.events()
 )
 assert first_count == second_count == 1
 
 import _decimal
 assert sum(
-    isinstance(event, ImportAuditStart) and event.fullname == "_decimal"
+    isinstance(event, ImportSearchStarted) and event.fullname == "_decimal"
     for event in monitor.events()
 ) == 1
 
 sys.audit("import", "synthetic-malformed")
 assert not any(
-    isinstance(event, ImportAuditStart) and event.fullname == "synthetic-malformed"
+    isinstance(event, ImportSearchStarted) and event.fullname == "synthetic-malformed"
     for event in monitor.events()
 )
-assert not any(isinstance(event, InternalError) and event.where == "audit_hook" for event in monitor.events())
+assert not any(isinstance(event, MonitoringError) and event.where == "audit_hook" for event in monitor.events())
 
 with open("importlib_audit_blindspot.py", "w", encoding="utf-8") as module_file:
     module_file.write("VALUE = 1\n")
 importlib.import_module("importlib_audit_blindspot")
 assert not any(
-    isinstance(event, ImportAuditStart) and event.fullname == "importlib_audit_blindspot"
+    isinstance(event, ImportSearchStarted) and event.fullname == "importlib_audit_blindspot"
     for event in monitor.events()
 )
 
@@ -210,7 +210,7 @@ sys.meta_path = list(sys.meta_path)
 import graphlib
 
 text = metapathology.render_report()
-timeline = text.split("-- event timeline", 1)[1].split("-- sys.meta_path reassignments", 1)[0]
+timeline = text.split("-- event timeline", 1)[1].split("-- sys.meta_path replacements", 1)[0]
 assert "sys.path_hooks and sys.path_importer_cache identities stable across all audited imports" in timeline, timeline
 assert "\n    meta_path 0x" in timeline, timeline
 print("OK")
@@ -227,7 +227,7 @@ REENTRANT = r"""
 import sys
 
 import metapathology
-from metapathology import ImportAuditStart
+from metapathology import ImportSearchStarted
 
 class ReentrantFinder:
     def find_spec(self, fullname, path=None, target=None):
@@ -238,7 +238,7 @@ class ReentrantFinder:
 monitor = metapathology.install(report_at_exit=False)
 sys.meta_path.insert(0, ReentrantFinder())
 import outer_timeline_module
-starts = [event.fullname for event in monitor.events() if isinstance(event, ImportAuditStart)]
+starts = [event.fullname for event in monitor.events() if isinstance(event, ImportSearchStarted)]
 assert "outer_timeline_module" in starts
 assert "colorsys" not in starts
 print("OK")
@@ -257,7 +257,7 @@ REASSIGNMENT = r"""
 import sys
 
 import metapathology
-from metapathology import ImportAuditStart, MetaPathReassignment
+from metapathology import ImportSearchStarted, MetaPathReplacement
 
 monitor = metapathology.install(report_at_exit=False)
 sys.meta_path = list(sys.meta_path)
@@ -266,14 +266,14 @@ events = monitor.events()
 start = next(
     event
     for event in events
-    if isinstance(event, ImportAuditStart) and event.fullname == "reassignment_timeline_module"
+    if isinstance(event, ImportSearchStarted) and event.fullname == "reassignment_timeline_module"
 )
 reassignment = next(
     event
     for event in events
-    if isinstance(event, MetaPathReassignment) and event.during_import == "reassignment_timeline_module"
+    if isinstance(event, MetaPathReplacement) and event.during_import == "reassignment_timeline_module"
 )
-assert start.seq < reassignment.seq, (start, reassignment)
+assert start.sequence < reassignment.sequence, (start, reassignment)
 assert start.meta_path_id != id(sys.meta_path)
 
 event_count = len(events)

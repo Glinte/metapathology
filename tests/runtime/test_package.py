@@ -8,30 +8,30 @@ _EXPECTED_PUBLIC_API = frozenset(
     {
         "AnalysisConfig",
         "CaptureConfig",
-        "DeepConfig",
-        "DeepDiagnosticCall",
-        "DeepImportEvent",
-        "FindSpecCall",
-        "ObjectRef",
-        "ImporterCacheDiff",
+        "DetailedCaptureConfig",
+        "ImportMechanismCall",
+        "ImportResult",
+        "MetaPathFinderCall",
+        "ObjectIdentity",
+        "ImporterCacheChange",
         "ImporterCacheEntry",
         "ImporterCacheReplacement",
-        "ImportAuditStart",
+        "ImportSearchStarted",
         "ImportCall",
-        "InternalError",
-        "MetaPathMutation",
-        "MetaPathReassignment",
+        "MonitoringError",
+        "MetaPathChange",
+        "MetaPathReplacement",
         "ModuleCacheState",
         "Monitor",
         "MonitorEvent",
-        "PathHooksMutation",
-        "PathHooksReassignment",
+        "PathHooksChange",
+        "PathHooksReplacement",
         "ReportJSON",
         "ReportStatus",
-        "SpecSummary",
-        "StandardFinderCall",
-        "SysPathMutation",
-        "SysPathReassignment",
+        "ModuleSpecSnapshot",
+        "PathFinderCall",
+        "SysPathChange",
+        "SysPathReplacement",
         "__version__",
         "activate_frozen",
         "get_monitor",
@@ -62,7 +62,7 @@ def test_package_import_defers_monitor_and_distribution_metadata(python_runner: 
 def test_record_api_does_not_load_dataclasses_or_typing(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(
         "import sys\n"
-        "from metapathology import InternalError\n"
+        "from metapathology import MonitoringError\n"
         "deferred = ('dataclasses', 'traceback', 'typing')\n"
         "print([name for name in deferred if name in sys.modules])\n"
     )

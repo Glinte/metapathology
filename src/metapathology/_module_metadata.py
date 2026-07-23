@@ -2,7 +2,7 @@
 
 import types
 
-from metapathology._records import ModuleCacheState, ObjectRef, SpecSummary, type_name
+from metapathology._records import ModuleCacheState, ModuleSpecSnapshot, ObjectIdentity, type_name
 from metapathology._spec import summarize_spec
 
 TYPE_CHECKING = False
@@ -44,14 +44,14 @@ class ModuleMetadata:
         self,
         *,
         name: str,
-        module: ObjectRef,
+        module: ObjectIdentity,
         inspection: "ModuleInspection",
         reason: str | None,
         spec_present: bool,
         spec_is_none: bool,
-        spec_summary: SpecSummary | None,
+        spec_summary: ModuleSpecSnapshot | None,
         module_loader_available: bool,
-        module_loader: ObjectRef | None,
+        module_loader: ObjectIdentity | None,
         loader_source: "ModuleLoaderSource",
         loader_agreement: bool | None,
     ) -> None:
@@ -68,7 +68,7 @@ class ModuleMetadata:
         self.loader_agreement = loader_agreement
 
     @property
-    def loader(self) -> ObjectRef | None:
+    def loader(self) -> ObjectIdentity | None:
         """Effective loader used to group this module."""
         spec_loader = None if self.spec_summary is None else self.spec_summary.loader
         return spec_loader if spec_loader is not None else self.module_loader
@@ -151,7 +151,7 @@ def safe_module_name(module: object) -> str | None:
 
 def inspect_module(name: str, module: object) -> ModuleMetadata:
     """Capture loader metadata without ordinary module attribute access."""
-    reference = ObjectRef.of(module)
+    reference = ObjectIdentity.of(module)
     namespace, reason = module_namespace(module)
     if namespace is None:
         return ModuleMetadata(
@@ -170,7 +170,7 @@ def inspect_module(name: str, module: object) -> ModuleMetadata:
 
     spec_present = "__spec__" in namespace
     spec = namespace.get("__spec__")
-    summary: SpecSummary | None = None
+    summary: ModuleSpecSnapshot | None = None
     raw_spec_loader: object | None = None
     spec_loader_available = False
     if spec is not None:
@@ -182,7 +182,7 @@ def inspect_module(name: str, module: object) -> ModuleMetadata:
 
     module_loader_available = "__loader__" in namespace
     raw_module_loader = namespace.get("__loader__")
-    module_loader = None if raw_module_loader is None else ObjectRef.of(raw_module_loader)
+    module_loader = None if raw_module_loader is None else ObjectIdentity.of(raw_module_loader)
     spec_loader = None if summary is None else summary.loader
     loader_source = "spec" if spec_loader is not None else "module" if module_loader is not None else "none"
     agreement = (raw_spec_loader is raw_module_loader) if spec_loader_available and module_loader_available else None

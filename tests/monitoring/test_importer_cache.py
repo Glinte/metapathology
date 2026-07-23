@@ -4,18 +4,18 @@ from hypothesis import given
 from hypothesis import strategies as st
 from support import PythonRunner
 
-from metapathology import ObjectRef
+from metapathology import ObjectIdentity
 from metapathology._importer_cache import _diff_importer_cache
 
 
-def _snapshot(values: dict[str, int | None]) -> dict[str, ObjectRef | None]:
+def _snapshot(values: dict[str, int | None]) -> dict[str, ObjectIdentity | None]:
     return {
-        path: None if object_id is None else ObjectRef(object_id=object_id, type_name="Finder")
+        path: None if object_id is None else ObjectIdentity(object_id=object_id, type_name="Finder")
         for path, object_id in values.items()
     }
 
 
-def _plain(snapshot: dict[str, ObjectRef | None]) -> dict[str, int | None]:
+def _plain(snapshot: dict[str, ObjectIdentity | None]) -> dict[str, int | None]:
     return {path: None if finder is None else finder.object_id for path, finder in snapshot.items()}
 
 
@@ -82,9 +82,9 @@ def test_path_hook_boundaries_record_add_replace_and_clear(python_runner: Python
     proc = python_runner.run_code_ok(
         "import sys\n"
         "import metapathology\n"
-        "from metapathology import ImporterCacheDiff\n"
+        "from metapathology import ImporterCacheChange\n"
         "class FirstFinder: pass\n"
-        "path = 'metapathology-cache-probe'\n"
+        "path = 'metapathology-cache-check'\n"
         "monitor = metapathology.install(report_at_exit=False)\n"
         "first = FirstFinder()\n"
         "sys.path_importer_cache[path] = first\n"
@@ -93,14 +93,14 @@ def test_path_hook_boundaries_record_add_replace_and_clear(python_runner: Python
         "sys.path_hooks.append(lambda value: None)\n"
         "sys.path_importer_cache.clear()\n"
         "sys.path_hooks.append(lambda value: None)\n"
-        "diffs = [event for event in monitor.events() if isinstance(event, ImporterCacheDiff)]\n"
+        "diffs = [event for event in monitor.events() if isinstance(event, ImporterCacheChange)]\n"
         "added = next(entry for diff in diffs for entry in diff.added if entry.path == path)\n"
         "assert added.finder is not None and added.finder.object_id == id(first)\n"
         "replaced = next(item for diff in diffs for item in diff.replaced if item.path == path)\n"
         "assert replaced.before is not None and replaced.after is None\n"
         "removed = next(entry for diff in diffs for entry in diff.removed if entry.path == path)\n"
         "assert removed.finder is None\n"
-        "assert all(left.seq < right.seq for left, right in zip(diffs, diffs[1:]))\n"
+        "assert all(left.sequence < right.sequence for left, right in zip(diffs, diffs[1:]))\n"
         "print('OK')\n"
     )
     assert proc.stdout.strip() == "OK"
@@ -111,12 +111,12 @@ def test_report_observes_negative_entries_and_ignores_non_string_keys(python_run
         "import json\n"
         "import sys\n"
         "import metapathology\n"
-        "path = 'metapathology-negative-probe'\n"
+        "path = 'metapathology-negative-check'\n"
         "metapathology.install(report_at_exit=False)\n"
         "sys.path_importer_cache[path] = None\n"
         "sys.path_importer_cache[object()] = object()\n"
         "document = json.loads(metapathology.render_report(format='json'))\n"
-        "events = [event for event in document['timeline'] if event['kind'] == 'importer_cache_diff']\n"
+        "events = [event for event in document['timeline'] if event['kind'] == 'importer_cache_change']\n"
         "entry = next(entry for event in events for entry in event['data']['added'] if entry['path'] == path)\n"
         "assert entry['finder'] is None\n"
         "report_snapshot = next(\n"
@@ -184,7 +184,7 @@ def test_text_report_describes_negative_and_replaced_cache_entries(python_runner
         "import sys\n"
         "import metapathology\n"
         "class Finder: pass\n"
-        "path = 'metapathology-text-cache-probe'\n"
+        "path = 'metapathology-text-cache-check'\n"
         "metapathology.install(report_at_exit=False)\n"
         "sys.path_importer_cache[path] = Finder()\n"
         "sys.path_hooks.append(lambda value: None)\n"

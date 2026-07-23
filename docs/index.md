@@ -1,45 +1,36 @@
-# metapathology
+# Diagnose import-hook contention
 
-`metapathology` is a stdlib-only diagnostic tool for
-[CPython's import system][python-imports]. It helps answer three questions:
+`metapathology` answers a narrow debugging question:
 
-- Which finder located each imported module?
-- Where did code change `sys.meta_path` or `sys.path_hooks`?
-- Which modules were found without going through the normal `sys.path` search?
+> Which finder handled this import, and did that stop another import hook from
+> running?
 
-It was created to investigate conflicts where one import customization prevents
-another from seeing a module. The monitor only observes: it never returns a
-module spec or loads a module itself.
-
-## Start here
-
-Run a script with the same Python interpreter and environment as the target:
+It is for Python developers investigating behavior that changes when editable
+installs, test runners, tracing, runtime type checking, or other import hooks
+are combined.
 
 ```console
-python -m metapathology myscript.py --my-args
-```
-
-Or run an importable module:
-
-```console
+pip install metapathology
+python -m metapathology your_script.py
 python -m metapathology -m pytest tests/
 ```
 
-The target runs normally and a diagnostic report is written to standard error
-when it finishes. See [Using metapathology](usage.md) for library integration
-and lifecycle control.
+The target runs normally. The report goes to standard error at exit.
+Metapathology observes and reports; it never supplies a module spec or changes
+an import result.
 
-[python-imports]: https://docs.python.org/3/reference/import.html
+## Choose the next page
 
-## Guide
+- [Get started](usage.md) to run a reproduction and save a report.
+- [Read a report](report.md) to interpret findings and current-state checks.
+- [Choose capture](capture.md) when the default evidence is insufficient.
+- [Start earlier](startup.md) when a finder arrived from a `.pth` file or
+  frozen bootstrap.
+- [Configure metapathology](configuration.md) for CLI, API, and environment
+  settings.
+- [Consume JSON](json.md) for integrations and the schema contract.
+- [Check limitations](limitations.md) before drawing a conclusion from missing
+  evidence.
 
-- [Using metapathology](usage.md) — CLI and library workflows
-- [How it works](concepts.md) — module caching, path hooks, and what the monitor records
-- [Reading the report](report.md) — sections, finding labels, and investigation order
-- [Library API](api.md) — public functions, `Monitor`, and event records
-- [Speed and memory use](performance.md) — overhead sources, benchmarks, and capture sizing
-- [Limitations and resource behavior](limitations.md) — observation boundaries and runtime cost
-- [Development](development.md) — invariants, checks, and documentation workflow
-
-`metapathology` supports CPython 3.10 and newer and has no runtime
-dependencies.
+The [library API](api.md) is intended for environments where the CLI wrapper is
+impractical. Most users do not need it.

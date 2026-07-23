@@ -41,14 +41,14 @@ def test_target_exception_reports_traceback_and_exits_nonzero(tmp_path: Path, te
 
 
 def test_no_arguments_starts_monitored_interactive_interpreter(tmp_path: Path, temp_project: TempProject) -> None:
-    temp_project.module("repl_probe_module", "VALUE = 5\n")
-    proc = run_cli(cwd=tmp_path, input_text="import repl_probe_module\nprint('value:', repl_probe_module.VALUE)\n")
+    temp_project.module("repl_check_module", "VALUE = 5\n")
+    proc = run_cli(cwd=tmp_path, input_text="import repl_check_module\nprint('value:', repl_check_module.VALUE)\n")
     assert proc.returncode == 0, proc.stderr
     # code.interact writes the banner to stderr, like the bare interpreter.
     assert "import monitoring is active" in proc.stderr
     assert "value: 5" in proc.stdout
     assert "== metapathology report ==" in proc.stderr
-    assert "repl_probe_module" in proc.stderr
+    assert "repl_check_module" in proc.stderr
 
 
 def test_interactive_interpreter_preloads_metapathology_and_survives_exit(tmp_path: Path) -> None:

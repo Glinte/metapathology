@@ -1,4 +1,4 @@
-"""Deep ``builtins.__import__`` observation, including cache-hit imports."""
+"""Detailed ``builtins.__import__`` observation, including cache-hit imports."""
 
 from pathlib import Path
 
@@ -12,7 +12,7 @@ import metapathology
 from metapathology import ImportCall
 
 before = builtins.__import__
-monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(import_calls=True)))
+monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(import_calls=True)))
 
 # cache_target is fresh here, so this is a real resolution...
 import cache_target
@@ -44,7 +44,7 @@ assert len(hits) == 2, hits
 assert hits[1]["data"]["module_state_before"]["state"] == "object"
 assert hits[1]["data"]["importing_module"] == "__main__"
 mechanisms = {item["name"]: item for item in document["capture"]["mechanisms"]}
-assert mechanisms["deep_import_calls"]["retained"] >= 2
+assert mechanisms["import_calls"]["retained"] >= 2
 print("OK")
 """
 
@@ -61,7 +61,7 @@ FROMLIST_AND_LEVEL = r"""
 import metapathology
 from metapathology import ImportCall
 
-monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(import_calls=True)))
+monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(import_calls=True)))
 
 from importcalls_pkg import leaf  # absolute import with a fromlist
 import importcalls_pkg.driver  # runs a relative "from . import leaf" inside the package
@@ -95,7 +95,7 @@ RAISED = r"""
 import metapathology
 from metapathology import ImportCall
 
-monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(import_calls=True)))
+monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(import_calls=True)))
 
 try:
     import definitely_not_a_real_module_xyz
@@ -135,7 +135,7 @@ def other_tool_import(name, *args, **kwargs):
 
 builtins.__import__ = other_tool_import
 
-with metapathology.monitoring(capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(import_calls=True))):
+with metapathology.monitoring(capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(import_calls=True))):
     import json  # noqa: F401
 
 # Our wrapper must delegate to the pre-existing one, and restore must leave the
@@ -160,7 +160,7 @@ from metapathology import ImportCall
 monitor = metapathology.install(report_at_exit=False)
 import json  # noqa: F401
 assert not any(isinstance(event, ImportCall) for event in monitor.events())
-assert monitor.deep_import_calls_status == "disabled"
+assert monitor.import_calls_capture_status == "disabled"
 print("OK")
 """
 

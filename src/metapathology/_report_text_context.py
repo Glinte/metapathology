@@ -2,7 +2,7 @@
 
 import os
 
-from metapathology._records import FindSpecCall, ObjectRef, PathHooksMutation, PathHooksReassignment
+from metapathology._records import MetaPathFinderCall, ObjectIdentity, PathHooksChange, PathHooksReplacement
 from metapathology._report_model import ReportDocument, finding_structural_comparison
 
 _ANSI_RESET = "\x1b[0m"
@@ -25,7 +25,7 @@ class _RenderContext:
         "hook_ambiguous",
         "only_thread",
         "relevant_cache_paths",
-        "routes_by_id",
+        "results_by_id",
     )
 
     def __init__(self, document: ReportDocument, *, color: bool) -> None:
@@ -49,21 +49,21 @@ class _RenderContext:
         finder_ids: dict[str, set[int]] = {}
         hook_ids: dict[str, set[int]] = {}
         for event in document.analysis.events:
-            if isinstance(event, FindSpecCall):
+            if isinstance(event, MetaPathFinderCall):
                 finder_ids.setdefault(event.finder_type_name, set()).add(event.finder_id)
-            elif isinstance(event, PathHooksMutation):
+            elif isinstance(event, PathHooksChange):
                 for reference in (*event.added, *event.removed, *event.contents_after):
                     _note_label(hook_ids, reference)
-            elif isinstance(event, PathHooksReassignment):
+            elif isinstance(event, PathHooksReplacement):
                 for reference in (*event.old_contents, *event.new_contents):
                     _note_label(hook_ids, reference)
         for reference in (*document.path_hooks.initial, *(document.path_hooks.current or ())):
             _note_label(hook_ids, reference)
         self.finder_ambiguous = {label for label, ids in finder_ids.items() if len(ids) > 1}
         self.hook_ambiguous = {label for label, ids in hook_ids.items() if len(ids) > 1}
-        self.routes_by_id = {route.route_id: route for route in document.analysis.resolution_routes}
+        self.results_by_id = {result.result_id: result for result in document.analysis.finder_results}
         self.comparisons_by_id = {
-            comparison.comparison_id: comparison for comparison in document.analysis.route_comparisons
+            comparison.comparison_id: comparison for comparison in document.analysis.finder_result_comparisons
         }
 
         relevant_cache_paths: set[str] = set()
@@ -71,8 +71,8 @@ class _RenderContext:
             structural = finding_structural_comparison(finding)
             if structural is not None:
                 relevant_cache_paths.update(os.path.normcase(path) for path in structural.importer_cache_changed_paths)
-        for route in document.analysis.resolution_routes:
-            relevant_cache_paths.update(os.path.normcase(path) for path in route.search_path)
+        for result in document.analysis.finder_results:
+            relevant_cache_paths.update(os.path.normcase(path) for path in result.search_path)
         self.relevant_cache_paths = relevant_cache_paths
 
     def display_path(self, path: str) -> str:
@@ -97,14 +97,14 @@ class _RenderContext:
             return f"{type_name} id 0x{finder_id:x}"
         return type_name
 
-    def hook_ref(self, reference: ObjectRef) -> str:
+    def hook_ref(self, reference: ObjectIdentity) -> str:
         """Name a path hook, adding its id only when ambiguous."""
         label = _ref_label(reference)
         if label in self.hook_ambiguous:
             return f"{label} id 0x{reference.object_id:x}"
         return label
 
-    def hook_refs(self, references: tuple[ObjectRef, ...]) -> str:
+    def hook_refs(self, references: tuple[ObjectIdentity, ...]) -> str:
         """Format a path-hook snapshot."""
         return "[" + ", ".join(self.hook_ref(reference) for reference in references) + "]"
 
@@ -123,9 +123,9 @@ class _RenderContext:
     def severity(self, text: str, severity: str) -> str:
         """Style a compact marker according to finding severity."""
         ansi = {
-            "actionable": _ANSI_BOLD_RED,
-            "warning": _ANSI_YELLOW,
-            "informational": _ANSI_CYAN,
+            "problem": _ANSI_BOLD_RED,
+            "risk": _ANSI_YELLOW,
+            "note": _ANSI_CYAN,
         }.get(severity, _ANSI_CYAN)
         return self.styled(text, ansi)
 
@@ -137,16 +137,16 @@ class _RenderContext:
         """Style a failure or removal marker."""
         return self.styled(text, _ANSI_BOLD_RED)
 
-    def warning(self, text: str) -> str:
-        """Style a warning or replacement marker."""
+    def risk(self, text: str) -> str:
+        """Style a risk or replacement marker."""
         return self.styled(text, _ANSI_YELLOW)
 
 
-def _note_label(ids_by_label: dict[str, set[int]], reference: ObjectRef) -> None:
+def _note_label(ids_by_label: dict[str, set[int]], reference: ObjectIdentity) -> None:
     """Record one displayed label/id pair for ambiguity detection."""
     ids_by_label.setdefault(_ref_label(reference), set()).add(reference.object_id)
 
 
-def _ref_label(reference: ObjectRef) -> str:
+def _ref_label(reference: ObjectIdentity) -> str:
     """Return a callable's own name when available, else its type name."""
     return reference.type_name if reference.name is None else reference.name

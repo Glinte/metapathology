@@ -32,7 +32,7 @@ def test_path_hook_mutators_record_plain_identity_data_without_calling_hooks(pyt
     proc = python_runner.run_code_ok(
         "import sys\n"
         "import metapathology\n"
-        "from metapathology import PathHooksMutation\n"
+        "from metapathology import PathHooksChange\n"
         "calls = []\n"
         "def first(path):\n"
         "    calls.append(path)\n"
@@ -53,7 +53,7 @@ def test_path_hook_mutators_record_plain_identity_data_without_calling_hooks(pyt
         "saved = list(sys.path_hooks)\n"
         "sys.path_hooks.clear()\n"
         "sys.path_hooks.extend(saved)\n"
-        "events = [event for event in monitor.events() if isinstance(event, PathHooksMutation)]\n"
+        "events = [event for event in monitor.events() if isinstance(event, PathHooksChange)]\n"
         "assert [event.op for event in events] == [\n"
         "    'append', 'insert', 'remove', 'extend', 'pop', '__setitem__',\n"
         "    '__delitem__', 'reverse', 'sort', '__iadd__', '__imul__', 'clear', 'extend'\n"
@@ -68,18 +68,18 @@ def test_path_hook_mutators_record_plain_identity_data_without_calling_hooks(pyt
     assert "OK" in proc.stdout
 
 
-def test_path_hooks_reassignment_is_recovered_on_next_import(python_runner: PythonRunner) -> None:
+def test_path_hooks_replacement_is_recovered_on_next_import(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(
         "import sys\n"
         "import metapathology\n"
-        "from metapathology import PathHooksReassignment\n"
+        "from metapathology import PathHooksReplacement\n"
         "monitor = metapathology.install(report_at_exit=False)\n"
         "mine = list(sys.path_hooks)\n"
         "sys.path_hooks = mine\n"
         "import colorsys\n"
         "assert sys.path_hooks is not mine\n"
         "assert type(sys.path_hooks) is not list\n"
-        "events = [event for event in monitor.events() if isinstance(event, PathHooksReassignment)]\n"
+        "events = [event for event in monitor.events() if isinstance(event, PathHooksReplacement)]\n"
         "assert len(events) == 1 and events[0].during_import == 'colorsys'\n"
         "mine.append(lambda path: None)\n"
         "assert len(sys.path_hooks) + 1 == len(mine)\n"
@@ -92,16 +92,16 @@ def test_simultaneous_import_list_reassignments_use_meta_then_path_hook_sequence
     proc = python_runner.run_code_ok(
         "import sys\n"
         "import metapathology\n"
-        "from metapathology import MetaPathReassignment, PathHooksReassignment\n"
+        "from metapathology import MetaPathReplacement, PathHooksReplacement\n"
         "monitor = metapathology.install(report_at_exit=False)\n"
         "sys.meta_path = list(sys.meta_path)\n"
         "sys.path_hooks = list(sys.path_hooks)\n"
         "import colorsys\n"
-        "events = [event for event in monitor.events() if isinstance(event, (MetaPathReassignment, PathHooksReassignment))]\n"
+        "events = [event for event in monitor.events() if isinstance(event, (MetaPathReplacement, PathHooksReplacement))]\n"
         "assert len(events) == 2, events\n"
-        "assert isinstance(events[0], MetaPathReassignment)\n"
-        "assert isinstance(events[1], PathHooksReassignment)\n"
-        "assert events[0].seq < events[1].seq\n"
+        "assert isinstance(events[0], MetaPathReplacement)\n"
+        "assert isinstance(events[1], PathHooksReplacement)\n"
+        "assert events[0].sequence < events[1].sequence\n"
         "print('OK')\n"
     )
     assert "OK" in proc.stdout
@@ -111,7 +111,7 @@ def test_hostile_callable_metadata_is_not_inspected(python_runner: PythonRunner)
     proc = python_runner.run_code_ok(
         "import sys\n"
         "import metapathology\n"
-        "from metapathology import PathHooksMutation\n"
+        "from metapathology import PathHooksChange\n"
         "class HostileHook:\n"
         "    def __getattribute__(self, name):\n"
         "        if name in ('__name__', '__qualname__'):\n"
@@ -122,7 +122,7 @@ def test_hostile_callable_metadata_is_not_inspected(python_runner: PythonRunner)
         "monitor = metapathology.install(report_at_exit=False)\n"
         "hook = HostileHook()\n"
         "sys.path_hooks.append(hook)\n"
-        "event = [event for event in monitor.events() if isinstance(event, PathHooksMutation)][-1]\n"
+        "event = [event for event in monitor.events() if isinstance(event, PathHooksChange)][-1]\n"
         "assert event.added[0].type_name == 'HostileHook'\n"
         "assert event.added[0].name is None\n"
         "print('OK')\n"
@@ -134,7 +134,7 @@ def test_path_hook_callback_is_inert_during_reentrant_finder_instrumentation(pyt
     proc = python_runner.run_code_ok(
         "import sys\n"
         "import metapathology\n"
-        "from metapathology import PathHooksMutation\n"
+        "from metapathology import PathHooksChange\n"
         "hook = lambda path: None\n"
         "class ReentrantFinder:\n"
         "    def __getattr__(self, name):\n"
@@ -146,7 +146,7 @@ def test_path_hook_callback_is_inert_during_reentrant_finder_instrumentation(pyt
         "sys.meta_path.append(ReentrantFinder())\n"
         "assert hook in sys.path_hooks\n"
         "assert not any(\n"
-        "    isinstance(event, PathHooksMutation)\n"
+        "    isinstance(event, PathHooksChange)\n"
         "    and any(reference.object_id == id(hook) for reference in event.added)\n"
         "    for event in monitor.events()\n"
         ")\n"
@@ -155,12 +155,12 @@ def test_path_hook_callback_is_inert_during_reentrant_finder_instrumentation(pyt
     assert "OK" in proc.stdout
 
 
-def test_concurrent_path_hook_mutation_reads_reports_and_cleanup_are_safe(python_runner: PythonRunner) -> None:
+def test_concurrent_path_hooks_change_reads_reports_and_cleanup_are_safe(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(
         "import sys\n"
         "import threading\n"
         "import metapathology\n"
-        "from metapathology import PathHooksMutation\n"
+        "from metapathology import PathHooksChange\n"
         "monitor = metapathology.install(report_at_exit=False)\n"
         "instrumented = sys.path_hooks\n"
         "barrier = threading.Barrier(5)\n"
@@ -179,7 +179,7 @@ def test_concurrent_path_hook_mutation_reads_reports_and_cleanup_are_safe(python
         "        barrier.wait()\n"
         "        for _ in range(100):\n"
         "            events = monitor.events()\n"
-        "            assert all(a.seq < b.seq for a, b in zip(events, events[1:]))\n"
+        "            assert all(a.sequence < b.sequence for a, b in zip(events, events[1:]))\n"
         "    except BaseException as exc:\n"
         "        failures.append(exc)\n"
         "def report():\n"
@@ -206,10 +206,10 @@ def test_concurrent_path_hook_mutation_reads_reports_and_cleanup_are_safe(python
         "cleanup_thread.start()\n"
         "cleanup_barrier.wait()\n"
         "metapathology.uninstall()\n"
-        "event_count = len([event for event in monitor.events() if isinstance(event, PathHooksMutation)])\n"
+        "event_count = len([event for event in monitor.events() if isinstance(event, PathHooksChange)])\n"
         "cleanup_thread.join()\n"
         "instrumented.append(lambda path: None)\n"
-        "assert len([event for event in monitor.events() if isinstance(event, PathHooksMutation)]) == event_count\n"
+        "assert len([event for event in monitor.events() if isinstance(event, PathHooksChange)]) == event_count\n"
         "assert type(sys.path_hooks) is list and sys.path_hooks is not instrumented\n"
         "print('OK')\n"
     )

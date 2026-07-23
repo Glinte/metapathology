@@ -3,7 +3,7 @@
 Status: design note, recorded 2026-07-19. Not metapathology work — this is
 about how import-instrumenting tools (beartype among them) could avoid the
 conflicts metapathology diagnoses. Relevant to our docs advice
-(`docs/report.md`, path-hook-shadow "What to do") and to upstream
+(`docs/report.md`, competing-path-hooks "What to check") and to upstream
 discussions such as beartype#556.
 
 ## The observation
@@ -74,6 +74,6 @@ redirector) is skipped, which can import the wrong files entirely.
 - A metapathology report from `reproductions/beartype-556` is the concrete
   exhibit for the upstream argument: it shows the claim-before-`PathFinder`
   mechanism this pattern eliminates.
-- If this pattern gains adoption, the path-hook-shadow and comparison
+- If this pattern gains adoption, the competing-path-hooks and comparison
   guidance in `docs/report.md` should name it as the stronger form of
   "make the hooks cooperate."

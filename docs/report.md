@@ -1,416 +1,268 @@
-# Reading the report
+# Read the report
 
-The report leads with a verdict and puts detail below it. Read top to bottom
-and stop when you have your answer:
+Read from the top and stop when you have an explanation:
 
-1. **Header** — how your program finished, a one-line verdict, and the state
-   of `sys.meta_path` and `sys.path_hooks`.
-2. **Findings** — numbered problems, most severe first, each with its
-   evidence.
-3. **Comparisons and summaries** — modules found by a custom finder, imports
-   that never produced a module, and per-finder call counts.
-4. **Event timeline and detail sections** — everything that was recorded, in
-   order, with stack traces for each change to `sys.meta_path` and
-   `sys.path_hooks`.
+1. **Outcome and verdict** tell you how the target finished and whether
+   metapathology found a concrete problem.
+2. **Findings or explanations** name the affected module, finder, or path and
+   point to the evidence.
+3. **Finder comparisons** show how an observed custom-finder result differs
+   from Python's standard path search.
+4. **Timeline and change sections** show what happened and where import state
+   was modified.
 
-Paths under the working directory are shown relative to it (the header names
-the base directory), and object ids like `0x2a30...` appear only when two
-displayed objects would otherwise look identical. The JSON report always
-keeps absolute paths and full identity data; see [JSON report](#json-report).
+Paths below the working directory are shortened in text reports. JSON keeps
+absolute paths and full object identities.
 
-## Header
+## Outcome and verdict
 
-The first lines state how your program finished (`target outcome:`) and what
-the evidence says (`verdict:`), naming the most severe finding when there is
-one. After that:
+`target outcome:` reports whether the target completed, raised, or called
+`SystemExit`. A target exception is not automatically an import-hook problem.
 
-- `monitoring:` lists which mechanisms were active.
-- `sys.meta_path` and `sys.path_hooks` snapshots are shown once when
-  unchanged, or as `at install:` / `now:` pairs when something changed them.
-- `sys.path_importer_cache: 17 -> 34 entries` counts cached path entries at
-  install and at report time.
-- `modules imported since install:` counts new `sys.modules` entries.
+The verdict counts:
 
-`BuiltinImporter`, `FrozenImporter`, and `PathFinder` appear as "standard
-CPython finders left unwrapped (expected)". They handle built-in, frozen, and
-path-based imports respectively. They are classes shared by the interpreter,
-so metapathology deliberately does not modify them; this is normal and not a
-sign of a degraded installation.
+- **Problems**, where capture connects unusual import behavior to an observed
+  effect.
+- **Risks**, where the behavior is suspicious but the report cannot prove it
+  caused a failure.
+- **Notes**, which provide context without alleging a fault.
 
-A finder installed by well-known environment tooling gets a note under the
-snapshot, such as `_Finder is installed by virtualenv at startup; its
-presence is expected`. The note is display-only and never affects findings.
+When a block says `observed`, metapathology recorded that event while the
+target ran. `Correlated` joins several recorded events. `Inferred` combines
+recorded activity with state inspected later. The last case deserves more
+verification.
 
 ## Findings
 
-Findings are numbered problems, ordered by severity: `actionable` (evidence
-points at a concrete problem), `warning` (a compatibility or correctness
-risk), or `informational`. Each block names the module and finder involved,
-lists its supporting events, ends with a sentence stating the evidence level
-and its limits, and links to the matching section below. Findings are
-diagnostic leads, not verdicts — the last line of each block tells you how
-much to trust it.
+### `module-executed-again`
 
-A run with no findings states that in one sentence. Background for all of
-these sections: [How it works](concepts.md) explains finders, module specs,
-and the module cache in a few minutes' reading.
+**What it means.** The same loader executed the same module name again, but
+with a different module object. This is not an ordinary
+[`importlib.reload()`](https://docs.python.org/3/library/importlib.html#importlib.reload),
+which normally reuses the object already stored in `sys.modules`.
 
-### namespace-truncation
+**Why it matters.** Code can retain references to both objects. State, patches,
+and type identities attached to one object are then invisible through the
+other. Native extensions may also reject being initialized twice.
 
-A custom finder answered for a
+**What to check.** Follow both loader events. Look for code that removed or
+replaced the first [`sys.modules`](https://docs.python.org/3/library/sys.html#sys.modules)
+entry, or called `exec_module()` manually with another object. This finding
+requires loader-call capture.
+
+### `module-failed-after-loading`
+
+**What it means.** One import loaded the module, then a later import resolved
+the same normalized origin with the same loader type and failed.
+
+**Why it matters.** A normal second import is served from `sys.modules`; it
+does not resolve and execute the module again. Something made the first cache
+entry unavailable. Source modules can fail on a second execution, and some
+native extensions explicitly reject a second load.
+
+**What to check.** Follow the linked searches and inspect code that removes or
+replaces the module-cache entry. The report establishes the earlier success,
+later failure, loader type, and origin. It does not invent an exception message
+that was not captured.
+
+### `import-failed-after-state-change`
+
+**What it means.** An import failed after `sys.meta_path`, `sys.path_hooks`,
+`sys.path`, or the importer cache changed during that same import search.
+
+**Why it matters.** Changing import state while resolution is in progress can
+remove the finder or path needed by the import. Timing alone does not prove
+that this happened.
+
+**What to check.** Open the linked change and its stack, then ask whether the
+added, removed, or reordered entry could affect the failed module. This
+finding requires exact import-result capture.
+
+### `finder-changed-module-cache`
+
+**What it means.** A finder's `find_spec()` call changed the target module's
+`sys.modules` entry even though the finder returned `None` or raised.
+
+**Why it matters.** A finder is expected to decide whether it can locate a
+module. Loading or replacing that module while making the decision changes
+what later finders and imports see.
+
+**What to check.** The report shows the cache state before and after the call.
+Inspect that finder's `find_spec()` implementation for an import of the target
+or a related module. The
+[`MetaPathFinder.find_spec()` contract](https://docs.python.org/3/library/importlib.html#importlib.abc.MetaPathFinder.find_spec)
+is useful when reporting the behavior upstream.
+
+### `module-replacement`
+
+**What it means.** During a loader's `create_module()` or `exec_module()` call,
+the object stored for the module name changed, or the loader was given a
+different object from the one in `sys.modules`.
+
+**Why it matters.** Recursive imports and existing references may see a
+different module object from later imports. Lazy-loading systems sometimes do
+this deliberately, so the finding is about identity, not necessarily a bug.
+
+**What to check.** Compare the object identities shown in the finding. If the
+replacement is intentional, check whether code keeps early references. If it
+is not intentional, start with the named loader. This finding requires
+loader-call capture.
+
+### `missing-namespace-locations`
+
+**What it means.** A custom finder returned a
 [namespace package](https://docs.python.org/3/reference/import.html#namespace-packages)
-but returned fewer search locations than the standard path search finds, and
-an import of one of its submodules failed.
+with fewer search locations than `PathFinder` found, and an import below one
+of the omitted locations failed.
 
-*Background.* A namespace package's contents can be spread over several
-directories; its `__path__` lists all of them. A finder that rebuilds this
-list — editable installs commonly do — can accidentally omit directories,
-and any submodule that only exists in an omitted directory becomes
-unimportable, even though it is right there on disk.
+**Why it matters.** A namespace package can span several directories. Its
+`__path__` must preserve every contributing location; omitting one makes
+modules in that directory unreachable.
 
-*What to do.* The finding names the omitted location and the finder. Check
-how that finder (usually an editable-install hook from your build backend)
-was configured; reinstalling the affected package, or installing it
-non-editable, typically restores the full namespace. Report the omission to
-the tool that installed the finder.
+**What to check.** The explanation names the missing location and failed
+descendant. Editable-install finders are a common source, so try reinstalling
+the distribution, comparing editable and regular installs, and reporting the
+omission to the build backend or finder maintainer.
 
-### regular-module-shadows-namespace
+### `module-hides-namespace`
 
-PathFinder found a namespace-package candidate in an earlier `sys.path`
-entry, continued searching, selected a regular module from a later entry,
-and an exact import of that module's descendant then failed.
+**What it means.** `PathFinder` saw a namespace-package portion in an earlier
+`sys.path` entry, continued searching, and selected a regular module or package
+from a later entry. An import below the selected name then failed.
 
-*Background.* Finding a namespace portion does not end PathFinder's search.
-A later regular package or module wins. That is normal import behavior, but a
-regular module has no package search path, so an import such as
-`python.runfiles` fails when a later `python.py` displaced an earlier
-`python/` namespace directory.
+**Why it matters.** Continuing after a namespace portion is normal Python
+behavior. The problem is the collision: a later regular module wins and may
+not support the descendants that existed under the namespace directory.
 
-*What to do.* The explanation names the namespace path, selected file, and
-failed descendant. Fix the path ordering, rename the colliding module, or
-make the selected module a package if descendants are intended. The
-selection and failure are captured exactly; their causal connection is
-reported as correlated because exception messages are not retained.
+**What to check.** The explanation names the namespace location, selected
+file, and failed descendant. Fix path order, rename the colliding module, or
+make the selected object a package if descendants are intended.
 
-### no-spec
+### `competing-path-hooks`
 
-A module is in `sys.modules` with no
-[`__spec__`](https://docs.python.org/3/reference/import.html#import-related-module-attributes)
-attribute and no recorded finder call.
+**What it means.** Two different
+[path hooks](https://docs.python.org/3/reference/import.html#path-entry-finders)
+accepted the same path in observed calls.
 
-*Background.* Every module loaded through the normal import machinery gets a
-module spec describing how it was found. A module without one was likely
-created manually (`types.ModuleType(...)` inserted into `sys.modules`) or
-executed directly with loader APIs. Import hooks never saw it, so tools that
-rely on hooks (assertion rewriters, type-checking instrumenters) cannot have
-processed it.
+**Why it matters.** `PathFinder` tries `sys.path_hooks` in order and caches the
+first path-entry finder that accepts a path. The other hook does not process
+imports from that path.
 
-*What to do.* Usually informational — several stdlib modules (for example
-`pyexpat.errors`) are created this way and are harmless. Investigate only if
-the module is one that another import hook was supposed to process; then
-find the code that creates it and load it through
-`importlib.import_module()` instead.
+**What to check.** Confirm that the acceptances refer to comparable path state;
+the report may have observed them at different times. Reordering hooks and
+clearing `sys.path_importer_cache` can demonstrate the conflict, but it merely
+chooses the other behavior. The durable fix is for the tools to cooperate,
+often by delegating to or wrapping
+[`FileFinder`](https://docs.python.org/3/library/importlib.html#importlib.machinery.FileFinder).
+This finding requires path-hook-call capture.
 
-### finder-side-effect
+### `legacy-finder-api`
 
-A finder changed the target module's `sys.modules` entry even though it
-returned `None` or raised.
+**What it means.** A meta-path finder has callable `find_module()` but no
+callable `find_spec()`.
 
-*Background.* `find_spec()` is supposed to answer "can you locate this
-module?" without loading anything. A finder that inserts, removes, or
-replaces `sys.modules` entries while answering changes what every later
-import of that name sees.
+**Why it matters.** `find_module()` is the pre-3.4 API. Python 3.12
+[removed the fallback that called it](https://docs.python.org/3/whatsnew/3.12.html#importlib),
+so newer interpreters skip that finder. Code that assumes every meta-path
+entry has `find_spec()` can also fail; [pytest#12179](https://github.com/pytest-dev/pytest/issues/12179)
+is a real example.
 
-*What to do.* The finding shows the before/after state at the finder call.
-Read that finder's `find_spec` implementation; a common cause is importing
-the target (or a sibling) as part of deciding whether to handle it. Report
-it to the finder's maintainer with the event numbers from the report.
+**What to check.** Use the linked `sys.meta_path` change to identify what
+installed the finder, then upgrade or replace that package. Metapathology
+inspects the methods without calling them.
 
-### module-replacement
+### `module-without-spec`
 
-A loader call began and ended with different module objects. Requires
-`--deep-loaders`.
+**What it means.** A module is in `sys.modules` without
+[`__spec__`](https://docs.python.org/3/reference/import.html#import-related-module-attributes),
+and no recorded finder call explains it.
 
-*Background.* Python puts the new module object in `sys.modules` *before*
-executing it, so recursive imports see the same object. A loader (or the
-module's own code) that swaps in a different object afterwards splits
-identity: code holding a reference from before the swap has a different
-object than later imports receive, so attribute patches and state on one are
-invisible on the other.
+**Why it matters.** Normal imports create a
+[`ModuleSpec`](https://docs.python.org/3/library/importlib.html#importlib.machinery.ModuleSpec).
+A missing spec often means code created the module manually or executed it
+through lower-level loader APIs, bypassing tools that rely on import hooks.
 
-*What to do.* The finding shows both object identities. If a library does
-this intentionally (lazy-loading proxies do), be careful about holding early
-references to it. If not intentional, the loader named in the finding is the
-place to look.
+**What to check.** Many such modules are harmless—some standard-library
+modules are created this way. Investigate only when the named module should
+have passed through another import hook. Then look for `types.ModuleType`,
+manual `sys.modules` insertion, or direct loader execution.
 
-### repeated-loader-execution
+## Finder results and comparisons
 
-The same loader executed the same module name again using a different module
-object. Requires `--deep-loaders`. This is more specific than
-`module-replacement` and is not an ordinary `importlib.reload()`, which
-normally reuses the object already in `sys.modules`.
+For modules found by a custom finder, the report can show:
 
-*What to do.* Follow both linked loader events and look for code that removed
-the first object from `sys.modules` or manually called `exec_module()` with a
-second object. Re-executing a native extension this way can fail even when
-both resolutions selected the same file.
+- **During the run:** the result that finder actually returned.
+- **Standard search at report time:** what
+  [`PathFinder.find_spec()`](https://docs.python.org/3/library/importlib.html#importlib.machinery.PathFinder.find_spec)
+  returns for the same name and recorded search path when the report is built.
 
-### repeated-load-failure
+A different loader is often legitimate. Editable installs, assertion
+rewriters, and instrumentation tools exist specifically to use custom loaders.
+The comparison becomes useful when another tool expected the standard path
+search to run. In [beartype#556](https://github.com/beartype/beartype/issues/556),
+an editable-install finder handled the module first, so beartype's path hook
+never saw it.
 
-An exact import loaded successfully, then a later exact import of the same
-module failed after PathFinder selected the same loader type and normalized
-origin again. Unlike `repeated-loader-execution`, this finding does not
-require `exec_module()` instrumentation and is not limited to native
-extensions.
+The standard search uses current files, hooks, and caches. It also calls
+`PathFinder` directly, skipping other meta-path finders. Read it as “what the
+standard path search returns now,” not “what would have won earlier.”
 
-*Background.* A module normally remains in `sys.modules`, so another import
-does not resolve or execute its file again. If code removes or replaces that
-cache entry, the same source file, zip entry, or native extension may be
-loaded a second time. Source code can fail during its second execution, and
-some native extensions explicitly reject a second load.
+The optional displaced-finder check investigates a different pattern: an
+importer-cache entry changed, a later lookup through that path failed, and the
+old finder is still available to ask about the failed module. It checks at most
+16 candidates per report and states when more were omitted.
 
-*What to do.* Follow the linked attempts to find what made the first module
-unavailable in `sys.modules`. The report proves the earlier success, later
-failure, and repeated loader/origin selection, but deliberately does not
-claim a particular exception because import exception messages are not
-captured. JSON findings retain explicit `data.attempt_refs` for the earlier
-load and every later exact failed attempt, including outer attempts that
-delegated to an inner PathFinder resolution.
+## Imports that did not produce a module
 
-### legacy-finder-contract
+This section lists import searches that left no module in `sys.modules`.
+Failed optional imports are common and harmless. Pay attention when the target
+failed for the same module; the report marks it.
 
-A finder on `sys.meta_path` has a `find_module` method but no `find_spec`.
-
-*Background.* `find_module` is the pre-Python-3.4 finder protocol.
-[CPython 3.12 removed the fallback](https://docs.python.org/3/whatsnew/3.12.html#importlib)
-that called it, so on 3.12+ the import system silently skips this finder —
-whatever it was supposed to provide simply never happens. Third-party code
-that iterates `sys.meta_path` itself may fail with `AttributeError` on any
-version (the trigger for [pytest#12179](https://github.com/pytest-dev/pytest/issues/12179)).
-
-*What to do.* Find what installed the finder (the report links the
-`sys.meta_path` change that added it, with a stack trace) and upgrade it —
-this is typically a very old vendored `six` or similar compatibility shim.
-If it cannot be upgraded, removing it from `sys.meta_path` is usually safe
-on 3.12+ where it is never called anyway.
-
-### path-hook-shadow
-
-Two different [path hooks](https://docs.python.org/3/reference/import.html#path-entry-finders)
-accepted the same path entry. Requires `--deep-path-hooks`.
-
-*Background.* When `PathFinder` meets a new path entry, it tries the
-factories in `sys.path_hooks` in order and caches the first finder that
-accepts. The second hook never handles that path, even though it also
-claimed to understand it — a common way for two instrumentation tools to
-conflict.
-
-*What to do.* As a workaround, check `sys.path_hooks` order in the header
-and decide which behavior you need more: importing the tool that must win
-first (or re-registering its hook at the front), then clearing
-`sys.path_importer_cache`, hands it the contested paths — but the other
-hook's behavior is now the one silently lost.
-
-The real fix is to make the hooks cooperate instead of compete, and that is
-a change inside one of the two tools: the winning hook's path entry finder
-can wrap or subclass the standard
-[`FileFinder`](https://docs.python.org/3/library/importlib.html#importlib.machinery.FileFinder)
-(or delegate to the finder the other hook would have created) so both
-behaviors run for the same path. This is how tools like pytest's assertion
-rewriter compose with the standard machinery. Report the conflict upstream
-to both projects and attach this report; the event numbers show exactly
-which paths were contested and which hook won.
-
-### failed-after-mutation
-
-An import failed after a structural mutation occurred inside that exact import
-attempt. Requires `--deep-import-outcomes`.
-
-*Background.* Older reports paired every failure with the latest mutation
-anywhere earlier in the process, which was too noisy. The finding now requires
-the mutation event to fall between the attempt's captured start and failure.
-
-*What to do.* The finding links both the mutation (with its stack trace) and
-the failed import. Order alone does not prove causation — confirm by
-checking whether the removed/moved finder was the one that could have found
-the failed module.
-
-## Modules found by a custom finder
-
-When a finder other than `PathFinder` found a module whose source lives on
-the filesystem, this section compares two results:
-
-- **during the run** — the spec the custom finder actually returned, as
-  recorded when it happened;
-- **standard search at report time** — what
-  [`PathFinder.find_spec()`](https://docs.python.org/3/library/importlib.html#importlib.machinery.PathFinder)
-  finds for the same name and search path, called fresh while the report is
-  being written.
-
-A difference here is evidence, not automatically a problem. Editable
-installs, assertion rewriters, and similar tools legitimately use a different
-loader than the standard search would. The comparison matters when another
-tool needed the standard search to happen — as in
-[beartype#556](https://github.com/beartype/beartype/issues/556), where an
-editable-install finder found the module first and beartype's path hook never
-saw it.
-
-Two caveats, stated once in the section intro:
-
-- The fresh search runs at report time, against current path hooks, cache,
-  and filesystem state — any of which may have changed since the import.
-- It calls `PathFinder` directly, skipping other custom finders, so it does
-  not show which finder would have won had the custom finder been absent.
-
-The `since install:` line notes whether `sys.path_hooks` or the relevant
-`sys.path_importer_cache` entries changed between install and report time —
-useful when deciding whether the fresh search still reflects import-time
-conditions.
-
-## Imports that started but produced no module
-
-Imports that began but left nothing in `sys.modules`. Failed optional
-imports (`pwd` on Windows, `fcntl`, try/except import fallbacks) are normal
-here. An entry matters when your program actually needed the module — when
-the run failed with `ModuleNotFoundError`, the failed module is marked.
+An `import started` event comes from CPython's
+[`import` audit event](https://docs.python.org/3/library/audit_events.html#audit-events).
+It says resolution started, not that the import succeeded or which finder won.
+Imports served from the module cache do not emit this event.
 
 ## Finder calls
 
-Per-finder totals: how many times each wrapped finder's `find_spec()` was
-called and which modules it found. Standard CPython finders are not wrapped,
-so their calls do not appear here; imports they handled show up in the next
-section instead.
+This section counts calls to instrumented finder instances and lists the
+modules they found. Standard CPython class finders are deliberately not
+modified; their work appears in the standard-resolution section instead.
 
-## Imports attributed to standard finders
+## Event timeline and change sections
 
-When no custom finder found a module, the report attributes it to the
-standard finder that evidently handled it. Entries marked `[inferred]`
-combine import order with module metadata read at report time — the actual
-`find_spec()` call was not recorded, so treat them as a reconstruction.
-Entries marked `[captured]` come from `--deep-import-outcomes`, which records
-the real `PathFinder` result.
+The timeline orders all recorded events under one `#n` sequence so findings
+can point back to them. On multi-threaded runs, this is monitor-recording order,
+not a precise wall-clock order.
 
-With deep path-entry capture, this section also explains when an earlier path
-entry supplied a namespace candidate but `PathFinder` correctly continued and
-selected a regular package or module from a later entry. Both candidate path
-and selected origin are captured evidence.
+Long runs of routine events may collapse in text. Set
+`METAPATHOLOGY_TEXT_TIMELINE=full` to show every event. JSON is always
+complete.
 
-## Event timeline
+The sections after the timeline answer specific questions:
 
-Every recorded event in capture order: import starts, finder calls,
-`sys.meta_path`, `sys.path_hooks`, and opt-in `sys.path` changes, importer cache diffs, and
-internal errors, all sharing one `#n` numbering that findings reference.
+- `sys.meta_path changes`: who added, removed, or reordered finders?
+- `sys.meta_path replacements`: when did metapathology discover that code
+  assigned a new list? The shown stack belongs to the next import, because
+  plain assignment cannot be intercepted.
+- `sys.path_hooks changes` and replacements: who changed path-hook order?
+- `sys.path changes` and replacements: what changed when `--sys-path` was
+  enabled?
+- `sys.path_importer_cache changes`: which paths gained, lost, or switched
+  path-entry finders between snapshots?
+- Loader inventory: which loader does each module report at report time?
+- Monitoring errors: where did metapathology lose evidence while allowing the
+  target import to continue?
 
-Long runs of routine events (imports where every finder returned `None`)
-collapse into a single line; any event referenced by a finding stays
-expanded. Set `METAPATHOLOGY_TEXT_TIMELINE=full` to disable collapsing. The
-JSON report always lists every event.
+## Report-time checks
 
-Two things this timeline cannot show:
+`active` means the check ran. `disabled` means configuration turned it off.
+`unavailable` means it was requested but a required capture mechanism was
+explicitly disabled; the report lists what is missing.
 
-- An `import started:` line means resolution began; it does not say whether
-  the import succeeded or which finder won. Imports satisfied from
-  `sys.modules` never appear at all.
-- Events are numbered in the order the monitor recorded them. With multiple
-  threads, that order is consistent but not an exact wall-clock order.
+## What “no problems found” means
 
-## Detail sections
-
-Below the timeline, each mechanism has its own section with full detail:
-
-- **`sys.meta_path` mutations** — every list operation (append, insert,
-  remove, slice assignment, reorder, …) with the resulting list and up to
-  five stack frames showing which code made the change. This is the section
-  to use when asking "who reordered the finders?".
-- **`sys.meta_path` reassignments** — code that replaced the whole list
-  (`sys.meta_path = [...]`). Plain assignment cannot be intercepted, so it
-  is detected on the next import; the stack shown belongs to that import,
-  not to the assignment.
-- **`sys.path_hooks` mutations and reassignments** — the same records for
-  `sys.path_hooks`. Hooks are identified by name; they are never called or
-  wrapped by default monitoring.
-- **`sys.path` mutations and reassignments** — shown when
-  `--sys-path` or `--deep` is active. String paths are captured
-  exactly; non-string entries are represented only by type name.
-- **`sys.path_importer_cache` changes** — paths added, removed, or switched
-  to a different path entry finder between snapshots (taken at install,
-  around `sys.path_hooks` changes, and at report time). A value of `None`
-  means Python recorded that no importer handles that path. Short-lived
-  changes between snapshots can be missed.
-- **Loaders of imported modules** — modules grouped by the loader recorded
-  in their metadata at report time. Only custom loaders and metadata
-  problems are shown in text; JSON keeps the full inventory. This is
-  report-time state and may differ from how a module was originally loaded.
-- **Internal errors** — failures inside metapathology itself, recorded
-  instead of breaking your program's imports. Exception text may be omitted
-  because formatting a foreign exception during an import can execute
-  arbitrary code.
-
-Sections with nothing to show are collapsed into one final
-`Nothing was recorded for:` line.
-
-## Deep diagnostics in the report
-
-With `--deep` options active, the header carries a warning (deep mode places
-monitor code inline with imports) and the timeline gains lines for path hook
-calls, path entry finder calls, and loader `create_module()` /
-`exec_module()` calls. Deep lines that ran nested inside another observed
-call (a common effect of importing during `exec_module()`) record the call
-but not its result; the timeline preamble explains this once when it
-applies. `--deep-import-outcomes` adds `import of 'x': loaded/failed`
-lines recorded at the interpreter's own import boundary — a definitive
-result, stronger evidence than any inference. The header's
-`import outcome observation:` line states the coverage achieved, or why the
-mechanism was unavailable (for example, another profiler was already
-installed).
-
-## JSON report
-
-`render_report(format="json")`, `write_report(..., format="json")`,
-`--report file.json`, and `--report-json PATH` produce a machine-readable
-document built from the same data as the text report, but complete: nothing
-is collapsed, capped, or relativized. Repeatable automatic-report flags render
-all requested formats from one captured document.
-
-The schema is versioned and stable:
-
-```json
-{"name": "metapathology.report", "major": 2, "minor": 0}
-```
-
-The bundled `metapathology/report.schema.json` file is the contract. Minor
-versions only add fields — consumers must ignore unknown fields and tolerate
-unknown enum values. Field removals or meaning changes require a new major
-version.
-
-Conventions for consumers:
-
-- Top-level sections include `capture`, `snapshots`, `import_attempts`,
-  `resolution_routes`, `route_comparisons`, `timeline`, `findings`,
-  `summary`, `target_outcome`, and `diagnostics`.
-- A field is *omitted* when the concept does not apply, `null` when it
-  applies but was not captured, and an empty array when the collection is
-  known to be empty.
-- `*_ref` fields resolve to IDs within the same document (for example an
-  event's `data.attempt_ref` names an `import_attempts` entry). Object identity
-  values are only meaningful within their originating process.
-- `timeline` is ordered by capture sequence. Each event is an envelope
-  (`id`, `seq`, `kind`) whose `data` object holds the fields specific to that
-  `kind`.
-- `snapshots` and `findings` use the same envelope pattern. A snapshot's `data`
-  holds its `kind`-specific `entries` (plus `non_string_keys` for
-  `importer_cache`). A finding's `data` is tagged by `detail` and carries the
-  evidence for that family (for example `claim`, `deep_call`, `attempt_refs`,
-  `route_refs`/`route_comparison_ref`, or `finder_contract_ref`).
-- `summary.counts` holds the per-severity finding totals (`actionable`,
-  `warning`, `informational`).
-- findings are in report priority order.
-- `report_status` is `complete`, `partial` (valid but some instrumentation
-  or copy errors occurred), or `generation_failed` (a minimal fallback
-  document).
-
-JSON retains absolute paths, `argv`, and stack file names. Review a report
-before sharing it outside its original trust boundary.
-
-For what the monitor cannot observe at all, see
-[Limitations](limitations.md).
+It means the enabled capture mechanisms did not produce a problem finding. It
+does not certify the entire import history. Check the `monitoring:` line and
+[limitations](limitations.md), especially when the relevant finder was
+installed before monitoring or the import was served from `sys.modules`.

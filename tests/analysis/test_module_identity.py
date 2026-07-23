@@ -35,7 +35,7 @@ class HostileDict(dict[str, object]):
 
 
 class ForeignMapping:
-    """Non-dictionary cache replacement that must not be probed."""
+    """Non-dictionary cache replacement that must not be checked."""
 
     touched = False
 

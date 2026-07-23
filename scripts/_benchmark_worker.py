@@ -83,7 +83,7 @@ def _package_name(value: str) -> str:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--scenario", choices=("native", "attributed", "deep", "mutation"), required=True)
+    parser.add_argument("--scenario", choices=("native", "attributed", "detailed", "mutation"), required=True)
     parser.add_argument("--metric", choices=("time", "memory"), required=True)
     parser.add_argument("--count", type=_positive_int, required=True)
     parser.add_argument("--package", type=_package_name, required=True)
@@ -106,11 +106,11 @@ def _prepare(
         monitor = _install(
             report_at_exit=False,
             capture=metapathology.CaptureConfig(
-                deep=metapathology.DeepConfig(
-                    path_hooks=args.scenario == "deep",
-                    path_entry_finders=args.scenario == "deep",
-                    loaders=args.scenario == "deep",
-                    import_outcomes=args.scenario == "deep",
+                detailed=metapathology.DetailedCaptureConfig(
+                    path_hooks=args.scenario == "detailed",
+                    path_entry_finders=args.scenario == "detailed",
+                    loaders=args.scenario == "detailed",
+                    import_results=args.scenario == "detailed",
                 )
             ),
         )

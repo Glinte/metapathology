@@ -23,5 +23,5 @@ def activate(bootstrap_path: str) -> None:
         )
     except Exception as exc:
         earlier_pth_files = ()
-        monitor._record_internal_error("early_site_bootstrap_provenance", exc)
+        monitor._record_monitoring_error("early_site_bootstrap_provenance", exc)
     monitor._set_early_site_bootstrap(absolute, directory, _ACTIVATION_SOURCE, earlier_pth_files)

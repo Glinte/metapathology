@@ -1,4 +1,4 @@
-"""Opt-in deep import diagnostics and their reversible shadows."""
+"""Opt-in detailed import capture and its reversible shadows."""
 
 import builtins
 import functools
@@ -11,12 +11,12 @@ from importlib.machinery import PathFinder
 from metapathology._module_metadata import module_cache_state, safe_module_name, safe_spec_loader, safe_spec_name
 from metapathology._monitor_model import _MISSING, _OwnedAttribute, _OwnedValue
 from metapathology._records import (
-    DeepDiagnosticCall,
-    DeepImportEvent,
     ImportCall,
+    ImportMechanismCall,
+    ImportResult,
     ModuleCacheState,
-    ObjectRef,
-    StandardFinderCall,
+    ObjectIdentity,
+    PathFinderCall,
     type_name,
 )
 from metapathology._spec import summarize_spec
@@ -31,8 +31,12 @@ if TYPE_CHECKING:
     from _typeshed.importlib import PathEntryFinderProtocol
 
     from metapathology._monitor import Monitor
-    from metapathology._monitor_model import DeepImportCallsStatus, DeepImportOutcomesStatus, StandardFinderStatus
-    from metapathology._records import DeepBoundary, DeepOutcome
+    from metapathology._monitor_model import (
+        ImportCallsCaptureStatus,
+        ImportResultsCaptureStatus,
+        PathFinderCaptureStatus,
+    )
+    from metapathology._records import ImportMechanismBoundary, ImportMechanismOutcome
 
     _PathHook = Callable[[str], PathEntryFinderProtocol]
     _ProfileFunction = Callable[[FrameType, str, object], object]
@@ -43,36 +47,36 @@ else:
         return value
 
 
-class _DeepThreadState(threading.local):
-    """Per-thread stacks and re-entrancy state for deep diagnostics."""
+class _DetailedThreadState(threading.local):
+    """Per-thread stacks and re-entrancy state for detailed capture."""
 
     active = False
-    import_attempts: "tuple[tuple[int, str], ...]" = ()
+    import_searches: "tuple[tuple[int, str], ...]" = ()
     path_finder_calls: "tuple[tuple[int, str], ...]" = ()
 
 
-class _DeepDiagnostics:
-    """Own opt-in deep mechanisms, state, wrappers, and cleanup."""
+class _DetailedCapture:
+    """Own opt-in detailed mechanisms, state, wrappers, and cleanup."""
 
     def __init__(self, monitor: "Monitor") -> None:
         self._monitor = monitor
-        self._deep_local = _DeepThreadState()
-        self._deep_path_hooks = False
-        self._deep_path_entry_finders = False
-        self._deep_loaders = False
-        self._deep_import_outcomes = False
-        self._deep_import_outcomes_status: DeepImportOutcomesStatus = "disabled"
-        self._deep_import_calls = False
-        self._deep_import_calls_status: DeepImportCallsStatus = "disabled"
+        self._detailed_local = _DetailedThreadState()
+        self._detailed_path_hooks = False
+        self._detailed_path_entry_finders = False
+        self._detailed_loaders = False
+        self._detailed_import_results = False
+        self._import_results_capture_status: ImportResultsCaptureStatus = "disabled"
+        self._detailed_import_calls = False
+        self._import_calls_capture_status: ImportCallsCaptureStatus = "disabled"
         self._import_wrapper_lease: _OwnedValue | None = None
-        self._standard_finder_status: StandardFinderStatus = "disabled"
-        self._deep_import_code: types.CodeType | None = None
+        self._path_finder_capture_status: PathFinderCaptureStatus = "disabled"
+        self._detailed_import_code: types.CodeType | None = None
         self._path_finder_code: types.CodeType | None = None
         self._sys_profile_lease: _OwnedValue | None = None
         self._thread_profile_lease: _OwnedValue | None = None
-        self._deep_hook_wrappers: dict[int, _DeepPathHook] = {}
-        self._deep_finder_patches: dict[int, _OwnedAttribute] = {}
-        self._deep_loader_patches: dict[int, tuple[_OwnedAttribute, ...]] = {}
+        self._detailed_hook_wrappers: dict[int, _DetailedPathHook] = {}
+        self._detailed_finder_patches: dict[int, _OwnedAttribute] = {}
+        self._detailed_loader_patches: dict[int, tuple[_OwnedAttribute, ...]] = {}
 
     @property
     def _enabled(self) -> bool:
@@ -99,103 +103,103 @@ class _DeepDiagnostics:
         self._monitor._seq = value
 
     @property
-    def _attempt_id(self) -> int:
-        return self._monitor._attempt_id
+    def _search_id(self) -> int:
+        return self._monitor._search_id
 
-    @_attempt_id.setter
-    def _attempt_id(self, value: int) -> None:
-        self._monitor._attempt_id = value
+    @_search_id.setter
+    def _search_id(self, value: int) -> None:
+        self._monitor._search_id = value
 
     def _thread_id_locked(self) -> int:
         return self._monitor._thread_id_locked()
 
-    def _record_internal_error(self, where: str, exc: BaseException) -> None:
-        self._monitor._record_internal_error(where, exc)
+    def _record_monitoring_error(self, where: str, exc: BaseException) -> None:
+        self._monitor._record_monitoring_error(where, exc)
 
     def _restore_owned_attribute(self, patch: _OwnedAttribute) -> None:
         self._monitor._restore_owned_attribute(patch)
 
     @property
     def path_hooks_enabled(self) -> bool:
-        return self._deep_path_hooks
+        return self._detailed_path_hooks
 
     @property
-    def import_outcomes_enabled(self) -> bool:
-        return self._deep_import_outcomes
+    def import_results_enabled(self) -> bool:
+        return self._detailed_import_results
 
     @property
     def import_calls_enabled(self) -> bool:
-        return self._deep_import_calls
+        return self._detailed_import_calls
 
     @property
-    def deep_import_outcomes_status(self) -> "DeepImportOutcomesStatus":
-        return self._deep_import_outcomes_status
+    def import_results_capture_status(self) -> "ImportResultsCaptureStatus":
+        return self._import_results_capture_status
 
     @property
-    def deep_import_calls_status(self) -> "DeepImportCallsStatus":
-        return self._deep_import_calls_status
+    def import_calls_capture_status(self) -> "ImportCallsCaptureStatus":
+        return self._import_calls_capture_status
 
     @property
-    def standard_finder_status(self) -> "StandardFinderStatus":
-        return self._standard_finder_status
+    def path_finder_capture_status(self) -> "PathFinderCaptureStatus":
+        return self._path_finder_capture_status
 
     def enabled_names(self, monitor_enabled: bool) -> tuple[str, ...]:
         if not monitor_enabled:
             return ()
         enabled: list[str] = []
-        if self._deep_path_hooks:
+        if self._detailed_path_hooks:
             enabled.append("path_hooks")
-        if self._deep_path_entry_finders:
+        if self._detailed_path_entry_finders:
             enabled.append("path_entry_finders")
-        if self._deep_loaders:
+        if self._detailed_loaders:
             enabled.append("loaders")
-        if self._deep_import_outcomes:
-            enabled.append("import_outcomes")
-        if self._deep_import_calls:
+        if self._detailed_import_results:
+            enabled.append("import_results")
+        if self._detailed_import_calls:
             enabled.append("import_calls")
         return tuple(enabled)
 
     def enable_path_entry_finders(self) -> None:
-        self._deep_path_entry_finders = True
+        self._detailed_path_entry_finders = True
         for path, finder in list(sys.path_importer_cache.items()):
             if finder is not None:
                 self.instrument_path_entry_finder(finder, path if type(path) is str else None)
 
     def enable_loaders(self) -> None:
-        self._deep_loaders = True
+        self._detailed_loaders = True
 
     def original_path_hook(self, hook: object) -> object:
-        wrapper = self._deep_hook_wrappers.get(id(hook))
+        wrapper = self._detailed_hook_wrappers.get(id(hook))
         return hook if wrapper is None else wrapper.hook
 
     def wrap_added_path_hook(self, hook: object) -> "_PathHook":
         typed_hook = _cast("_PathHook", hook)
-        if id(hook) in self._deep_hook_wrappers:
+        if id(hook) in self._detailed_hook_wrappers:
             return typed_hook
-        wrapper = _DeepPathHook(self, typed_hook)
-        self._deep_hook_wrappers[id(wrapper)] = wrapper
+        wrapper = _DetailedPathHook(self, typed_hook)
+        self._detailed_hook_wrappers[id(wrapper)] = wrapper
         return wrapper
 
-    def enable_import_outcomes(self) -> None:
+    def enable_import_results(self) -> None:
         """Install a reversible profiler for the captured CPython import boundary."""
         if sys.getprofile() is not None or threading.getprofile() is not None:
-            self._deep_import_outcomes_status = "refused_existing_profiler"
-            self._standard_finder_status = "unavailable_existing_profiler"
+            self._import_results_capture_status = "refused_existing_profiler"
+            self._path_finder_capture_status = "unavailable_existing_profiler"
             return
         boundary = getattr(_importlib_bootstrap, "_find_and_load", None)
         code = getattr(boundary, "__code__", None)
         if not isinstance(code, types.CodeType):
-            self._deep_import_outcomes_status = "unsupported_boundary"
+            self._import_results_capture_status = "unsupported_boundary"
             return
-        self._deep_import_code = code
+        self._detailed_import_code = code
         path_finder = getattr(PathFinder.find_spec, "__func__", None)
         path_finder_code = getattr(path_finder, "__code__", None)
         self._path_finder_code = path_finder_code if isinstance(path_finder_code, types.CodeType) else None
-        self._standard_finder_status = (
+        self._path_finder_capture_status = (
             "active_path_finder_aggregate" if self._path_finder_code is not None else "unsupported_path_finder_boundary"
         )
-        self._deep_import_outcomes = True
-        self._deep_import_outcomes_status = "active_current_and_future_threading_threads_cache_hits_not_observed"
+        self._detailed_import_results = True
+        self._import_results_capture_status = "active_current_and_future_threading_threads_cache_hits_not_observed"
         profile = self._profile_import_boundary
         previous_thread_profile = threading.getprofile()
         previous_sys_profile = sys.getprofile()
@@ -206,50 +210,46 @@ class _DeepDiagnostics:
 
     def _profile_import_boundary(self, frame: "FrameType", event: str, arg: object) -> None:
         """Record paired entry and completion for the captured ``_find_and_load`` code."""
-        if not self._enabled or not self._deep_import_outcomes or self._local.observation_suspended:
+        if not self._enabled or not self._detailed_import_results or self._local.observation_suspended:
             return
         try:
             if frame.f_code is self._path_finder_code:
                 self._profile_path_finder(frame, event, arg)
-            elif frame.f_code is self._deep_import_code and event == "call":
+            elif frame.f_code is self._detailed_import_code and event == "call":
                 fullname = frame.f_locals.get("name")
                 if type(fullname) is not str:
                     return
                 thread_name = threading.current_thread().name
-                pending = self._local.pending_import_attempt
-                self._local.pending_import_attempt = None
+                pending = self._local.pending_import_search
+                self._local.pending_import_search = None
                 with self._record_lock:
                     thread_id = self._thread_id_locked()
                     if pending is not None and pending[1] == fullname:
-                        attempt_id = pending[0]
+                        search_id = pending[0]
                     else:
-                        self._attempt_id += 1
-                        attempt_id = self._attempt_id
+                        self._search_id += 1
+                        search_id = self._search_id
                     self._seq += 1
-                    self._events.append(
-                        DeepImportEvent(self._seq, attempt_id, fullname, "started", thread_id, thread_name)
-                    )
-                stack = self._deep_local.import_attempts
-                self._deep_local.import_attempts = (*stack, (attempt_id, fullname))
-            elif frame.f_code is self._deep_import_code and event == "return":
-                stack = self._deep_local.import_attempts
+                    self._events.append(ImportResult(self._seq, search_id, fullname, "started", thread_id, thread_name))
+                stack = self._detailed_local.import_searches
+                self._detailed_local.import_searches = (*stack, (search_id, fullname))
+            elif frame.f_code is self._detailed_import_code and event == "return":
+                stack = self._detailed_local.import_searches
                 if not stack:
                     return
-                attempt_id, fullname = stack[-1]
-                self._deep_local.import_attempts = stack[:-1]
+                search_id, fullname = stack[-1]
+                self._detailed_local.import_searches = stack[:-1]
                 outcome = "failed" if arg is None else "loaded"
                 thread_name = threading.current_thread().name
                 with self._record_lock:
                     thread_id = self._thread_id_locked()
                     self._seq += 1
-                    self._events.append(
-                        DeepImportEvent(self._seq, attempt_id, fullname, outcome, thread_id, thread_name)
-                    )
+                    self._events.append(ImportResult(self._seq, search_id, fullname, outcome, thread_id, thread_name))
         except BaseException as exc:
             # Record even a KeyboardInterrupt/SystemExit for the report, but let
             # control-flow exceptions keep propagating; only our own bugs
             # (ordinary Exception) are swallowed to avoid perturbing the program.
-            self._record_internal_error("deep_import_outcomes", exc)
+            self._record_monitoring_error("detailed_import_results", exc)
             if not isinstance(exc, Exception):
                 raise
 
@@ -257,20 +257,20 @@ class _DeepDiagnostics:
         """Capture successful aggregate ``PathFinder`` results by code identity."""
         if event == "call":
             fullname = frame.f_locals.get("fullname")
-            attempts = self._deep_local.import_attempts
-            if type(fullname) is str and attempts:
-                attempt_id, attempt_name = attempts[-1]
-                if fullname == attempt_name:
-                    stack = self._deep_local.path_finder_calls
-                    self._deep_local.path_finder_calls = (*stack, (attempt_id, fullname))
+            searches = self._detailed_local.import_searches
+            if type(fullname) is str and searches:
+                search_id, search_name = searches[-1]
+                if fullname == search_name:
+                    stack = self._detailed_local.path_finder_calls
+                    self._detailed_local.path_finder_calls = (*stack, (search_id, fullname))
             return
         if event != "return":
             return
-        stack = self._deep_local.path_finder_calls
+        stack = self._detailed_local.path_finder_calls
         if not stack:
             return
-        attempt_id, fullname = stack[-1]
-        self._deep_local.path_finder_calls = stack[:-1]
+        search_id, fullname = stack[-1]
+        self._detailed_local.path_finder_calls = stack[:-1]
         if arg is None:
             return
         summary, _loader = summarize_spec(arg, iterate_foreign_locations=False)
@@ -279,9 +279,9 @@ class _DeepDiagnostics:
             thread_id = self._thread_id_locked()
             self._seq += 1
             self._events.append(
-                StandardFinderCall(
+                PathFinderCall(
                     self._seq,
-                    attempt_id,
+                    search_id,
                     fullname,
                     "PathFinder",
                     summary,
@@ -301,8 +301,8 @@ class _DeepDiagnostics:
         """
         previous = builtins.__import__
         wrapper = self._make_import_wrapper(previous)
-        self._deep_import_calls = True
-        self._deep_import_calls_status = "active_all_threads_including_cache_hits"
+        self._detailed_import_calls = True
+        self._import_calls_capture_status = "active_all_threads_including_cache_hits"
         self._import_wrapper_lease = _OwnedValue(previous, wrapper)
         builtins.__import__ = wrapper
 
@@ -317,7 +317,7 @@ class _DeepDiagnostics:
             fromlist: "Sequence[str]" = (),
             level: int = 0,
         ) -> "ModuleType":
-            if not self._enabled or not self._deep_import_calls or self._local.observation_suspended:
+            if not self._enabled or not self._detailed_import_calls or self._local.observation_suspended:
                 return original(name, globals, locals, fromlist, level)
             # Reduce every argument to constant-size plain data before delegating;
             # never stringify foreign objects, and never import in this body.
@@ -357,7 +357,7 @@ class _DeepDiagnostics:
         level: int,
         importing_module: str | None,
         state_before: ModuleCacheState,
-        outcome: "DeepOutcome",
+        outcome: "ImportMechanismOutcome",
         exception_type_name: str | None,
     ) -> None:
         """Append one primitive-only ``__import__`` record."""
@@ -381,19 +381,19 @@ class _DeepDiagnostics:
                     )
                 )
         except Exception as exc:
-            self._record_internal_error("deep_import_calls", exc)
+            self._record_monitoring_error("detailed_import_calls", exc)
 
     def enable_path_hooks(self) -> None:
         """Replace current path hooks with wrappers only after explicit opt-in."""
-        self._deep_path_hooks = True
+        self._detailed_path_hooks = True
         for index, hook in enumerate(list(sys.path_hooks)):
-            wrapper = _DeepPathHook(self, hook)
-            self._deep_hook_wrappers[id(wrapper)] = wrapper
+            wrapper = _DetailedPathHook(self, hook)
+            self._detailed_hook_wrappers[id(wrapper)] = wrapper
             list.__setitem__(sys.path_hooks, index, wrapper)
 
     def instrument_path_entry_finder(self, finder: object, path: str | None = None) -> None:
         """Shadow one mutable path-entry finder's find_spec when requested."""
-        if not self._deep_path_entry_finders or id(finder) in self._deep_finder_patches:
+        if not self._detailed_path_entry_finders or id(finder) in self._detailed_finder_patches:
             return
         try:
             instance_dict = finder.__dict__
@@ -407,8 +407,8 @@ class _DeepDiagnostics:
                 if not self._enabled or self._local.observation_suspended:
                     return original(fullname, target)
                 target_state = None if target is None else ModuleCacheState("object", id(target), type_name(target))
-                if self._deep_local.active:
-                    self._record_deep_call(
+                if self._detailed_local.active:
+                    self._record_detailed_call(
                         "path_entry_finder",
                         finder_id,
                         finder_name,
@@ -419,12 +419,12 @@ class _DeepDiagnostics:
                         target_state=target_state,
                     )
                     return original(fullname, target)
-                self._deep_local.active = True
+                self._detailed_local.active = True
                 try:
                     try:
                         spec = original(fullname, target)
                     except BaseException as exc:
-                        self._record_deep_call(
+                        self._record_detailed_call(
                             "path_entry_finder",
                             finder_id,
                             finder_name,
@@ -435,7 +435,7 @@ class _DeepDiagnostics:
                             target_state=target_state,
                         )
                         raise
-                    self._record_deep_call(
+                    self._record_detailed_call(
                         "path_entry_finder",
                         finder_id,
                         finder_name,
@@ -449,23 +449,23 @@ class _DeepDiagnostics:
                         self.instrument_loader(safe_spec_loader(spec))
                     return spec
                 finally:
-                    self._deep_local.active = False
+                    self._detailed_local.active = False
 
             instance_dict["find_spec"] = wrapped
-            self._deep_finder_patches[id(finder)] = _OwnedAttribute(finder, "find_spec", previous, wrapped)
+            self._detailed_finder_patches[id(finder)] = _OwnedAttribute(finder, "find_spec", previous, wrapped)
         except Exception as exc:
-            self._record_internal_error("deep_path_entry_finder", exc)
+            self._record_monitoring_error("detailed_path_entry_finder", exc)
 
     def instrument_loader(self, loader: object) -> None:
         """Shadow one mutable loader's modern lifecycle methods when requested."""
-        if loader is None or not self._deep_loaders or id(loader) in self._deep_loader_patches:
+        if loader is None or not self._detailed_loaders or id(loader) in self._detailed_loader_patches:
             return
         patches: list[_OwnedAttribute] = []
         try:
             raw_instance_dict = object.__getattribute__(loader, "__dict__")
             if type(raw_instance_dict) is not dict:
                 raise TypeError("loader instance dictionary is unavailable")
-            mechanisms: tuple[tuple[str, DeepBoundary], ...] = (
+            mechanisms: tuple[tuple[str, ImportMechanismBoundary], ...] = (
                 ("create_module", "loader_create_module"),
                 ("exec_module", "loader_exec_module"),
             )
@@ -474,13 +474,13 @@ class _DeepDiagnostics:
                 if patch is not None:
                     patches.append(patch)
             if patches:
-                self._deep_loader_patches[id(loader)] = tuple(patches)
+                self._detailed_loader_patches[id(loader)] = tuple(patches)
         except BaseException as exc:
             self._rollback_loader_patches(patches)
             # Record even a KeyboardInterrupt/SystemExit, but reraise control-flow
             # exceptions after undoing the partial patches; only swallow our own
             # bugs (ordinary Exception) so instrumentation never perturbs the program.
-            self._record_internal_error("deep_loader", exc)
+            self._record_monitoring_error("detailed_loader", exc)
             if not isinstance(exc, Exception):
                 raise
 
@@ -489,7 +489,7 @@ class _DeepDiagnostics:
         loader: object,
         instance_dict: dict[str, object],
         name: str,
-        boundary: "DeepBoundary",
+        boundary: "ImportMechanismBoundary",
     ) -> _OwnedAttribute | None:
         try:
             original = getattr(loader, name)
@@ -506,7 +506,7 @@ class _DeepDiagnostics:
         self,
         loader_id: int,
         loader_name: str,
-        boundary: "DeepBoundary",
+        boundary: "ImportMechanismBoundary",
         original: "Callable[[object], object]",
     ) -> "Callable[[object], object]":
         @functools.wraps(original, assigned=(), updated=())
@@ -519,8 +519,8 @@ class _DeepDiagnostics:
             )
             if not self._enabled or self._local.observation_suspended:
                 return original(argument)
-            if self._deep_local.active:
-                self._record_deep_call(
+            if self._detailed_local.active:
+                self._record_detailed_call(
                     boundary,
                     loader_id,
                     loader_name,
@@ -539,7 +539,7 @@ class _DeepDiagnostics:
 
     def _run_loader_wrapper(
         self,
-        boundary: "DeepBoundary",
+        boundary: "ImportMechanismBoundary",
         loader_id: int,
         loader_name: str,
         fullname: str | None,
@@ -548,13 +548,13 @@ class _DeepDiagnostics:
         argument: object,
     ) -> object:
         state_before = None if fullname is None else module_cache_state(sys.modules, fullname)
-        self._deep_local.active = True
+        self._detailed_local.active = True
         try:
             try:
                 result = original(argument)
             except BaseException as exc:
                 state_after = None if fullname is None else module_cache_state(sys.modules, fullname)
-                self._record_deep_call(
+                self._record_detailed_call(
                     boundary,
                     loader_id,
                     loader_name,
@@ -568,7 +568,7 @@ class _DeepDiagnostics:
                 )
                 raise
             state_after = None if fullname is None else module_cache_state(sys.modules, fullname)
-            self._record_deep_call(
+            self._record_detailed_call(
                 boundary,
                 loader_id,
                 loader_name,
@@ -582,33 +582,33 @@ class _DeepDiagnostics:
             )
             return result
         finally:
-            self._deep_local.active = False
+            self._detailed_local.active = False
 
     def _rollback_loader_patches(self, patches: list[_OwnedAttribute]) -> None:
         for patch in reversed(patches):
             self._restore_owned_attribute(patch)
 
-    def _record_deep_call(
+    def _record_detailed_call(
         self,
-        boundary: "DeepBoundary",
+        boundary: "ImportMechanismBoundary",
         object_id: int,
         object_type_name: str,
         fullname: str | None,
         path: str | None,
-        outcome: "DeepOutcome",
+        outcome: "ImportMechanismOutcome",
         exception_type_name: str | None,
         module_state_before: ModuleCacheState | None = None,
         module_state_after: ModuleCacheState | None = None,
         target_state: ModuleCacheState | None = None,
-        returned_finder: ObjectRef | None = None,
+        returned_finder: ObjectIdentity | None = None,
     ) -> None:
-        """Append primitive-only deep evidence without holding a lock across delegation."""
+        """Append primitive-only detailed evidence without holding a lock across delegation."""
         thread_name = threading.current_thread().name
         with self._record_lock:
             thread_id = self._thread_id_locked()
             self._seq += 1
             self._events.append(
-                DeepDiagnosticCall(
+                ImportMechanismCall(
                     self._seq,
                     boundary,
                     object_id,
@@ -627,16 +627,16 @@ class _DeepDiagnostics:
             )
 
     def uninstall(self) -> None:
-        """Release every deep mechanism still owned by this monitor."""
-        self._uninstall_import_outcomes()
+        """Release every detailed mechanism still owned by this monitor."""
+        self._uninstall_import_results()
         self._uninstall_import_calls()
         self._uninstall_callable_patches()
-        self._deep_path_hooks = False
-        self._deep_path_entry_finders = False
-        self._deep_loaders = False
+        self._detailed_path_hooks = False
+        self._detailed_path_entry_finders = False
+        self._detailed_loaders = False
 
-    def _uninstall_import_outcomes(self) -> None:
-        if self._deep_import_outcomes:
+    def _uninstall_import_results(self) -> None:
+        if self._detailed_import_results:
             sys_profile_lease = self._sys_profile_lease
             if sys_profile_lease is not None and sys.getprofile() is sys_profile_lease.installed:
                 sys.setprofile(_cast("_ProfileFunction | None", sys_profile_lease.previous))
@@ -645,50 +645,50 @@ class _DeepDiagnostics:
                 threading.setprofile(_cast("_ProfileFunction | None", thread_profile_lease.previous))
             self._sys_profile_lease = None
             self._thread_profile_lease = None
-            self._deep_import_outcomes = False
-            self._deep_import_code = None
+            self._detailed_import_results = False
+            self._detailed_import_code = None
             self._path_finder_code = None
-            self._deep_import_outcomes_status = "inactive_after_uninstall"
-            self._standard_finder_status = "inactive_after_uninstall"
+            self._import_results_capture_status = "inactive_after_uninstall"
+            self._path_finder_capture_status = "inactive_after_uninstall"
 
     def _uninstall_import_calls(self) -> None:
-        if self._deep_import_calls:
+        if self._detailed_import_calls:
             import_lease = self._import_wrapper_lease
             # Chain-safe restore: only unwind if our wrapper is still current, so
             # a tool that wrapped __import__ after us keeps its wrapper intact.
             if import_lease is not None and builtins.__import__ is import_lease.installed:
                 builtins.__import__ = _cast("_Import", import_lease.previous)
             self._import_wrapper_lease = None
-            self._deep_import_calls = False
-            self._deep_import_calls_status = "inactive_after_uninstall"
+            self._detailed_import_calls = False
+            self._import_calls_capture_status = "inactive_after_uninstall"
 
     def _uninstall_callable_patches(self) -> None:
-        for patch in list(self._deep_finder_patches.values()):
+        for patch in list(self._detailed_finder_patches.values()):
             self._restore_owned_attribute(patch)
-        for patches in list(self._deep_loader_patches.values()):
+        for patches in list(self._detailed_loader_patches.values()):
             for patch in reversed(patches):
                 self._restore_owned_attribute(patch)
-        if self._deep_hook_wrappers:
+        if self._detailed_hook_wrappers:
             try:
                 current_hooks = sys.path_hooks
                 for index, hook in enumerate(list(current_hooks)):
-                    wrapper = self._deep_hook_wrappers.get(id(hook))
+                    wrapper = self._detailed_hook_wrappers.get(id(hook))
                     if wrapper is not None and wrapper is hook:
                         list.__setitem__(current_hooks, index, wrapper.hook)
             except Exception as exc:
-                self._record_internal_error("uninstall_deep_path_hooks", exc)
-        self._deep_hook_wrappers.clear()
-        self._deep_finder_patches.clear()
-        self._deep_loader_patches.clear()
+                self._record_monitoring_error("uninstall_detailed_path_hooks", exc)
+        self._detailed_hook_wrappers.clear()
+        self._detailed_finder_patches.clear()
+        self._detailed_loader_patches.clear()
 
 
 def original_path_hook(hook: object) -> object:
     """Return the foreign hook beneath one of this module's wrappers."""
-    return hook.hook if isinstance(hook, _DeepPathHook) else hook
+    return hook.hook if isinstance(hook, _DetailedPathHook) else hook
 
 
-class _DeepPathHook:
-    """Exact-delegating ``sys.path_hooks`` wrapper for deep path-hook tracing.
+class _DetailedPathHook:
+    """Exact-delegating ``sys.path_hooks`` wrapper for detailed path-hook tracing.
 
     Callable like the hook it shadows, but also forwards equality and hashing
     to that hook so third-party code scanning ``sys.path_hooks`` by ``==``
@@ -700,7 +700,7 @@ class _DeepPathHook:
 
     __slots__ = ("__wrapped__", "_hook", "_hook_id", "_hook_name", "_monitor")
 
-    def __init__(self, monitor: "_DeepDiagnostics", hook: "_PathHook") -> None:
+    def __init__(self, monitor: "_DetailedCapture", hook: "_PathHook") -> None:
         self._monitor = monitor
         self._hook = hook
         self._hook_id = id(hook)
@@ -718,21 +718,21 @@ class _DeepPathHook:
         hook = self._hook
         if not monitor._enabled or monitor._local.observation_suspended:
             return hook(path)
-        if monitor._deep_local.active:
-            monitor._record_deep_call(
+        if monitor._detailed_local.active:
+            monitor._record_detailed_call(
                 "path_hook", self._hook_id, self._hook_name, None, path, "unobserved_reentrant", None
             )
             return hook(path)
-        monitor._deep_local.active = True
+        monitor._detailed_local.active = True
         try:
             try:
                 finder = hook(path)
             except BaseException as exc:
-                monitor._record_deep_call(
+                monitor._record_detailed_call(
                     "path_hook", self._hook_id, self._hook_name, None, path, "raised", type(exc).__name__
                 )
                 raise
-            monitor._record_deep_call(
+            monitor._record_detailed_call(
                 "path_hook",
                 self._hook_id,
                 self._hook_name,
@@ -740,15 +740,15 @@ class _DeepPathHook:
                 path,
                 "returned",
                 None,
-                returned_finder=ObjectRef.of(finder),
+                returned_finder=ObjectIdentity.of(finder),
             )
             monitor.instrument_path_entry_finder(finder, path)
             return finder
         finally:
-            monitor._deep_local.active = False
+            monitor._detailed_local.active = False
 
     def __eq__(self, other: object) -> bool:
-        if isinstance(other, _DeepPathHook):
+        if isinstance(other, _DetailedPathHook):
             return self._hook == other._hook
         return self._hook == other
 
