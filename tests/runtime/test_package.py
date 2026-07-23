@@ -18,6 +18,8 @@ _EXPECTED_PUBLIC_API = frozenset(
         "ImporterCacheReplacement",
         "ImportSearchStarted",
         "ImportCall",
+        "ImportBranchExplorationCall",
+        "ImportBranchExplorationStarted",
         "MonitoringError",
         "MetaPathChange",
         "MetaPathReplacement",

@@ -57,6 +57,17 @@ if TYPE_CHECKING:
     ]
     SearchPathKind = Literal["sys_path", "parent_path", "path_entry"]
     FinderAPIObservationKind = Literal["install", "replacement", "change"]
+    ImportBranchBoundary = Literal["meta_path", "path_hook", "path_entry"]
+    ImportBranchTriggerOutcome = Literal["found", "returned", "raised"]
+    ImportBranchExplorationOutcome = Literal[
+        "found",
+        "not_found",
+        "returned_finder",
+        "declined",
+        "raised",
+        "unsupported",
+        "negative_cache",
+    ]
 else:
 
     def _cast(_type: object, value: object) -> object:
@@ -444,6 +455,41 @@ class PathFinderCall(_Record):
     thread_name: str
 
 
+class ImportBranchExplorationStarted(_Record):
+    """One actual terminal import branch whose skipped siblings will be invoked."""
+
+    sequence: int
+    boundary: "ImportBranchBoundary"
+    fullname: str | None
+    path: str | None
+    trigger: ObjectIdentity
+    trigger_index: int
+    trigger_outcome: "ImportBranchTriggerOutcome"
+    trigger_event_seq: int | None
+    thread_id: int
+    thread_name: str
+
+
+class ImportBranchExplorationCall(_Record):
+    """One unsafe call to a finder or hook skipped by the actual import route."""
+
+    sequence: int
+    exploration_seq: int
+    boundary: "ImportBranchBoundary"
+    fullname: str | None
+    path: str | None
+    candidate: ObjectIdentity
+    candidate_index: int
+    outcome: "ImportBranchExplorationOutcome"
+    spec_summary: ModuleSpecSnapshot | None
+    returned_finder: ObjectIdentity | None
+    exception_type_name: str | None
+    module_state_before: ModuleCacheState | None
+    module_state_after: ModuleCacheState | None
+    thread_id: int
+    thread_name: str
+
+
 class MonitoringError(_Record):
     """An exception raised inside metapathology's own instrumentation.
 
@@ -468,7 +514,9 @@ class MonitoringError(_Record):
 
 # Everything the monitor records goes into one chronological log; ``sequence`` orders records across types.
 MonitorEvent = (
-    ImportMechanismCall
+    ImportBranchExplorationCall
+    | ImportBranchExplorationStarted
+    | ImportMechanismCall
     | ImportResult
     | MetaPathFinderCall
     | ImportSearchStarted

@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from metapathology._frozen_bootstrap import activate_frozen
     from metapathology._monitor import Monitor
     from metapathology._records import (
+        ImportBranchExplorationCall,
+        ImportBranchExplorationStarted,
         ImportCall,
         ImporterCacheChange,
         ImporterCacheEntry,
@@ -60,6 +62,8 @@ _RECORD_EXPORTS = frozenset(
         "ImportResult",
         "ImportSearchStarted",
         "ImportCall",
+        "ImportBranchExplorationCall",
+        "ImportBranchExplorationStarted",
         "ImporterCacheChange",
         "ImporterCacheEntry",
         "ImporterCacheReplacement",
@@ -83,6 +87,8 @@ __all__ = [
     "AnalysisConfig",
     "CaptureConfig",
     "DetailedCaptureConfig",
+    "ImportBranchExplorationCall",
+    "ImportBranchExplorationStarted",
     "ImportCall",
     "ImportMechanismCall",
     "ImportResult",
