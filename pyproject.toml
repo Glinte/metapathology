@@ -68,6 +68,7 @@ addopts = [
 ]
 filterwarnings = ["error"]
 markers = ["freezer: slow opt-in tests that build real frozen executables"]
+pythonpath = ["tests"]
 testpaths = ["tests"]
 timeout = 30
 xfail_strict = true
@@ -126,6 +127,7 @@ reportUnnecessaryContains = "error"
 [tool.pyrefly]
 project-includes = ["src/**/*.py", "tests/**/*.py"]
 python-version = "3.10"
+search-path = ["src", "tests"]
 
 [tool.coverage.run]
 branch = true

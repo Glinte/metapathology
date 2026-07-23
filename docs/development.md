@@ -50,6 +50,13 @@ where practical. A bug fix starts with a reproducer. Generated mutation
 sequences should assert invariants after each operation and remain reproducible
 from the failing [Hypothesis][hypothesis] example or seed.
 
+Tests are grouped by product responsibility beneath `tests/`: `monitoring`,
+`analysis`, `reporting`, `runtime`, and `tooling`. Shared typed infrastructure
+lives in `tests/support`; use the `python_runner` fixture for fresh-interpreter
+checks and `temp_project` for temporary modules and scripts. Keep substantial
+child-interpreter scenarios beside the behavior they exercise so their setup,
+action, and assertions remain readable together.
+
 [hypothesis]: https://hypothesis.readthedocs.io/en/latest/
 
 Use snapshot or golden tests only when the complete reviewed text is itself a
@@ -143,7 +150,7 @@ METAPATHOLOGY_TEST_FREEZERS=1 uv run \
   --with pyinstaller==6.21.0 \
   --with cx-freeze==8.6.4 \
   --with nuitka==4.1.3 \
-  pytest -m freezer tests/test_freezer_integrations.py
+  pytest -m freezer tests/runtime/test_freezer_integrations.py
 ```
 
 These packages are isolated additions for the command and are not project or
