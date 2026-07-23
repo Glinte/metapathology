@@ -68,4 +68,8 @@ Concurrency and randomized tests must be reproducible from a reported seed or ex
 
 - CI must cover formatting, linting, both type checkers, tests, and package builds across supported Python versions as appropriate.
 - Pin GitHub Actions by full commit hash.
+- Commit early and frequently in reviewable, Mitchell Hashimoto-style pieces:
+  keep each commit small, coherent, and buildable; make the sequence tell the
+  implementation story; and separate preparatory refactors from behavior
+  changes.
 - Keep requested commits atomic. Use concise imperative subjects and bodies that explain the problem or invariant, why the solution fits, and important tradeoffs or follow-up triggers.
