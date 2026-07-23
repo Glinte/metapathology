@@ -79,9 +79,10 @@ python -m metapathology --report diagnostics.json path/to/script.py
 python -m metapathology --report diagnostics.txt --report diagnostics.json -m package.module
 python -m metapathology --report-text - --report-json diagnostics.data path/to/script.py
 python -m metapathology --color always path/to/script.py
-python -m metapathology --no-path-hook-monitoring path/to/script.py
-python -m metapathology --no-importer-cache-monitoring path/to/script.py
-python -m metapathology --sys-path-monitoring path/to/script.py
+python -m metapathology --no-meta-path path/to/script.py
+python -m metapathology --no-path-hooks path/to/script.py
+python -m metapathology --no-importer-cache path/to/script.py
+python -m metapathology --sys-path path/to/script.py
 python -m metapathology --deep path/to/script.py
 ```
 
@@ -96,11 +97,14 @@ python -m metapathology --deep path/to/script.py
 - `--color auto` (the default) uses ANSI colors only on a TTY, and never
   when `NO_COLOR` is set or `TERM=dumb`. `--color always` and
   `--color never` override. Color never changes report meaning.
-- `--no-path-hook-monitoring` leaves the `sys.path_hooks` list object
-  untouched; `--no-importer-cache-monitoring` skips
+- `--no-meta-path` leaves the `sys.meta_path` list object untouched, while
+  `--no-finder-attribution` avoids finder instance shadows. `--no-import-audit`
+  disables import-start evidence and import-boundary reassignment recovery.
+- `--no-path-hooks` leaves the `sys.path_hooks` list object
+  untouched; `--no-importer-cache` skips
   `sys.path_importer_cache` snapshots. Both are on by default and neither
   ever replaces the cache dictionary.
-- `--sys-path-monitoring` records every ordinary `sys.path` list mutation
+- `--sys-path` records every ordinary `sys.path` list mutation
   with its caller stack and detects direct reassignment at the next import.
   It is off by default and restores a plain list during cleanup.
 
@@ -113,9 +117,12 @@ API values win over the environment; the environment wins over defaults.
 ```console
 METAPATHOLOGY_REPORT=diagnostics-{pid}.txt;diagnostics-{pid}.json
 METAPATHOLOGY_COLOR=auto                  # or: always, never
-METAPATHOLOGY_MONITOR_PATH_HOOKS=true
-METAPATHOLOGY_MONITOR_IMPORTER_CACHE=true
-METAPATHOLOGY_MONITOR_SYS_PATH=false
+METAPATHOLOGY_IMPORT_AUDIT=true
+METAPATHOLOGY_META_PATH=true
+METAPATHOLOGY_FINDER_ATTRIBUTION=true
+METAPATHOLOGY_PATH_HOOKS=true
+METAPATHOLOGY_IMPORTER_CACHE=true
+METAPATHOLOGY_SYS_PATH=false
 METAPATHOLOGY_DEEP=false
 ```
 
@@ -171,10 +178,15 @@ Notes on individual mechanisms:
   swap is chain-safe: if another tool already wrapped `__import__`, metapathology
   delegates to it and restores it untouched on uninstall.
 
-## Speculative replay of a displaced cache finder
+## Report-time probes
 
-`--speculative-replay` (env `METAPATHOLOGY_SPECULATIVE_REPLAY`,
-`install(speculative_replay=True)`) targets one specific contention shape: a
+`--standard-path-probe` is enabled by default and compares captured custom
+finder routes with the current `PathFinder` result. `--probes` enables every
+probe and `--no-probes` disables them unless an individual probe overrides the
+umbrella.
+
+`--displaced-finder-probe` (env `METAPATHOLOGY_DISPLACED_FINDER_PROBE`,
+`AnalysisConfig(displaced_finder_probe=True)`) targets one specific contention shape: a
 `sys.path_importer_cache` change removed or replaced the finder for a path
 entry, and a later import that traversed that path failed. At report time — and
 only then — the tool asks the *retained* displaced finder whether it returns a
@@ -185,7 +197,8 @@ frozen module can no longer be found.
 It is deliberately **not** part of `--deep`: deep capture delegates along the
 paths the target actually took, while this replays a path the target did not.
 Selection is driven entirely by captured evidence (it needs importer-cache
-monitoring and deep path-entry finder capture), it performs at most one foreign
+monitoring and deep path-entry finder capture, which are enabled by default
+when the probe is requested unless explicitly disabled), it performs at most one foreign
 `find_spec()` call per selected candidate, and the whole report is capped at 16
 probes. It never touches `sys.path_hooks`, `sys.path_importer_cache`, or
 `sys.modules`; a lookup that carried a reload target is declined rather than

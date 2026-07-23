@@ -727,7 +727,8 @@
         "search_path_kind": {
           "enum": [
             "sys_path",
-            "parent_path"
+            "parent_path",
+            "path_entry"
           ]
         },
         "spec": {
@@ -878,7 +879,8 @@
         "search_path_kind": {
           "enum": [
             "sys_path",
-            "parent_path"
+            "parent_path",
+            "path_entry"
           ]
         },
         "spec": {
@@ -2210,6 +2212,63 @@
       ],
       "type": "object"
     },
+    "ProbeRunJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {
+          "type": "integer"
+        },
+        "capacity": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "foreign_calls": {
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "standard_path",
+            "displaced_finder"
+          ]
+        },
+        "omitted": {
+          "type": "integer"
+        },
+        "results": {
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "disabled",
+            "unavailable"
+          ]
+        },
+        "unavailable_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "candidates",
+        "capacity",
+        "foreign_calls",
+        "kind",
+        "omitted",
+        "results",
+        "status",
+        "unavailable_reasons"
+      ],
+      "type": "object"
+    },
     "ProcessInfo": {
       "additionalProperties": false,
       "properties": {
@@ -2355,16 +2414,6 @@
     "ResolutionRouteJSON": {
       "additionalProperties": false,
       "properties": {
-        "event_ref": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "evidence_level": {
           "enum": [
             "captured",
@@ -2400,7 +2449,8 @@
         "kind": {
           "enum": [
             "captured_claim",
-            "standard_path_probe"
+            "standard_path_probe",
+            "displaced_finder_probe"
           ]
         },
         "limitations": {
@@ -2418,7 +2468,8 @@
         "purpose": {
           "enum": [
             "record_selected_custom_meta_path_route",
-            "show_standard_path_route_bypassed_by_captured_claim"
+            "show_standard_path_route_bypassed_by_captured_claim",
+            "probe_displaced_importer_cache_finder"
           ]
         },
         "search_path": {
@@ -2430,7 +2481,8 @@
         "search_path_kind": {
           "enum": [
             "sys_path",
-            "parent_path"
+            "parent_path",
+            "path_entry"
           ]
         },
         "search_path_phase": {
@@ -2439,6 +2491,12 @@
           ]
         },
         "signals": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "source_event_refs": {
           "items": {
             "type": "string"
           },
@@ -2465,12 +2523,13 @@
             "found",
             "not_found",
             "failed",
-            "target_unavailable"
+            "target_unavailable",
+            "finder_unavailable",
+            "unsupported_finder"
           ]
         }
       },
       "required": [
-        "event_ref",
         "evidence_level",
         "exception_type_name",
         "finder_id",
@@ -2485,6 +2544,7 @@
         "search_path_kind",
         "search_path_phase",
         "signals",
+        "source_event_refs",
         "spec",
         "state_phase",
         "status"
@@ -2651,7 +2711,7 @@
       "additionalProperties": false,
       "properties": {
         "major": {
-          "const": 2
+          "const": 3
         },
         "minor": {
           "const": 0
@@ -2859,101 +2919,6 @@
         "spec",
         "submodule_search_locations",
         "unavailable_fields"
-      ],
-      "type": "object"
-    },
-    "SpeculativeReplayInfoJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "omitted": {
-          "type": "integer"
-        },
-        "probe_cap": {
-          "type": "integer"
-        },
-        "replays": {
-          "items": {
-            "$ref": "#/$defs/SpeculativeReplayJSON"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "enabled",
-        "omitted",
-        "probe_cap",
-        "replays"
-      ],
-      "type": "object"
-    },
-    "SpeculativeReplayJSON": {
-      "additionalProperties": false,
-      "properties": {
-        "attempt_event_ref": {
-          "type": "string"
-        },
-        "diff_event_ref": {
-          "type": "string"
-        },
-        "displaced_finder": {
-          "$ref": "#/$defs/ImportObjectJSON"
-        },
-        "exception_type_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "fullname": {
-          "type": "string"
-        },
-        "outcome": {
-          "enum": [
-            "returned_spec",
-            "returned_none",
-            "raised",
-            "declined_target_unavailable",
-            "finder_unavailable",
-            "unsupported_finder"
-          ]
-        },
-        "path": {
-          "type": "string"
-        },
-        "spec": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SpecSummaryJSON"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "state_phase": {
-          "enum": [
-            "import",
-            "report"
-          ]
-        }
-      },
-      "required": [
-        "attempt_event_ref",
-        "diff_event_ref",
-        "displaced_finder",
-        "exception_type_name",
-        "fullname",
-        "outcome",
-        "path",
-        "spec",
-        "state_phase"
       ],
       "type": "object"
     },
@@ -3274,7 +3239,7 @@
       "type": "object"
     }
   },
-  "$id": "https://glinte.github.io/metapathology/schema/report-2.0.json",
+  "$id": "https://glinte.github.io/metapathology/schema/report-3.0.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Stable machine-readable import-hook diagnostic report.",
@@ -3315,6 +3280,12 @@
     "loader_inventory": {
       "$ref": "#/$defs/LoaderInventoryInfo"
     },
+    "probes": {
+      "items": {
+        "$ref": "#/$defs/ProbeRunJSON"
+      },
+      "type": "array"
+    },
     "process": {
       "$ref": "#/$defs/ProcessInfo"
     },
@@ -3345,9 +3316,6 @@
         "$ref": "#/$defs/SnapshotJSON"
       },
       "type": "array"
-    },
-    "speculative_replay": {
-      "$ref": "#/$defs/SpeculativeReplayInfoJSON"
     },
     "standard_resolutions": {
       "items": {
@@ -3387,13 +3355,13 @@
     "generated_at",
     "import_attempts",
     "loader_inventory",
+    "probes",
     "process",
     "report_status",
     "resolution_routes",
     "route_comparisons",
     "schema",
     "snapshots",
-    "speculative_replay",
     "standard_resolutions",
     "summary",
     "target_outcome",

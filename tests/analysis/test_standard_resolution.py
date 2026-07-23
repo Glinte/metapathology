@@ -123,7 +123,7 @@ def test_ordinary_standard_modules_do_not_claim_later_finders_are_relevant(
         "import json, sys, metapathology\n"
         "class LaterFinder:\n"
         "    def find_spec(self, fullname, path=None, target=None): return None\n"
-        "metapathology.install(report_at_exit=False, deep_import_outcomes=True)\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(import_outcomes=True)))\n"
         "sys.meta_path.append(LaterFinder())\n"
         "sys.path.insert(0, sys.argv[1])\n"
         "import ordinary_source\n"
@@ -145,7 +145,7 @@ def test_deep_report_captures_source_resolution(python_runner: PythonRunner, tmp
     (module_dir / "standard_source.py").write_text("VALUE = 1\n", encoding="utf-8")
     proc = python_runner.run_code_ok(
         "import json, sys, metapathology\n"
-        "metapathology.install(report_at_exit=False, deep=True)\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(enabled=True)))\n"
         f"sys.path.insert(0, {str(module_dir)!r})\n"
         "import standard_source\n"
         "document = json.loads(metapathology.render_report(format='json'))\n"
@@ -181,7 +181,7 @@ def test_deep_report_explains_namespace_candidate_displaced_by_later_regular_mod
     proc = python_runner.run_code_ok(
         "import json, sys, metapathology\n"
         "sys.path[:0] = sys.argv[1:3]\n"
-        "metapathology.install(report_at_exit=False, deep=True)\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(enabled=True)))\n"
         "import candidate_pkg\n"
         "try:\n"
         "    import candidate_pkg.child\n"
@@ -238,7 +238,7 @@ def test_deep_report_correlates_repeated_failure_at_same_origin(python_runner: P
     proc = python_runner.run_code_ok(
         "import json, sys, metapathology\n"
         "sys.path.insert(0, sys.argv[1])\n"
-        "metapathology.install(report_at_exit=False, deep=True)\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(enabled=True)))\n"
         "import repeated_source\n"
         "del sys.modules['repeated_source']\n"
         "try:\n"

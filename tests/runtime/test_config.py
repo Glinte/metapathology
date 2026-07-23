@@ -1,21 +1,39 @@
 """Pure installation-configuration resolution."""
 
 import os
+import string
 from os import PathLike
 from pathlib import Path
 from typing import cast
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from metapathology._config import (
+    AnalysisConfig,
+    CaptureConfig,
+    DeepConfig,
     InstallRequest,
     ReportTarget,
-    _UnresolvedMonitoringOptions,
     _UnresolvedReportingOptions,
     infer_report_format,
     monitoring_request,
     normalize_report_destination,
     resolve_install_request,
+)
+
+_BOOLEAN_FIELDS = st.sampled_from(
+    (
+        ("import_audit", "METAPATHOLOGY_IMPORT_AUDIT", True),
+        ("path_hooks", "METAPATHOLOGY_PATH_HOOKS", True),
+        ("sys_path", "METAPATHOLOGY_SYS_PATH", False),
+        ("displaced_finder_probe", "METAPATHOLOGY_DISPLACED_FINDER_PROBE", False),
+    )
+)
+_ENVIRONMENT_BOOLEAN = st.one_of(
+    st.none(),
+    st.sampled_from(("1", " true ", "yes", "on", "0", " false ", "no", "off", "invalid")),
 )
 
 
@@ -26,16 +44,8 @@ def _resolve(
     report_text: list[str] | None = None,
     report_json: list[str] | None = None,
     report_color: str | None = None,
-    monitor_path_hooks: bool | None = None,
-    monitor_importer_cache: bool | None = None,
-    monitor_sys_path: bool | None = None,
-    deep: bool | None = None,
-    deep_path_hooks: bool | None = None,
-    deep_path_entry_finders: bool | None = None,
-    deep_loaders: bool | None = None,
-    deep_import_outcomes: bool | None = None,
-    deep_import_calls: bool | None = None,
-    speculative_replay: bool | None = None,
+    capture: CaptureConfig = CaptureConfig(),
+    analysis: AnalysisConfig = AnalysisConfig(),
     use_environment: bool = True,
     configure_report: bool = True,
     current_report_targets: tuple[ReportTarget, ...] = (ReportTarget(None, "text", "auto"),),
@@ -48,18 +58,8 @@ def _resolve(
             json_destinations=report_json or [],
             color=report_color,
         ),
-        monitoring=_UnresolvedMonitoringOptions(
-            monitor_path_hooks=monitor_path_hooks,
-            monitor_importer_cache=monitor_importer_cache,
-            monitor_sys_path=monitor_sys_path,
-            deep=deep,
-            deep_path_hooks=deep_path_hooks,
-            deep_path_entry_finders=deep_path_entry_finders,
-            deep_loaders=deep_loaders,
-            deep_import_outcomes=deep_import_outcomes,
-            deep_import_calls=deep_import_calls,
-            speculative_replay=speculative_replay,
-        ),
+        capture=capture,
+        analysis=analysis,
         use_environment=use_environment,
         configure_report=configure_report,
         current_report_targets=current_report_targets,
@@ -70,56 +70,106 @@ def _targets(request: InstallRequest) -> list[tuple[str | None, str, str]]:
     return [(target.destination, target.format, target.color) for target in request.report_targets]
 
 
-@pytest.mark.parametrize(
-    ("destination", "expected"),
-    [("report.json", "json"), ("report.txt", "text"), ("report.text", "text"), ("-", "text")],
+@given(
+    stem=st.text(alphabet=string.ascii_letters, min_size=1, max_size=12),
+    extension=st.sampled_from((".json", ".JSON", ".txt", ".TXT", ".text", ".TEXT")),
 )
-def test_report_format_inference(destination: str, expected: str) -> None:
-    assert infer_report_format(destination) == expected
+def test_report_format_inference_is_case_insensitive(stem: str, extension: str) -> None:
+    expected = "json" if extension.lower() == ".json" else "text"
+    assert infer_report_format(stem + extension) == expected
+    assert infer_report_format("-") == "text"
 
 
-@pytest.mark.parametrize("destination", ["report", "report.log", ".report"])
-def test_report_format_inference_rejects_unknown_extensions(destination: str) -> None:
+@given(
+    stem=st.text(alphabet=string.ascii_letters, min_size=1, max_size=12),
+    extension=st.text(alphabet=string.ascii_letters, min_size=1, max_size=8).filter(
+        lambda value: value.lower() not in {"json", "text", "txt"}
+    ),
+)
+def test_report_format_inference_rejects_unknown_extensions(stem: str, extension: str) -> None:
     with pytest.raises(ValueError, match="--report-text or --report-json"):
-        infer_report_format(destination)
+        infer_report_format(f"{stem}.{extension}")
 
 
 def test_defaults_resolve_to_one_immutable_request() -> None:
-    request = _resolve()
+    request = _resolve(use_environment=False)
 
     assert request.report_at_exit is False
     assert _targets(request) == [(None, "text", "auto")]
-    assert request.monitor_path_hooks is True
-    assert request.monitor_importer_cache is True
-    assert request.monitor_sys_path is False
+    assert request.capture.import_audit is True
+    assert request.capture.meta_path is True
+    assert request.capture.finder_attribution is True
+    assert request.capture.path_hooks is True
+    assert request.capture.importer_cache is True
+    assert request.capture.sys_path is False
+    assert request.analysis.standard_path_probe is True
+    assert request.analysis.displaced_finder_probe is False
     assert request.issues == ()
     with pytest.raises(AttributeError):
-        setattr(request, "monitor_sys_path", True)
+        setattr(request.capture, "sys_path", True)
 
     monitoring = monitoring_request(request)
-    assert monitoring.monitor_path_hooks is True
+    assert monitoring.path_hooks is True
     assert not hasattr(monitoring, "report_targets")
 
 
-def test_deep_defaults_and_explicit_overrides_are_resolved_together() -> None:
-    request = _resolve(deep=True, deep_loaders=False)
+def test_deep_and_probe_umbrellas_respect_explicit_overrides() -> None:
+    request = _resolve(
+        capture=CaptureConfig(deep=DeepConfig(enabled=True, loaders=False)),
+        analysis=AnalysisConfig(probes=True, standard_path_probe=False),
+        use_environment=False,
+    )
 
-    assert request.monitor_sys_path is True
-    assert request.deep_path_hooks is True
-    assert request.deep_path_entry_finders is True
-    assert request.deep_loaders is False
-    assert request.deep_import_outcomes is True
-    assert request.deep_import_calls is True
-    assert request.speculative_replay is False
+    assert request.capture.sys_path is True
+    assert request.capture.deep.path_hooks is True
+    assert request.capture.deep.path_entry_finders is True
+    assert request.capture.deep.loaders is False
+    assert request.capture.deep.import_outcomes is True
+    assert request.capture.deep.import_calls is True
+    assert request.analysis.standard_path_probe is False
+    assert request.analysis.displaced_finder_probe is True
 
 
-def test_speculative_replay_resolves_from_param_and_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert _resolve().speculative_replay is False
-    assert _resolve(speculative_replay=True).speculative_replay is True
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(field=_BOOLEAN_FIELDS, explicit=st.one_of(st.none(), st.booleans()), raw=_ENVIRONMENT_BOOLEAN)
+def test_boolean_configuration_obeys_explicit_environment_default_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+    field: tuple[str, str, bool],
+    explicit: bool | None,
+    raw: str | None,
+) -> None:
+    for name in tuple(os.environ):
+        if name.startswith("METAPATHOLOGY_"):
+            monkeypatch.delenv(name, raising=False)
+    attribute, environment_name, default = field
+    if raw is not None:
+        monkeypatch.setenv(environment_name, raw)
 
-    monkeypatch.setenv("METAPATHOLOGY_SPECULATIVE_REPLAY", "on")
-    assert _resolve().speculative_replay is True
-    assert _resolve(speculative_replay=False).speculative_replay is False
+    capture = CaptureConfig()
+    analysis = AnalysisConfig()
+    if attribute == "import_audit":
+        capture = CaptureConfig(import_audit=explicit)
+    elif attribute == "path_hooks":
+        capture = CaptureConfig(path_hooks=explicit)
+    elif attribute == "sys_path":
+        capture = CaptureConfig(sys_path=explicit)
+    else:
+        analysis = AnalysisConfig(displaced_finder_probe=explicit)
+
+    request = _resolve(capture=capture, analysis=analysis)
+    resolved = (
+        getattr(request.analysis, attribute)
+        if attribute == "displaced_finder_probe"
+        else getattr(request.capture, attribute)
+    )
+    normalized = None if raw is None else raw.strip().lower()
+    environment_value = normalized in {"1", "true", "yes", "on"}
+    valid_environment = normalized in {"1", "true", "yes", "on", "0", "false", "no", "off"}
+    expected = explicit if explicit is not None else environment_value if valid_environment else default
+
+    assert resolved is expected
+    issue = f"environment_configuration.{environment_name}"
+    assert (issue in request.issues) is (explicit is None and raw is not None and not valid_environment)
 
 
 def test_multiple_report_channels_are_resolved_and_deduplicated() -> None:
@@ -147,7 +197,6 @@ def test_environment_destinations_are_split_and_invalid_entries_degrade(
         os.pathsep.join(("capture.json", "unknown.log", "notes.txt")),
     )
     monkeypatch.setenv("METAPATHOLOGY_COLOR", "always")
-    monkeypatch.setenv("METAPATHOLOGY_MONITOR_PATH_HOOKS", "sometimes")
 
     request = _resolve()
 
@@ -156,10 +205,7 @@ def test_environment_destinations_are_split_and_invalid_entries_degrade(
         ("unknown.log", "text", "always"),
         ("notes.txt", "text", "always"),
     ]
-    assert request.issues == (
-        "environment_configuration.METAPATHOLOGY_MONITOR_PATH_HOOKS",
-        "environment_configuration.METAPATHOLOGY_REPORT",
-    )
+    assert request.issues == ("environment_configuration.METAPATHOLOGY_REPORT",)
 
 
 def test_repeat_without_report_configuration_preserves_active_targets(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -181,11 +227,15 @@ def test_explicit_destination_infers_format_and_preserves_color_on_repeat() -> N
     assert _targets(request) == [("new.json", "json", "always")]
 
 
-def test_explicit_invalid_report_values_raise_before_request_creation() -> None:
+def test_explicit_invalid_report_and_configuration_values_are_rejected() -> None:
     with pytest.raises(ValueError, match="--report-text or --report-json"):
         _resolve(report_destination=["capture.yaml"])
     with pytest.raises(ValueError, match="unknown color mode"):
         _resolve(report_color="sometimes")
+    with pytest.raises(TypeError, match="configuration fields must be bool or None"):
+        _resolve(capture=CaptureConfig(path_hooks=cast("bool", 1)))
+    with pytest.raises(TypeError, match=r"capture\.deep must be a DeepConfig"):
+        _resolve(capture=CaptureConfig(deep=cast("DeepConfig", object())))
 
 
 def test_report_destinations_are_reduced_separately(tmp_path: Path) -> None:

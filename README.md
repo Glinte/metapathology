@@ -129,7 +129,7 @@ to record whether it found the module, and `sys.path_importer_cache` is
 snapshotted at key points. At report time, modules found by a custom finder
 are compared with a fresh `PathFinder` search to reveal bypasses.
 
-Use `--sys-path-monitoring` when path ordering itself is suspect. It is
+Use `--sys-path` when path ordering itself is suspect. It is
 opt-in because replacing the general-purpose `sys.path` list has a wider
 compatibility surface; `--deep` enables it with the other invasive observers.
 

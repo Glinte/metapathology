@@ -330,7 +330,7 @@ Below the timeline, each mechanism has its own section with full detail:
   `sys.path_hooks`. Hooks are identified by name; they are never called or
   wrapped by default monitoring.
 - **`sys.path` mutations and reassignments** — shown when
-  `--sys-path-monitoring` or `--deep` is active. String paths are captured
+  `--sys-path` or `--deep` is active. String paths are captured
   exactly; non-string entries are represented only by type name.
 - **`sys.path_importer_cache` changes** — paths added, removed, or switched
   to a different path entry finder between snapshots (taken at install,

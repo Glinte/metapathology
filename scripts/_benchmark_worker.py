@@ -105,10 +105,14 @@ def _prepare(
         started = time.perf_counter()
         monitor = _install(
             report_at_exit=False,
-            deep_path_hooks=args.scenario == "deep",
-            deep_path_entry_finders=args.scenario == "deep",
-            deep_loaders=args.scenario == "deep",
-            deep_import_outcomes=args.scenario == "deep",
+            capture=metapathology.CaptureConfig(
+                deep=metapathology.DeepConfig(
+                    path_hooks=args.scenario == "deep",
+                    path_entry_finders=args.scenario == "deep",
+                    loaders=args.scenario == "deep",
+                    import_outcomes=args.scenario == "deep",
+                )
+            ),
         )
         install_seconds = time.perf_counter() - started
     mutation_finder = None

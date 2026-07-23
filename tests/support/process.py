@@ -17,6 +17,13 @@ JsonScalar: TypeAlias = None | bool | int | float | str
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 
 
+def source_with_literal(source: str, placeholder: str, value: object) -> str:
+    """Replace one explicit source placeholder with a Python literal."""
+    if source.count(placeholder) != 1:
+        raise ValueError(f"expected exactly one {placeholder!r} placeholder")
+    return source.replace(placeholder, repr(value))
+
+
 def assert_success(result: ProcessResult) -> ProcessResult:
     """Assert that a child process succeeded and return it for further checks."""
     assert result.returncode == 0, (

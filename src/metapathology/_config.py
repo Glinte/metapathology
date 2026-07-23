@@ -22,16 +22,21 @@ if TYPE_CHECKING:
 
 REPORT_DESTINATION_ENV = "METAPATHOLOGY_REPORT"
 REPORT_COLOR_ENV = "METAPATHOLOGY_COLOR"
-MONITOR_PATH_HOOKS_ENV = "METAPATHOLOGY_MONITOR_PATH_HOOKS"
-MONITOR_IMPORTER_CACHE_ENV = "METAPATHOLOGY_MONITOR_IMPORTER_CACHE"
-MONITOR_SYS_PATH_ENV = "METAPATHOLOGY_MONITOR_SYS_PATH"
+IMPORT_AUDIT_ENV = "METAPATHOLOGY_IMPORT_AUDIT"
+META_PATH_ENV = "METAPATHOLOGY_META_PATH"
+FINDER_ATTRIBUTION_ENV = "METAPATHOLOGY_FINDER_ATTRIBUTION"
+PATH_HOOKS_ENV = "METAPATHOLOGY_PATH_HOOKS"
+IMPORTER_CACHE_ENV = "METAPATHOLOGY_IMPORTER_CACHE"
+SYS_PATH_ENV = "METAPATHOLOGY_SYS_PATH"
 DEEP_ENV = "METAPATHOLOGY_DEEP"
 DEEP_PATH_HOOKS_ENV = "METAPATHOLOGY_DEEP_PATH_HOOKS"
 DEEP_PATH_ENTRY_FINDERS_ENV = "METAPATHOLOGY_DEEP_PATH_ENTRY_FINDERS"
 DEEP_LOADERS_ENV = "METAPATHOLOGY_DEEP_LOADERS"
 DEEP_IMPORT_OUTCOMES_ENV = "METAPATHOLOGY_DEEP_IMPORT_OUTCOMES"
 DEEP_IMPORT_CALLS_ENV = "METAPATHOLOGY_DEEP_IMPORT_CALLS"
-SPECULATIVE_REPLAY_ENV = "METAPATHOLOGY_SPECULATIVE_REPLAY"
+PROBES_ENV = "METAPATHOLOGY_PROBES"
+STANDARD_PATH_PROBE_ENV = "METAPATHOLOGY_STANDARD_PATH_PROBE"
+DISPLACED_FINDER_PROBE_ENV = "METAPATHOLOGY_DISPLACED_FINDER_PROBE"
 
 _TRUE_ENV_VALUES = frozenset(("1", "true", "yes", "on"))
 _FALSE_ENV_VALUES = frozenset(("0", "false", "no", "off"))
@@ -48,35 +53,102 @@ class ReportTarget(_Record):
     color: "_ColorMode"
 
 
+class _ConfigRecord(_Record):
+    """Value-comparable base for immutable public configuration records."""
+
+    def __eq__(self, other: object) -> bool:
+        return type(self) is type(other) and all(
+            getattr(self, field) == getattr(other, field) for field in self._fields
+        )
+
+    def __hash__(self) -> int:
+        return hash((type(self), *(getattr(self, field) for field in self._fields)))
+
+
+class DeepConfig(_ConfigRecord):
+    """Unresolved opt-in delegated-boundary capture settings."""
+
+    enabled: bool | None = None
+    path_hooks: bool | None = None
+    path_entry_finders: bool | None = None
+    loaders: bool | None = None
+    import_outcomes: bool | None = None
+    import_calls: bool | None = None
+
+
+class CaptureConfig(_ConfigRecord):
+    """Unresolved process-state capture settings."""
+
+    import_audit: bool | None = None
+    meta_path: bool | None = None
+    finder_attribution: bool | None = None
+    path_hooks: bool | None = None
+    importer_cache: bool | None = None
+    sys_path: bool | None = None
+    deep: DeepConfig = DeepConfig()
+
+
+class AnalysisConfig(_ConfigRecord):
+    """Unresolved report-time probe policy."""
+
+    probes: bool | None = None
+    standard_path_probe: bool | None = None
+    displaced_finder_probe: bool | None = None
+
+
+class ResolvedDeepConfig(_ConfigRecord):
+    """Concrete delegated-boundary capture settings."""
+
+    path_hooks: bool
+    path_entry_finders: bool
+    loaders: bool
+    import_outcomes: bool
+    import_calls: bool
+
+
+class ResolvedCaptureConfig(_ConfigRecord):
+    """Concrete capture settings fixed for one installation."""
+
+    import_audit: bool
+    meta_path: bool
+    finder_attribution: bool
+    path_hooks: bool
+    importer_cache: bool
+    sys_path: bool
+    deep: ResolvedDeepConfig
+
+
+class ResolvedAnalysisConfig(_ConfigRecord):
+    """Concrete report-time probe policy fixed for one installation."""
+
+    standard_path_probe: bool
+    displaced_finder_probe: bool
+
+
 class InstallRequest(_Record):
     """Fully resolved configuration consumed by one monitor installation."""
 
     report_at_exit: bool
     report_targets: tuple[ReportTarget, ...]
-    monitor_path_hooks: bool
-    monitor_importer_cache: bool
-    monitor_sys_path: bool
-    deep_path_hooks: bool
-    deep_path_entry_finders: bool
-    deep_loaders: bool
-    deep_import_outcomes: bool
-    deep_import_calls: bool
-    speculative_replay: bool
+    capture: ResolvedCaptureConfig
+    analysis: ResolvedAnalysisConfig
     issues: tuple[str, ...]
 
 
 class MonitoringRequest(_Record):
     """Resolved capture mechanisms consumed by Monitor alone."""
 
-    monitor_path_hooks: bool
-    monitor_importer_cache: bool
-    monitor_sys_path: bool
+    import_audit: bool
+    meta_path: bool
+    finder_attribution: bool
+    path_hooks: bool
+    importer_cache: bool
+    sys_path: bool
     deep_path_hooks: bool
     deep_path_entry_finders: bool
     deep_loaders: bool
     deep_import_outcomes: bool
     deep_import_calls: bool
-    speculative_replay: bool
     issues: tuple[str, ...]
 
 
@@ -90,33 +162,20 @@ class _UnresolvedReportingOptions(_Record):
     color: "_ColorMode | str | None"
 
 
-class _UnresolvedMonitoringOptions(_Record):
-    """Capture options awaiting umbrella-flag and environment resolution."""
-
-    monitor_path_hooks: bool | None
-    monitor_importer_cache: bool | None
-    monitor_sys_path: bool | None
-    deep: bool | None
-    deep_path_hooks: bool | None
-    deep_path_entry_finders: bool | None
-    deep_loaders: bool | None
-    deep_import_outcomes: bool | None
-    deep_import_calls: bool | None
-    speculative_replay: bool | None
-
-
 def monitoring_request(request: InstallRequest) -> MonitoringRequest:
     """Project a process installation request onto Monitor-owned options."""
     return MonitoringRequest(
-        monitor_path_hooks=request.monitor_path_hooks,
-        monitor_importer_cache=request.monitor_importer_cache,
-        monitor_sys_path=request.monitor_sys_path,
-        deep_path_hooks=request.deep_path_hooks,
-        deep_path_entry_finders=request.deep_path_entry_finders,
-        deep_loaders=request.deep_loaders,
-        deep_import_outcomes=request.deep_import_outcomes,
-        deep_import_calls=request.deep_import_calls,
-        speculative_replay=request.speculative_replay,
+        import_audit=request.capture.import_audit,
+        meta_path=request.capture.meta_path,
+        finder_attribution=request.capture.finder_attribution,
+        path_hooks=request.capture.path_hooks,
+        importer_cache=request.capture.importer_cache,
+        sys_path=request.capture.sys_path,
+        deep_path_hooks=request.capture.deep.path_hooks,
+        deep_path_entry_finders=request.capture.deep.path_entry_finders,
+        deep_loaders=request.capture.deep.loaders,
+        deep_import_outcomes=request.capture.deep.import_outcomes,
+        deep_import_calls=request.capture.deep.import_calls,
         issues=request.issues,
     )
 
@@ -154,48 +213,52 @@ def infer_report_format(destination: str) -> "_ReportFormat":
 def resolve_install_request(
     *,
     reporting: _UnresolvedReportingOptions,
-    monitoring: _UnresolvedMonitoringOptions,
+    capture: CaptureConfig,
+    analysis: AnalysisConfig,
     use_environment: bool,
     configure_report: bool,
     current_report_targets: tuple[ReportTarget, ...],
 ) -> InstallRequest:
     """Resolve one complete request without mutating monitor or import state."""
     issues: list[str] = []
-    deep_enabled = _resolve_bool(monitoring.deep, DEEP_ENV, False, issues)
-    resolved_path_hooks = _resolve_bool(monitoring.monitor_path_hooks, MONITOR_PATH_HOOKS_ENV, True, issues)
-    resolved_importer_cache = _resolve_bool(
-        monitoring.monitor_importer_cache,
-        MONITOR_IMPORTER_CACHE_ENV,
-        True,
+    _validate_configs(capture, analysis)
+    probes_enabled = _resolve_bool(analysis.probes, PROBES_ENV, False, issues)
+    probes_configured = analysis.probes is not None or os.environ.get(PROBES_ENV) is not None
+    resolved_standard_path_probe = _resolve_bool(
+        analysis.standard_path_probe,
+        STANDARD_PATH_PROBE_ENV,
+        probes_enabled if probes_configured else True,
         issues,
     )
-    resolved_sys_path = _resolve_bool(monitoring.monitor_sys_path, MONITOR_SYS_PATH_ENV, deep_enabled, issues)
-    resolved_deep_path_hooks = _resolve_bool(monitoring.deep_path_hooks, DEEP_PATH_HOOKS_ENV, deep_enabled, issues)
+    resolved_displaced_finder_probe = _resolve_bool(
+        analysis.displaced_finder_probe, DISPLACED_FINDER_PROBE_ENV, probes_enabled, issues
+    )
+    deep = capture.deep
+    deep_enabled = _resolve_bool(deep.enabled, DEEP_ENV, False, issues)
+    resolved_import_audit = _resolve_bool(capture.import_audit, IMPORT_AUDIT_ENV, True, issues)
+    resolved_meta_path = _resolve_bool(capture.meta_path, META_PATH_ENV, True, issues)
+    resolved_finder_attribution = _resolve_bool(capture.finder_attribution, FINDER_ATTRIBUTION_ENV, True, issues)
+    resolved_path_hooks = _resolve_bool(capture.path_hooks, PATH_HOOKS_ENV, True, issues)
+    resolved_importer_cache = _resolve_bool(capture.importer_cache, IMPORTER_CACHE_ENV, True, issues)
+    resolved_sys_path = _resolve_bool(capture.sys_path, SYS_PATH_ENV, deep_enabled, issues)
+    resolved_deep_path_hooks = _resolve_bool(deep.path_hooks, DEEP_PATH_HOOKS_ENV, deep_enabled, issues)
     resolved_deep_path_entry_finders = _resolve_bool(
-        monitoring.deep_path_entry_finders,
+        deep.path_entry_finders,
         DEEP_PATH_ENTRY_FINDERS_ENV,
-        deep_enabled,
+        deep_enabled or resolved_displaced_finder_probe,
         issues,
     )
-    resolved_deep_loaders = _resolve_bool(monitoring.deep_loaders, DEEP_LOADERS_ENV, deep_enabled, issues)
+    resolved_deep_loaders = _resolve_bool(deep.loaders, DEEP_LOADERS_ENV, deep_enabled, issues)
     resolved_deep_import_outcomes = _resolve_bool(
-        monitoring.deep_import_outcomes,
+        deep.import_outcomes,
         DEEP_IMPORT_OUTCOMES_ENV,
         deep_enabled,
         issues,
     )
     resolved_deep_import_calls = _resolve_bool(
-        monitoring.deep_import_calls,
+        deep.import_calls,
         DEEP_IMPORT_CALLS_ENV,
         deep_enabled,
-        issues,
-    )
-    # Independent of --deep: deep capture delegates along paths the target
-    # actually took, while speculative replay invokes a path it did not.
-    resolved_speculative_replay = _resolve_bool(
-        monitoring.speculative_replay,
-        SPECULATIVE_REPLAY_ENV,
-        False,
         issues,
     )
     targets = _resolve_report_targets(
@@ -211,17 +274,44 @@ def resolve_install_request(
     return InstallRequest(
         report_at_exit=reporting.report_at_exit,
         report_targets=targets,
-        monitor_path_hooks=resolved_path_hooks,
-        monitor_importer_cache=resolved_importer_cache,
-        monitor_sys_path=resolved_sys_path,
-        deep_path_hooks=resolved_deep_path_hooks,
-        deep_path_entry_finders=resolved_deep_path_entry_finders,
-        deep_loaders=resolved_deep_loaders,
-        deep_import_outcomes=resolved_deep_import_outcomes,
-        deep_import_calls=resolved_deep_import_calls,
-        speculative_replay=resolved_speculative_replay,
+        capture=ResolvedCaptureConfig(
+            import_audit=resolved_import_audit,
+            meta_path=resolved_meta_path,
+            finder_attribution=resolved_finder_attribution,
+            path_hooks=resolved_path_hooks,
+            importer_cache=resolved_importer_cache,
+            sys_path=resolved_sys_path,
+            deep=ResolvedDeepConfig(
+                path_hooks=resolved_deep_path_hooks,
+                path_entry_finders=resolved_deep_path_entry_finders,
+                loaders=resolved_deep_loaders,
+                import_outcomes=resolved_deep_import_outcomes,
+                import_calls=resolved_deep_import_calls,
+            ),
+        ),
+        analysis=ResolvedAnalysisConfig(
+            standard_path_probe=resolved_standard_path_probe,
+            displaced_finder_probe=resolved_displaced_finder_probe,
+        ),
         issues=tuple(issues),
     )
+
+
+def _validate_configs(capture: CaptureConfig, analysis: AnalysisConfig) -> None:
+    """Reject malformed public configuration before installation mutates state."""
+    if not isinstance(capture, CaptureConfig):
+        raise TypeError("capture must be a CaptureConfig")
+    if not isinstance(capture.deep, DeepConfig):
+        raise TypeError("capture.deep must be a DeepConfig")
+    if not isinstance(analysis, AnalysisConfig):
+        raise TypeError("analysis must be an AnalysisConfig")
+    values = (
+        *(getattr(capture, field) for field in capture._fields if field != "deep"),
+        *(getattr(capture.deep, field) for field in capture.deep._fields),
+        *(getattr(analysis, field) for field in analysis._fields),
+    )
+    if any(value is not None and type(value) is not bool for value in values):
+        raise TypeError("configuration fields must be bool or None")
 
 
 def validate_report_format(format: str) -> "_ReportFormat":

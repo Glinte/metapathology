@@ -45,16 +45,21 @@ class _Arguments(argparse.Namespace):
         self.report_text: list[str] = []
         self.report_json: list[str] = []
         self.report_color: Literal["auto", "always", "never"] | None = None
-        self.monitor_path_hooks: bool | None = None
-        self.monitor_importer_cache: bool | None = None
-        self.monitor_sys_path: bool | None = None
+        self.import_audit: bool | None = None
+        self.meta_path: bool | None = None
+        self.finder_attribution: bool | None = None
+        self.path_hooks: bool | None = None
+        self.importer_cache: bool | None = None
+        self.sys_path: bool | None = None
         self.deep: bool | None = None
         self.deep_path_hooks: bool | None = None
         self.deep_path_entry_finders: bool | None = None
         self.deep_loaders: bool | None = None
         self.deep_import_outcomes: bool | None = None
         self.deep_import_calls: bool | None = None
-        self.speculative_replay: bool | None = None
+        self.probes: bool | None = None
+        self.standard_path_probe: bool | None = None
+        self.displaced_finder_probe: bool | None = None
         self.is_module = False
         self.target: str | None = None
         self.target_args: list[str] = []
@@ -69,16 +74,21 @@ class _Arguments(argparse.Namespace):
             self.report_text,
             self.report_json,
             self.report_color,
-            self.monitor_path_hooks,
-            self.monitor_importer_cache,
-            self.monitor_sys_path,
+            self.import_audit,
+            self.meta_path,
+            self.finder_attribution,
+            self.path_hooks,
+            self.importer_cache,
+            self.sys_path,
             self.deep,
             self.deep_path_hooks,
             self.deep_path_entry_finders,
             self.deep_loaders,
             self.deep_import_outcomes,
             self.deep_import_calls,
-            self.speculative_replay,
+            self.probes,
+            self.standard_path_probe,
+            self.displaced_finder_probe,
         )
 
 
@@ -92,16 +102,21 @@ class _Invocation(_Record):
     report_text: list[str]
     report_json: list[str]
     report_color: "Literal['auto', 'always', 'never'] | None"
-    monitor_path_hooks: bool | None
-    monitor_importer_cache: bool | None
-    monitor_sys_path: bool | None
+    import_audit: bool | None
+    meta_path: bool | None
+    finder_attribution: bool | None
+    path_hooks: bool | None
+    importer_cache: bool | None
+    sys_path: bool | None
     deep: bool | None
     deep_path_hooks: bool | None
     deep_path_entry_finders: bool | None
     deep_loaders: bool | None
     deep_import_outcomes: bool | None
     deep_import_calls: bool | None
-    speculative_replay: bool | None
+    probes: bool | None
+    standard_path_probe: bool | None
+    displaced_finder_probe: bool | None
 
 
 def _make_parser() -> _ArgumentParser:
@@ -145,24 +160,13 @@ def _make_parser() -> _ArgumentParser:
         choices=_COLOR_MODES,
         help="color text reports automatically, always, or never",
     )
-    parser.add_argument(
-        "--path-hook-monitoring",
-        dest="monitor_path_hooks",
-        action=argparse.BooleanOptionalAction,
-        help="enable or disable sys.path_hooks mutation monitoring",
-    )
-    parser.add_argument(
-        "--importer-cache-monitoring",
-        dest="monitor_importer_cache",
-        action=argparse.BooleanOptionalAction,
-        help="enable or disable sys.path_importer_cache monitoring",
-    )
-    parser.add_argument(
-        "--sys-path-monitoring",
-        dest="monitor_sys_path",
-        action=argparse.BooleanOptionalAction,
-        help="enable opt-in sys.path mutation monitoring",
-    )
+    capture = parser.add_argument_group("capture mechanisms")
+    capture.add_argument("--import-audit", action=argparse.BooleanOptionalAction)
+    capture.add_argument("--meta-path", action=argparse.BooleanOptionalAction)
+    capture.add_argument("--finder-attribution", action=argparse.BooleanOptionalAction)
+    capture.add_argument("--path-hooks", action=argparse.BooleanOptionalAction)
+    capture.add_argument("--importer-cache", action=argparse.BooleanOptionalAction)
+    capture.add_argument("--sys-path", action=argparse.BooleanOptionalAction)
     deep = parser.add_argument_group("opt-in deep diagnostics (may perturb third-party identity checks)")
     deep.add_argument("--deep", action=argparse.BooleanOptionalAction, help="enable or disable all deep mechanisms")
     deep.add_argument(
@@ -186,11 +190,10 @@ def _make_parser() -> _ArgumentParser:
         action=argparse.BooleanOptionalAction,
         help="capture builtins.__import__ calls, including sys.modules cache hits",
     )
-    deep.add_argument(
-        "--speculative-replay",
-        action=argparse.BooleanOptionalAction,
-        help="at report time, replay a displaced importer-cache finder against a module that later failed on its path",
-    )
+    probes = parser.add_argument_group("report-time probes (may invoke current import state)")
+    probes.add_argument("--probes", action=argparse.BooleanOptionalAction, help="enable or disable all probes")
+    probes.add_argument("--standard-path-probe", action=argparse.BooleanOptionalAction)
+    probes.add_argument("--displaced-finder-probe", action=argparse.BooleanOptionalAction)
     parser.add_argument("-m", dest="is_module", action="store_true", help="run TARGET as a module")
     parser.add_argument(
         "target",
@@ -281,16 +284,27 @@ def _run(invocation: _Invocation) -> int:
             report_text=invocation.report_text,
             report_json=invocation.report_json,
             report_color=invocation.report_color,
-            monitor_path_hooks=invocation.monitor_path_hooks,
-            monitor_importer_cache=invocation.monitor_importer_cache,
-            monitor_sys_path=invocation.monitor_sys_path,
-            deep=invocation.deep,
-            deep_path_hooks=invocation.deep_path_hooks,
-            deep_path_entry_finders=invocation.deep_path_entry_finders,
-            deep_loaders=invocation.deep_loaders,
-            deep_import_outcomes=invocation.deep_import_outcomes,
-            deep_import_calls=invocation.deep_import_calls,
-            speculative_replay=invocation.speculative_replay,
+            capture=metapathology.CaptureConfig(
+                import_audit=invocation.import_audit,
+                meta_path=invocation.meta_path,
+                finder_attribution=invocation.finder_attribution,
+                path_hooks=invocation.path_hooks,
+                importer_cache=invocation.importer_cache,
+                sys_path=invocation.sys_path,
+                deep=metapathology.DeepConfig(
+                    enabled=invocation.deep,
+                    path_hooks=invocation.deep_path_hooks,
+                    path_entry_finders=invocation.deep_path_entry_finders,
+                    loaders=invocation.deep_loaders,
+                    import_outcomes=invocation.deep_import_outcomes,
+                    import_calls=invocation.deep_import_calls,
+                ),
+            ),
+            analysis=metapathology.AnalysisConfig(
+                probes=invocation.probes,
+                standard_path_probe=invocation.standard_path_probe,
+                displaced_finder_probe=invocation.displaced_finder_probe,
+            ),
         )
     except ValueError as exc:
         _PARSER._print_error(str(exc))

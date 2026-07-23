@@ -136,7 +136,7 @@ cleanup](limitations.md#runtime-changes-and-cleanup).
 The default path-hook mechanism installs a separate list subclass with the same
 mutation semantics and records safe hook identity/type/name snapshots. It
 does not wrap or call hook factories, so identity and membership checks keep
-seeing the original hook objects. Use `monitor_path_hooks=False` when even the
+seeing the original hook objects. Use `CaptureConfig(path_hooks=False)` when even the
 temporary list replacement is undesirable.
 
 ### Changes to `sys.path_importer_cache`

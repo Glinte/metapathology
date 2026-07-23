@@ -55,16 +55,8 @@ if TYPE_CHECKING:
         "raised",
         "unobserved_reentrant",
     ]
-    SearchPathKind = Literal["sys_path", "parent_path"]
+    SearchPathKind = Literal["sys_path", "parent_path", "path_entry"]
     FinderContractObservation = Literal["install", "reassignment", "mutation"]
-    SpeculativeReplayOutcome = Literal[
-        "returned_spec",
-        "returned_none",
-        "raised",
-        "declined_target_unavailable",
-        "finder_unavailable",
-        "unsupported_finder",
-    ]
 else:
 
     def _cast(_type: object, value: object) -> object:
@@ -450,49 +442,6 @@ class StandardFinderCall(_Record):
     spec_summary: SpecSummary
     thread_id: int
     thread_name: str
-
-
-class SpeculativeReplay(_Record):
-    """One report-time replay of a displaced importer-cache finder.
-
-    Speculative replay answers a single, evidence-selected question about
-    path-hook/cache contention (the beartype#599 shape): a captured
-    importer-cache change removed or replaced finder ``F`` for path ``P``, a
-    later import of ``M`` traversed ``P`` and failed, so — with the tool's
-    retained reference to ``F`` — does ``F`` still return a spec for ``M`` in
-    the interpreter's *current* state?
-
-    This record therefore describes the current behavior of a retained finder,
-    not history: a returned spec does not prove the original import would have
-    succeeded, and current finder state is not the historical state. It is
-    produced only at report time, under the observation-suspension guard, and is never
-    part of the monitor's chronological event log, so repeated reports recompute
-    it rather than growing the log.
-
-    Attributes:
-        fullname: The module name whose failed resolution selected this replay.
-        path: The ``sys.path_importer_cache`` path whose finder was displaced.
-        displaced_finder: Safe identity of the finder ``F`` that the cache
-            change removed or replaced for ``path``.
-        diff_seq: ``seq`` of the :class:`ImporterCacheDiff` that displaced ``F``.
-        attempt_seq: ``seq`` of the deep ``path_entry_finder`` call that failed
-            to find ``fullname`` on ``path`` after the displacement.
-        outcome: What replaying ``F.find_spec(fullname, None)`` did now, or why
-            no call was made.
-        spec_summary: Conservative summary of the returned spec when the
-            outcome is ``"returned_spec"``.
-        exception_type_name: Type name of the exception raised by the replayed
-            ``find_spec``, when the outcome is ``"raised"``.
-    """
-
-    fullname: str
-    path: str
-    displaced_finder: ObjectRef
-    diff_seq: int
-    attempt_seq: int
-    outcome: "SpeculativeReplayOutcome"
-    spec_summary: SpecSummary | None = None
-    exception_type_name: str | None = None
 
 
 class InternalError(_Record):

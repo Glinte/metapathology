@@ -6,31 +6,19 @@ from pathlib import Path
 from runtime.cli_support import run_cli
 
 
-def test_cli_can_disable_path_hook_monitoring_without_consuming_target_options(tmp_path: Path) -> None:
+def test_capture_flags_are_forwarded_without_consuming_target_options(tmp_path: Path) -> None:
     script = tmp_path / "prog.py"
     script.write_text("import sys\nprint(type(sys.path_hooks) is list, sys.argv[1:])\n")
 
-    proc = run_cli("--no-path-hook-monitoring", str(script), "--no-path-hook-monitoring", cwd=tmp_path)
-
-    assert proc.returncode == 0, proc.stderr
-    assert "True ['--no-path-hook-monitoring']" in proc.stdout
-    assert "sys.path_hooks off" in proc.stderr
-
-
-def test_cli_can_disable_importer_cache_monitoring_without_consuming_target_options(tmp_path: Path) -> None:
-    script = tmp_path / "prog.py"
-    script.write_text("import sys\nprint(sys.argv[1:])\n")
-
-    proc = run_cli(
-        "--no-importer-cache-monitoring",
-        str(script),
-        "--no-importer-cache-monitoring",
-        cwd=tmp_path,
+    cases = (
+        ("--no-path-hooks", "True ['--no-path-hooks']", "sys.path_hooks off"),
+        ("--no-importer-cache", "False ['--no-importer-cache']", "sys.path_importer_cache off"),
     )
-
-    assert proc.returncode == 0, proc.stderr
-    assert "['--no-importer-cache-monitoring']" in proc.stdout
-    assert "sys.path_importer_cache off" in proc.stderr
+    for option, expected_stdout, expected_stderr in cases:
+        proc = run_cli(option, str(script), option, cwd=tmp_path)
+        assert proc.returncode == 0, proc.stderr
+        assert expected_stdout in proc.stdout
+        assert expected_stderr in proc.stderr
 
 
 def test_removed_report_format_flag_fails_before_running_target(tmp_path: Path) -> None:
@@ -148,8 +136,8 @@ def test_capture_environment_and_explicit_cli_values_have_consistent_precedence(
     env = dict(os.environ)
     env.update(
         {
-            "METAPATHOLOGY_MONITOR_PATH_HOOKS": "off",
-            "METAPATHOLOGY_MONITOR_IMPORTER_CACHE": "false",
+            "METAPATHOLOGY_PATH_HOOKS": "off",
+            "METAPATHOLOGY_IMPORTER_CACHE": "false",
             "METAPATHOLOGY_DEEP": "yes",
             "METAPATHOLOGY_DEEP_LOADERS": "0",
             "METAPATHOLOGY_DEEP_IMPORT_OUTCOMES": "1",
@@ -157,7 +145,7 @@ def test_capture_environment_and_explicit_cli_values_have_consistent_precedence(
     )
 
     proc = run_cli(
-        "--path-hook-monitoring",
+        "--path-hooks",
         "--no-deep-import-outcomes",
         str(script),
         cwd=tmp_path,
@@ -172,10 +160,10 @@ def test_invalid_capture_environment_value_falls_back_and_is_reported(tmp_path: 
     script = tmp_path / "prog.py"
     script.write_text("print('target ran')\n")
     env = dict(os.environ)
-    env["METAPATHOLOGY_MONITOR_PATH_HOOKS"] = "sometimes"
+    env["METAPATHOLOGY_PATH_HOOKS"] = "sometimes"
 
     proc = run_cli(str(script), cwd=tmp_path, env=env)
 
     assert proc.returncode == 0, proc.stderr
-    assert "monitoring: sys.meta_path, sys.path_hooks," in proc.stderr
-    assert "environment_configuration.METAPATHOLOGY_MONITOR_PATH_HOOKS" in proc.stderr
+    assert "monitoring: import audit, sys.meta_path, finder attribution, sys.path_hooks," in proc.stderr
+    assert "environment_configuration.METAPATHOLOGY_PATH_HOOKS" in proc.stderr

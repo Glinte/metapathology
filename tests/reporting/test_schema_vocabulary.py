@@ -146,7 +146,7 @@ class ProbeFinder:
         return None
 
 
-metapathology.install(report_at_exit=False, deep=True)
+metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(enabled=True)))
 sys.path_importer_cache["conformance-cache-probe"] = None
 sys.meta_path = list(sys.meta_path)
 sys.path_hooks = list(sys.path_hooks)

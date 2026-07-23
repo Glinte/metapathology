@@ -204,8 +204,9 @@ module_dir = sys.argv[1]
 sys.path.insert(0, module_dir)
 monitor = metapathology.install(
     report_at_exit=False,
-    deep_path_hooks=True,
-    deep_path_entry_finders=True,
+    capture=metapathology.CaptureConfig(
+        deep=metapathology.DeepConfig(path_hooks=True, path_entry_finders=True),
+    ),
 )
 sys.meta_path.insert(0, DelegatingFinder())
 import isolated_probe_target

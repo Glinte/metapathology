@@ -13,7 +13,6 @@ from metapathology._records import (
     MonitorEvent,
     ObjectRef,
     SpecSummary,
-    SpeculativeReplay,
 )
 
 TYPE_CHECKING = False
@@ -64,13 +63,18 @@ if TYPE_CHECKING:
     ResolutionCategory = Literal["namespace", "built_in", "frozen", "source", "bytecode", "extension", "zip"]
     StatePhase = Literal["import", "report"]
     StandardEvidenceLevel = Literal["captured", "inferred"]
-    RouteKind = Literal["captured_claim", "standard_path_probe"]
+    RouteKind = Literal["captured_claim", "standard_path_probe", "displaced_finder_probe"]
     RoutePurpose = Literal[
         "record_selected_custom_meta_path_route",
         "show_standard_path_route_bypassed_by_captured_claim",
+        "probe_displaced_importer_cache_finder",
     ]
     RouteEvidenceLevel = Literal["captured", "live_probe"]
-    RouteStatus = Literal["found", "not_found", "failed", "target_unavailable"]
+    RouteStatus = Literal[
+        "found", "not_found", "failed", "target_unavailable", "finder_unavailable", "unsupported_finder"
+    ]
+    ProbeKind = Literal["standard_path", "displaced_finder"]
+    ProbeStatus = Literal["active", "disabled", "unavailable"]
     SearchPathPhase = Literal["import"]
     LocationsComparisonState = Literal["not_applicable", "captured", "post_hoc", "deferred", "failed", "unavailable"]
     ImportProgress = DeepOutcome | Literal["unknown", "finder_claimed", "finder_raised"]
@@ -178,7 +182,7 @@ class ResolutionRoute(_Record):
     status: "RouteStatus"
     spec_summary: SpecSummary | None
     exception_type_name: str | None
-    event_seq: int | None
+    source_event_seqs: tuple[int, ...]
     search_path: tuple[str, ...]
     search_path_kind: "SearchPathKind"
     search_path_phase: "SearchPathPhase"
@@ -207,7 +211,7 @@ class ResolutionRoute(_Record):
             status=status,
             spec_summary=summary,
             exception_type_name=None,
-            event_seq=None,
+            source_event_seqs=(),
             search_path=(),
             search_path_kind="sys_path",
             search_path_phase="import",
@@ -563,6 +567,9 @@ class CaptureInfo(_Record):
 
     cutoff_seq: int
     monitor_enabled: bool
+    import_audit_enabled: bool
+    meta_path_enabled: bool
+    finder_attribution_enabled: bool
     baseline_module_count: int
     modules_since_install: tuple[str, ...] | None
     early_site_bootstrap: EarlySiteBootstrap | None
@@ -576,11 +583,12 @@ class CaptureInfo(_Record):
 class MetaPathSnapshot(_Record):
     """Install-time and report-time ``sys.meta_path`` entry names.
 
-    ``sys.meta_path`` is always monitored when the monitor is enabled, so this
-    record carries no ``enabled`` flag; ``current`` is None only when the
-    report-time snapshot could not be copied.
+    The snapshots remain useful context when list observation is disabled;
+    ``enabled`` says whether mutations were observed and ``current`` is None
+    only when the report-time snapshot could not be copied.
     """
 
+    enabled: bool
     initial: tuple[str, ...]
     current: tuple[str, ...] | None
 
@@ -605,6 +613,19 @@ class ImporterCacheSnapshot(_Record):
     coalesced: int
 
 
+class ProbeRun(_Record):
+    """Resource and availability summary for one report-time probe kind."""
+
+    kind: "ProbeKind"
+    status: "ProbeStatus"
+    unavailable_reasons: tuple[str, ...]
+    candidates: int
+    results: int
+    foreign_calls: int
+    capacity: int | None
+    omitted: int
+
+
 class AnalysisResult(_Record):
     """Everything derived at report time from the copied event log and state."""
 
@@ -621,9 +642,7 @@ class AnalysisResult(_Record):
     summary: ReportSummary
     target_outcome: TargetOutcome | None
     report_errors: tuple[ReportError, ...]
-    speculative_replay_enabled: bool = False
-    speculative_replays: tuple[SpeculativeReplay, ...] = ()
-    speculative_replays_omitted: int = 0
+    probes: tuple[ProbeRun, ...] = ()
 
 
 class ReportDocument(_Record):

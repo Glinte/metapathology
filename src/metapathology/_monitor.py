@@ -180,10 +180,9 @@ class Monitor:
         self._finder_attribution = _FinderAttribution()
         self._deep = _DeepDiagnostics(self)
         self._importer_cache = _ImporterCacheObserver(self)
-        # Opt-in, independent of --deep: enables report-time replay of displaced
-        # importer-cache finders. Off by default; never invokes foreign code at
-        # capture time.
-        self._speculative_replay = False
+        self._import_audit_enabled = False
+        self._meta_path_enabled = False
+        self._finder_attribution_enabled = False
         # One counter for all record types, so the report can interleave the
         # different event kinds chronologically.
         self._seq = 0
@@ -234,6 +233,21 @@ class Monitor:
     def enabled(self) -> bool:
         """Whether the monitor is currently observing."""
         return self._enabled
+
+    @property
+    def import_audit_enabled(self) -> bool:
+        """Whether import audit starts and reassignment recovery are active."""
+        return self._enabled and self._import_audit_enabled
+
+    @property
+    def meta_path_enabled(self) -> bool:
+        """Whether reversible ``sys.meta_path`` list observation is active."""
+        return self._enabled and self._meta_path_enabled
+
+    @property
+    def finder_attribution_enabled(self) -> bool:
+        """Whether writable finder instances are shadowed for attribution."""
+        return self._enabled and self._finder_attribution_enabled
 
     @property
     def path_hooks_enabled(self) -> bool:
@@ -331,6 +345,9 @@ class Monitor:
                 enabled=self._enabled,
                 baseline_modules=self.baseline_modules,
                 initial_meta_path=self.initial_meta_path,
+                import_audit_enabled=self._enabled and self._import_audit_enabled,
+                meta_path_enabled=self._enabled and self._meta_path_enabled,
+                finder_attribution_enabled=self._enabled and self._finder_attribution_enabled,
                 path_hooks_enabled=self._enabled and self._path_hooks_enabled,
                 initial_path_hooks=self.initial_path_hooks,
                 sys_path_enabled=self._enabled and self._sys_path_enabled,
@@ -338,7 +355,6 @@ class Monitor:
                 deep_import_outcomes_status=self._deep.deep_import_outcomes_status,
                 deep_import_calls_status=self._deep.deep_import_calls_status,
                 standard_finder_status=self._deep.standard_finder_status,
-                speculative_replay_enabled=self._enabled and self._speculative_replay,
                 target_outcome=self._target_outcome,
             )
 
@@ -392,7 +408,7 @@ class Monitor:
             for issue in request.issues:
                 self._record_internal_error(issue, ValueError())
             if activate_monitor:
-                self._activate_core_monitor(generation)
+                self._activate_core_monitor(generation, request)
             self._activate_requested_mechanisms(request)
         finally:
             with self._lifecycle_condition:
@@ -400,40 +416,45 @@ class Monitor:
                     self._transition_generation = None
                     self._lifecycle_condition.notify_all()
 
-    def _activate_core_monitor(self, generation: int) -> None:
-        """Prepare foreign finder shadows, then commit the core installation."""
+    def _activate_core_monitor(self, generation: int, request: "MonitoringRequest") -> None:
+        """Prepare and commit only the independently requested core mechanisms."""
         if _IMPLEMENTATION_NAME != "cpython":
             warnings.warn(_UNSUPPORTED_IMPLEMENTATION_WARNING, RuntimeWarning, stacklevel=3)
         self.baseline_modules = frozenset(sys.modules)
         current = sys.meta_path
         self.initial_meta_path = tuple(type_name(finder) for finder in current)
-        instrumented = _InstrumentedMetaPath(current, self)
+        instrumented = _InstrumentedMetaPath(current, self) if request.meta_path else None
         # Finder attribute access is foreign code and can import. Preparation
         # therefore runs outside the lifecycle lock.
         self._local.active = True
         try:
-            for position, finder in enumerate(list(instrumented)):
-                self._finder_attribution.observe_contract(finder, position, "install", None, self)
-                self._finder_attribution.instrument(finder, self)
+            if request.finder_attribution:
+                for position, finder in enumerate(list(current)):
+                    self._finder_attribution.observe_contract(finder, position, "install", None, self)
+                    self._finder_attribution.instrument(finder, self)
         finally:
             self._local.active = False
-        if not self._audit_installed:
+        if request.import_audit and not self._audit_installed:
             sys.addaudithook(self._audit)
             self._audit_installed = True
         with self._lifecycle_condition:
             if self._transition_generation != generation:
                 raise RuntimeError("install transition superseded before commit")
-            self._instrumented = instrumented
-            self._meta_path_lease = _OwnedValue(current, instrumented)
-            sys.meta_path = instrumented
+            self._import_audit_enabled = request.import_audit
+            self._meta_path_enabled = request.meta_path
+            self._finder_attribution_enabled = request.finder_attribution
+            if instrumented is not None:
+                self._instrumented = instrumented
+                self._meta_path_lease = _OwnedValue(current, instrumented)
+                sys.meta_path = instrumented
 
     def _activate_requested_mechanisms(self, request: "MonitoringRequest") -> None:
         """Enable requested independent mechanisms without disabling active ones."""
-        if request.monitor_path_hooks and not self._path_hooks_enabled:
+        if request.path_hooks and not self._path_hooks_enabled:
             self._enable_path_hooks()
-        if request.monitor_importer_cache and not self._importer_cache.enabled:
+        if request.importer_cache and not self._importer_cache.enabled:
             self._importer_cache.enable()
-        if request.monitor_sys_path and not self._sys_path_enabled:
+        if request.sys_path and not self._sys_path_enabled:
             self._enable_sys_path()
         if request.deep_path_entry_finders:
             self._deep.enable_path_entry_finders()
@@ -445,8 +466,6 @@ class Monitor:
             self._deep.enable_import_outcomes()
         if request.deep_import_calls and not self._deep.import_calls_enabled:
             self._deep.enable_import_calls()
-        if request.speculative_replay:
-            self._speculative_replay = True
 
     def _enable_path_hooks(self) -> None:
         """Install the instrumented list around the current ``sys.path_hooks`` contents."""
@@ -515,6 +534,9 @@ class Monitor:
                 self._instrumented_sys_path = None
                 self._sys_path_lease = None
             self._finder_attribution.uninstall(self)
+            self._import_audit_enabled = False
+            self._meta_path_enabled = False
+            self._finder_attribution_enabled = False
             with self._record_lock:
                 self._observed_path_hooks.clear()
                 self._importer_cache.uninstall()
@@ -566,7 +588,7 @@ class Monitor:
             args: Audit event arguments; for ``import`` the first item is the
                 name of the module being resolved.
         """
-        if event != "import" or not self._enabled:
+        if event != "import" or not self._enabled or not self._import_audit_enabled:
             return
         self._on_import_audit(args)
 
@@ -589,7 +611,7 @@ class Monitor:
                 path_hooks_id,
                 cache_fingerprint,
             )
-        meta_path_current = sys.meta_path is self._instrumented
+        meta_path_current = not self._meta_path_enabled or sys.meta_path is self._instrumented
         path_hooks_current = not self._path_hooks_enabled or sys.path_hooks is self._instrumented_path_hooks
         sys_path_current = not self._sys_path_enabled or sys.path is self._instrumented_sys_path
         if meta_path_current and path_hooks_current and sys_path_current:
@@ -665,14 +687,15 @@ class Monitor:
     def _recover_meta_path(self) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
         current = sys.meta_path
         expected = self._instrumented
-        if current is expected or expected is None:
+        if not self._meta_path_enabled or current is expected or expected is None:
             return None
         old_contents = tuple(type_name(finder) for finder in expected)
         new_contents = tuple(type_name(finder) for finder in list(current))
         replacement = _InstrumentedMetaPath(current, self)
-        for position, finder in enumerate(list(replacement)):
-            self._finder_attribution.observe_contract(finder, position, "reassignment", None, self)
-            self._finder_attribution.instrument(finder, self)
+        if self._finder_attribution_enabled:
+            for position, finder in enumerate(list(replacement)):
+                self._finder_attribution.observe_contract(finder, position, "reassignment", None, self)
+                self._finder_attribution.instrument(finder, self)
         self._instrumented = replacement
         self._meta_path_lease = _OwnedValue(current, replacement)
         sys.meta_path = replacement
@@ -777,7 +800,7 @@ class Monitor:
             removed: Finders the mutation removed.
             frame: The mutator's caller, where the stack capture starts.
         """
-        if not self._enabled:
+        if not self._enabled or not self._meta_path_enabled:
             return
         added_names = tuple(type_name(f) for f in added)
         removed_names = tuple(type_name(f) for f in removed)
@@ -798,16 +821,17 @@ class Monitor:
                     stack=stack,
                 )
             )
-        positions = {id(finder): position for position, finder in enumerate(list(mutated))}
-        for finder in added:
-            self._finder_attribution.observe_contract(
-                finder,
-                positions.get(id(finder), -1),
-                "mutation",
-                mutation_seq,
-                self,
-            )
-            self._finder_attribution.instrument(finder, self)
+        if self._finder_attribution_enabled:
+            positions = {id(finder): position for position, finder in enumerate(list(mutated))}
+            for finder in added:
+                self._finder_attribution.observe_contract(
+                    finder,
+                    positions.get(id(finder), -1),
+                    "mutation",
+                    mutation_seq,
+                    self,
+                )
+                self._finder_attribution.instrument(finder, self)
 
     @_guard_monitor_callback("path_hooks_mutation")
     def _on_path_hooks_mutation(

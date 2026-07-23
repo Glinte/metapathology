@@ -60,7 +60,7 @@ import observed_mod
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
 document = json.loads(metapathology.render_report(format="json"))
-assert document["schema"] == {"major": 2, "minor": 0, "name": "metapathology.report"}
+assert document["schema"] == {"major": 3, "minor": 0, "name": "metapathology.report"}
 assert document["report_status"] == "complete"
 assert isinstance(document["resolution_routes"], list)
 assert isinstance(document["route_comparisons"], list)
@@ -307,12 +307,14 @@ def test_report_document_uses_hand_written_slots(python_runner: PythonRunner) ->
         "document = ReportDocument(\n"
         "    process=ProcessInfo(generated_at='now', cwd=None, argv=()),\n"
         "    capture=CaptureInfo(\n"
-        "        cutoff_seq=0, monitor_enabled=False, baseline_module_count=0,\n"
+        "        cutoff_seq=0, monitor_enabled=False, import_audit_enabled=False,\n"
+        "        meta_path_enabled=False, finder_attribution_enabled=False,\n"
+        "        baseline_module_count=0,\n"
         "        modules_since_install=(), early_site_bootstrap=None, frozen_bootstrap=None,\n"
         "        deep_diagnostics=(), deep_import_outcomes_status='disabled',\n"
         "        deep_import_calls_status='disabled', standard_finder_status='disabled',\n"
         "    ),\n"
-        "    meta_path=MetaPathSnapshot(initial=(), current=()),\n"
+        "    meta_path=MetaPathSnapshot(enabled=False, initial=(), current=()),\n"
         "    path_hooks=PathHooksSnapshot(enabled=False, initial=(), current=None),\n"
         "    importer_cache=ImporterCacheSnapshot(\n"
         "        enabled=False, initial=(), initial_non_string_keys=0, current=None,\n"

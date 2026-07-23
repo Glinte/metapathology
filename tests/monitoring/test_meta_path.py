@@ -2,7 +2,7 @@
 
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
-from support import PythonRunner
+from support import PythonRunner, source_with_literal
 
 MutationOperation = tuple[str, int, int]
 MUTATION_OPERATIONS = st.lists(
@@ -252,7 +252,7 @@ print("OK")
 def test_generated_mutation_sequences_match_plain_list(
     python_runner: PythonRunner, operations: list[MutationOperation]
 ) -> None:
-    proc = python_runner.run_code_ok(MUTATION_SEQUENCE.replace("__OPERATIONS__", repr(operations)))
+    proc = python_runner.run_code_ok(source_with_literal(MUTATION_SEQUENCE, "__OPERATIONS__", operations))
     assert "OK" in proc.stdout
 
 
@@ -266,8 +266,7 @@ original_path_hooks = sys.path_hooks
 original_sys_path = sys.path
 monitor = metapathology.install(
     report_at_exit=False,
-    monitor_path_hooks=True,
-    monitor_sys_path=True,
+    capture=metapathology.CaptureConfig(path_hooks=True, sys_path=True),
 )
 replacement_meta_path = []
 replacement_path_hooks = []

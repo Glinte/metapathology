@@ -71,7 +71,7 @@ def test_help_links_to_usage_documentation(tmp_path: Path) -> None:
     assert proc.returncode == 0
     assert proc.stdout.startswith("usage: python -m metapathology")
     assert "--color {auto,always,never}" in proc.stdout
-    assert "--sys-path-monitoring" in proc.stdout
+    assert "--sys-path" in proc.stdout
     assert "\nDocumentation:\n  https://glinte.github.io/metapathology/usage/\n" in proc.stdout
 
 

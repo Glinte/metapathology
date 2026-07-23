@@ -40,21 +40,24 @@ def test_generated_diffs_reconstruct_each_next_snapshot(
     assert _plain(reconstructed) == after
 
 
-def test_cache_monitoring_is_default_on_and_later_enableable(python_runner: PythonRunner) -> None:
+def test_cache_monitoring_configuration_is_fixed_for_an_active_installation(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(
         "import metapathology\n"
         "monitor = metapathology.install(\n"
-        "    report_at_exit=False, monitor_importer_cache=False,\n"
+        "    report_at_exit=False,\n"
+        "    capture=metapathology.CaptureConfig(importer_cache=False),\n"
         ")\n"
         "assert not monitor.importer_cache_enabled\n"
-        "metapathology.install(\n"
-        "    report_at_exit=False, monitor_importer_cache=True,\n"
-        ")\n"
-        "assert monitor.importer_cache_enabled\n"
-        "metapathology.install(\n"
-        "    report_at_exit=False, monitor_importer_cache=False,\n"
-        ")\n"
-        "assert monitor.importer_cache_enabled\n"
+        "try:\n"
+        "    metapathology.install(\n"
+        "        report_at_exit=False,\n"
+        "        capture=metapathology.CaptureConfig(importer_cache=True),\n"
+        "    )\n"
+        "except RuntimeError:\n"
+        "    pass\n"
+        "else:\n"
+        "    raise AssertionError('active capture configuration changed')\n"
+        "assert not monitor.importer_cache_enabled\n"
         "print('OK')\n"
     )
     assert proc.stdout.strip() == "OK"

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from os import PathLike
     from typing import IO, Literal, TextIO
 
+    from metapathology._config import ResolvedAnalysisConfig
     from metapathology._monitor_model import MonitorSnapshot
     from metapathology._report_model import ReportDocument
 
@@ -41,10 +42,10 @@ class ReportFailure(_Record):
     error_name: str
 
 
-def capture_report(snapshot: "MonitorSnapshot") -> "ReportDocument | ReportFailure":
+def capture_report(snapshot: "MonitorSnapshot", analysis: "ResolvedAnalysisConfig") -> "ReportDocument | ReportFailure":
     """Build one reusable report artifact from an immutable monitor snapshot."""
     try:
-        return capture_document(snapshot)
+        return capture_document(snapshot, analysis)
     except Exception as exc:  # Reporting must never break the host program.
         return ReportFailure(type_name(exc))
 

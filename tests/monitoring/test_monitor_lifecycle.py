@@ -39,7 +39,7 @@ def test_monitoring_region_restores_after_an_exception(python_runner: PythonRunn
         "import metapathology\n"
         "before = list(sys.meta_path)\n"
         "try:\n"
-        "    with metapathology.monitoring(monitor_path_hooks=False) as monitor:\n"
+        "    with metapathology.monitoring(capture=metapathology.CaptureConfig(path_hooks=False)) as monitor:\n"
         "        assert monitor.enabled\n"
         "        assert metapathology.get_monitor() is monitor\n"
         "        assert type(sys.meta_path) is not list\n"
@@ -57,17 +57,19 @@ def test_monitoring_region_restores_after_an_exception(python_runner: PythonRunn
     assert proc.stdout.strip() == "OK"
 
 
-def test_nested_monitoring_regions_share_lifecycle_and_enable_mechanisms(python_runner: PythonRunner) -> None:
+def test_nested_monitoring_regions_share_lifecycle_with_fixed_configuration(
+    python_runner: PythonRunner,
+) -> None:
     proc = python_runner.run_code_ok(
         "import warnings\n"
         "import metapathology\n"
         "with warnings.catch_warnings(record=True) as caught:\n"
         "    warnings.simplefilter('always')\n"
-        "    with metapathology.monitoring(monitor_path_hooks=False) as outer:\n"
+        "    with metapathology.monitoring(capture=metapathology.CaptureConfig(path_hooks=False)) as outer:\n"
         "        assert not outer.path_hooks_enabled\n"
-        "        with metapathology.monitoring(monitor_path_hooks=True) as inner:\n"
-        "            assert inner is outer and inner.path_hooks_enabled\n"
-        "        assert outer.enabled and outer.path_hooks_enabled\n"
+        "        with metapathology.monitoring(capture=metapathology.CaptureConfig(path_hooks=False)) as inner:\n"
+        "            assert inner is outer and not inner.path_hooks_enabled\n"
+        "        assert outer.enabled and not outer.path_hooks_enabled\n"
         "assert not caught, caught\n"
         "assert not outer.enabled\n"
         "print('OK')\n"
@@ -79,15 +81,15 @@ def test_monitoring_region_preserves_preexisting_installation(python_runner: Pyt
     proc = python_runner.run_code_ok(
         "import warnings\n"
         "import metapathology\n"
-        "explicit = metapathology.install(report_at_exit=False, monitor_path_hooks=False)\n"
+        "explicit = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(path_hooks=False))\n"
         "with warnings.catch_warnings(record=True) as caught:\n"
         "    warnings.simplefilter('always')\n"
-        "    with metapathology.monitoring(monitor_path_hooks=True) as regional:\n"
-        "        assert regional is explicit and regional.path_hooks_enabled\n"
+        "    with metapathology.monitoring(capture=metapathology.CaptureConfig(path_hooks=False)) as regional:\n"
+        "        assert regional is explicit and not regional.path_hooks_enabled\n"
         "assert len(caught) == 1, caught\n"
         "assert caught[0].category is RuntimeWarning\n"
         "assert 'pre-existing installation will remain active' in str(caught[0].message)\n"
-        "assert explicit.enabled and explicit.path_hooks_enabled\n"
+        "assert explicit.enabled and not explicit.path_hooks_enabled\n"
         "metapathology.uninstall()\n"
         "assert not explicit.enabled\n"
         "print('OK')\n"

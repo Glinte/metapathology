@@ -30,7 +30,7 @@ def build_schema() -> dict[str, object]:
     assert isinstance(schema_definition, dict)
     schema_properties = schema_definition["properties"]
     assert isinstance(schema_properties, dict)
-    schema_properties["major"] = {"const": 2}
+    schema_properties["major"] = {"const": 3}
     schema_properties["minor"] = {"const": 0}
     schema_properties["name"] = {"const": "metapathology.report"}
     tool_definition = definitions["ToolInfo"]
@@ -40,7 +40,7 @@ def build_schema() -> dict[str, object]:
     tool_properties["name"] = {"const": "metapathology"}
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://glinte.github.io/metapathology/schema/report-2.0.json",
+        "$id": "https://glinte.github.io/metapathology/schema/report-3.0.json",
         "title": "metapathology report",
         "description": "Stable machine-readable import-hook diagnostic report.",
         **root,

@@ -90,9 +90,13 @@ sys.path_importer_cache.pop(sentinel, None)
 sys.path.insert(0, sentinel)
 metapathology.install(
     report_at_exit=False,
-    deep_path_hooks=True,
-    deep_path_entry_finders=True,
-    deep_loaders=True,
+    capture=metapathology.CaptureConfig(
+        deep=metapathology.DeepConfig(
+            path_hooks=True,
+            path_entry_finders=True,
+            loaders=True,
+        )
+    ),
 )
 sys.path_importer_cache.pop(sentinel, None)
 __import__("deep_collapse_outer")
@@ -184,7 +188,7 @@ class DecliningFinder:
         return None
 
 sys.path.insert(0, sys.argv[1])
-metapathology.install(report_at_exit=False, deep_import_outcomes=True)
+metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(import_outcomes=True)))
 sys.meta_path.insert(0, TruncatingFinder())
 sys.meta_path.insert(0, DecliningFinder())
 

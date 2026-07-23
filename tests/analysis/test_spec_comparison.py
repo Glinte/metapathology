@@ -6,6 +6,8 @@ from collections.abc import Iterator
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 
+from hypothesis import given
+from hypothesis import strategies as st
 from support import PythonRunner
 
 from metapathology import ObjectRef, SpecSummary
@@ -20,16 +22,24 @@ def _summary(locations: list[str]) -> SpecSummary:
     return summarize_spec(spec, iterate_foreign_locations=False)[0]
 
 
-def test_location_comparison_distinguishes_truncation_extension_and_reordering() -> None:
-    truncated = _compare_specs(_summary(["a"]), _summary(["a", "b"]))
-    extended = _compare_specs(_summary(["a", "b"]), _summary(["a"]))
-    reordered = _compare_specs(_summary(["b", "a"]), _summary(["a", "b"]))
-    duplicated = _compare_specs(_summary(["a"]), _summary(["a", "a"]))
+@given(
+    left=st.lists(st.sampled_from(("a", "b", "c", "d")), max_size=8),
+    right=st.lists(st.sampled_from(("a", "b", "c", "d")), max_size=8),
+)
+def test_location_comparison_is_reflexive_and_reversible(left: list[str], right: list[str]) -> None:
+    same = _compare_specs(_summary(left), _summary(left))
+    forward = _compare_specs(_summary(left), _summary(right))
+    reverse = _compare_specs(_summary(right), _summary(left))
 
-    assert truncated.only_in_right_route == ("b",)
-    assert extended.only_in_left_route == ("b",)
-    assert reordered.locations_reordered is True
-    assert duplicated.only_in_right_route == ("a",)
+    assert not same.has_differences()
+    assert forward.only_in_left_route == reverse.only_in_right_route
+    assert forward.only_in_right_route == reverse.only_in_left_route
+    assert forward.locations_reordered is reverse.locations_reordered
+    assert forward.package_status_differs is reverse.package_status_differs
+    assert forward.origin_differs is reverse.origin_differs
+    assert forward.loader_type_differs is reverse.loader_type_differs
+    assert forward.cached_differs is reverse.cached_differs
+    assert forward.has_differences() is reverse.has_differences()
 
 
 def test_cached_path_is_captured_only_from_an_exact_string_origin() -> None:

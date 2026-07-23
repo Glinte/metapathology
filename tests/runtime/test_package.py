@@ -6,6 +6,9 @@ import metapathology
 
 _EXPECTED_PUBLIC_API = frozenset(
     {
+        "AnalysisConfig",
+        "CaptureConfig",
+        "DeepConfig",
         "DeepDiagnosticCall",
         "DeepImportEvent",
         "FindSpecCall",
@@ -26,7 +29,6 @@ _EXPECTED_PUBLIC_API = frozenset(
         "ReportJSON",
         "ReportStatus",
         "SpecSummary",
-        "SpeculativeReplay",
         "StandardFinderCall",
         "SysPathMutation",
         "SysPathReassignment",

@@ -264,7 +264,7 @@ class _TextReportRenderer:
             self._empty.append("finder calls")
         yield from self._render_contracts_and_timeline()
         yield from self._render_event_sections()
-        yield from self._render_replays()
+        yield from self._render_displaced_finder_probes()
 
     def _render_event_sections(self) -> "Iterator[str]":
         """Render independently typed exhaustive-event sections."""
@@ -332,15 +332,11 @@ class _TextReportRenderer:
         else:
             self._empty.append("timeline events")
 
-    def _render_replays(self) -> "Iterator[str]":
-        if not self.document.analysis.speculative_replay_enabled:
-            return
-        replay_lines = _speculative_replay_lines(self.document, self.context)
-        if replay_lines:
+    def _render_displaced_finder_probes(self) -> "Iterator[str]":
+        probe_lines = _displaced_finder_probe_lines(self.document, self.context)
+        if probe_lines:
             yield ""
-            yield from replay_lines
-        else:
-            self._empty.append("speculative replays")
+            yield from probe_lines
 
     def _render_errors(self) -> "Iterator[str]":
         error_count = len(self.errors) + len(self.document.analysis.report_errors)
@@ -849,8 +845,17 @@ def _monitoring_line(document: ReportDocument) -> str:
     """One-line mechanism summary replacing the per-mechanism enabled/disabled lines."""
     if not document.capture.monitor_enabled:
         return "monitoring: disabled"
-    mechanisms = ["sys.meta_path"]
+    mechanisms = []
     notes: list[str] = []
+    for name, enabled in (
+        ("import audit", document.capture.import_audit_enabled),
+        ("sys.meta_path", document.capture.meta_path_enabled),
+        ("finder attribution", document.capture.finder_attribution_enabled),
+    ):
+        if enabled:
+            mechanisms.append(name)
+        else:
+            notes.append(f"{name} off")
     for name, enabled in (
         ("sys.path_hooks", document.path_hooks.enabled),
         ("sys.path_importer_cache", document.importer_cache.enabled),
@@ -861,7 +866,7 @@ def _monitoring_line(document: ReportDocument) -> str:
             notes.append(f"{name} off")
     if document.sys_path_enabled:
         mechanisms.append("sys.path")
-    line = "monitoring: " + ", ".join(mechanisms)
+    line = "monitoring: " + (", ".join(mechanisms) if mechanisms else "no core mechanisms")
     if notes:
         line += " (" + "; ".join(notes) + ")"
     return line
@@ -1633,50 +1638,46 @@ def _cache_change_counts_clause(entries: "list[tuple[str, str, str]]") -> str:
     return " ".join(parts) + " entries"
 
 
-_SPECULATIVE_REPLAY_OUTCOMES = {
-    "returned_none": "currently returns no spec",
-    "raised": "currently raises",
-    "declined_target_unavailable": "not replayed: original lookup had a reload target",
+_DISPLACED_PROBE_OUTCOMES = {
+    "not_found": "currently returns no spec",
+    "failed": "currently raises",
+    "target_unavailable": "not probed: original lookup had a reload target",
     "finder_unavailable": "not replayed: the displaced finder is no longer retained",
     "unsupported_finder": "not replayed: no callable find_spec",
 }
 
 
-def _speculative_replay_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
-    """Format the bounded displaced-finder replay results.
-
-    Every line states what the displaced finder returns *now*; none claim the
-    original import would have succeeded. A returned spec proves only current
-    finder behavior, not historical resolution or loader success.
-    """
-    replays = document.analysis.speculative_replays
-    if not replays and not document.analysis.speculative_replays_omitted:
+def _displaced_finder_probe_lines(document: ReportDocument, context: _RenderContext) -> list[str]:
+    """Format displaced-finder resolution routes and their bounded run status."""
+    run = next((run for run in document.analysis.probes if run.kind == "displaced_finder"), None)
+    routes = [route for route in document.analysis.resolution_routes if route.kind == "displaced_finder_probe"]
+    if run is None or run.status == "disabled":
         return []
-    lines = [context.heading(f"-- speculative replays ({len(replays)}) --")]
+    if run.status == "unavailable":
+        return [f"displaced-finder probe unavailable: {', '.join(run.unavailable_reasons)}"]
+    if not routes and not run.omitted:
+        return []
+    lines = [context.heading(f"-- displaced-finder probes ({len(routes)}) --")]
     lines.append(
-        "Each line replays one importer-cache finder that a later cache change displaced, asking whether it"
-        " returns a spec for a module that then failed on the same path. Results reflect current state, not the"
-        " outcome during the run."
+        "Each route asks a displaced importer-cache finder about a later failed path lookup."
+        " Results reflect current state and do not prove loader success."
     )
-    for replay in replays:
-        finder = replay.displaced_finder.type_name
-        where = context.quoted_path(replay.path)
-        if replay.outcome == "returned_spec":
-            loader = None if replay.spec_summary is None else replay.spec_summary.loader
+    for route in routes:
+        where = context.quoted_path(route.search_path[0])
+        if route.status == "found":
+            loader = None if route.spec_summary is None else route.spec_summary.loader
             loader_clause = "" if loader is None else f" (loader {loader.type_name})"
             outcome = f"currently returns a spec{loader_clause}"
-        elif replay.outcome == "raised":
-            outcome = f"currently raises {replay.exception_type_name or 'an exception'}"
+        elif route.status == "failed":
+            outcome = f"currently raises {route.exception_type_name or 'an exception'}"
         else:
-            outcome = _SPECULATIVE_REPLAY_OUTCOMES.get(replay.outcome, _humanize(replay.outcome))
+            outcome = _DISPLACED_PROBE_OUTCOMES.get(route.status, _humanize(route.status))
+        refs = ", ".join(f"#{seq}" for seq in route.source_event_seqs)
         lines.append(
-            f"displaced {finder} for {where}, asked about {replay.fullname!r}: {outcome} "
-            f"(cache change #{replay.diff_seq}; failed lookup #{replay.attempt_seq})"
+            f"displaced {route.finder_type_name} for {where}, asked about {route.module!r}: {outcome} ({refs})"
         )
-    if document.analysis.speculative_replays_omitted:
-        lines.append(
-            f"    ... and {document.analysis.speculative_replays_omitted} more candidates omitted at the per-report cap"
-        )
+    if run.omitted:
+        lines.append(f"    ... and {run.omitted} more candidates omitted at the per-report cap")
     return lines
 
 

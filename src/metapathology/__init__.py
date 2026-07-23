@@ -16,6 +16,7 @@ Documentation: https://glinte.github.io/metapathology/
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
+    from metapathology._config import AnalysisConfig, CaptureConfig, DeepConfig
     from metapathology._frozen_bootstrap import activate_frozen
     from metapathology._monitor import Monitor
     from metapathology._records import (
@@ -36,7 +37,6 @@ if TYPE_CHECKING:
         PathHooksMutation,
         PathHooksReassignment,
         SpecSummary,
-        SpeculativeReplay,
         StandardFinderCall,
         SysPathMutation,
         SysPathReassignment,
@@ -50,6 +50,7 @@ if TYPE_CHECKING:
 __version__ = "0.5.0"
 
 _MONITOR_EXPORTS = frozenset(("Monitor",))
+_CONFIG_EXPORTS = frozenset(("AnalysisConfig", "CaptureConfig", "DeepConfig"))
 _RUNTIME_EXPORTS = frozenset(("get_monitor", "install", "monitoring", "render_report", "uninstall", "write_report"))
 _FROZEN_EXPORTS = frozenset(("activate_frozen",))
 _RECORD_EXPORTS = frozenset(
@@ -71,7 +72,6 @@ _RECORD_EXPORTS = frozenset(
         "PathHooksMutation",
         "PathHooksReassignment",
         "SpecSummary",
-        "SpeculativeReplay",
         "StandardFinderCall",
         "SysPathMutation",
         "SysPathReassignment",
@@ -80,6 +80,9 @@ _RECORD_EXPORTS = frozenset(
 _SCHEMA_EXPORTS = frozenset(("ReportJSON", "ReportStatus"))
 
 __all__ = [
+    "AnalysisConfig",
+    "CaptureConfig",
+    "DeepConfig",
     "DeepDiagnosticCall",
     "DeepImportEvent",
     "FindSpecCall",
@@ -100,7 +103,6 @@ __all__ = [
     "ReportJSON",
     "ReportStatus",
     "SpecSummary",
-    "SpeculativeReplay",
     "StandardFinderCall",
     "SysPathMutation",
     "SysPathReassignment",
@@ -119,6 +121,8 @@ def __getattr__(name: str) -> object:
     """Load public monitoring APIs only when first accessed."""
     if name in _MONITOR_EXPORTS:
         import metapathology._monitor as module
+    elif name in _CONFIG_EXPORTS:
+        import metapathology._config as module
     elif name in _RUNTIME_EXPORTS:
         import metapathology._runtime as module
     elif name in _FROZEN_EXPORTS:

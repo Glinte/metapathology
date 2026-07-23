@@ -12,7 +12,7 @@ def test_sys_path_monitor_is_opt_in_reversible_and_reports_mutations(
     proc = python_runner.run_code_ok(
         "import json, sys, metapathology\n"
         "original = sys.path\n"
-        "monitor = metapathology.install(report_at_exit=False, monitor_sys_path=True)\n"
+        "monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(sys_path=True))\n"
         "instrumented = sys.path\n"
         "assert instrumented is not original and isinstance(instrumented, list)\n"
         "sys.path.insert(0, sys.argv[1])\n"

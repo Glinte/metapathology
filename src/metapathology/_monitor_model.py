@@ -101,6 +101,9 @@ class MonitorSnapshot(_Record):
     enabled: bool
     baseline_modules: frozenset[str]
     initial_meta_path: tuple[str, ...]
+    import_audit_enabled: bool
+    meta_path_enabled: bool
+    finder_attribution_enabled: bool
     path_hooks_enabled: bool
     initial_path_hooks: tuple[ObjectRef, ...]
     sys_path_enabled: bool
@@ -108,5 +111,4 @@ class MonitorSnapshot(_Record):
     deep_import_outcomes_status: "DeepImportOutcomesStatus"
     deep_import_calls_status: "DeepImportCallsStatus"
     standard_finder_status: "StandardFinderStatus"
-    speculative_replay_enabled: bool
     target_outcome: _TargetOutcomeState | None

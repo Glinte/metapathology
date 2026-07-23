@@ -63,7 +63,12 @@ class TruncatingFinder:
         return spec
 
 sys.path.insert(0, sys.argv[1])
-metapathology.install(report_at_exit=False, deep_import_outcomes=sys.argv[3] == "deep")
+metapathology.install(
+    report_at_exit=False,
+    capture=metapathology.CaptureConfig(
+        deep=metapathology.DeepConfig(import_outcomes=sys.argv[3] == "deep"),
+    ),
+)
 sys.meta_path.insert(0, TruncatingFinder())
 try:
     import synthesis_ns.child

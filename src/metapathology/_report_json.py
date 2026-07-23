@@ -29,7 +29,6 @@ from metapathology._records import (
     PathHooksMutation,
     PathHooksReassignment,
     SpecSummary,
-    SpeculativeReplay,
     StandardFinderCall,
     SysPathMutation,
     SysPathReassignment,
@@ -47,6 +46,7 @@ from metapathology._report_model import (
     FrozenBootstrap,
     ImportAttempt,
     LoaderInventory,
+    ProbeRun,
     ReportDocument,
     ReportSummary,
     ResolutionRoute,
@@ -96,6 +96,7 @@ from metapathology._report_schema import (
     ModuleStateJSON,
     PathHooksMutationDataJSON,
     PathHooksReassignmentDataJSON,
+    ProbeRunJSON,
     ProcessInfo,
     ReassignmentDataJSON,
     ReportJSON,
@@ -104,8 +105,6 @@ from metapathology._report_schema import (
     RouteComparisonJSON,
     SnapshotJSON,
     SpecSummaryJSON,
-    SpeculativeReplayInfoJSON,
-    SpeculativeReplayJSON,
     SpecValueJSON,
     StandardFinderCallDataJSON,
     StandardResolutionJSON,
@@ -114,7 +113,6 @@ from metapathology._report_schema import (
     SysPathMutationDataJSON,
     TargetOutcomeJSON,
 )
-from metapathology._speculative_replay import MAX_SPECULATIVE_REPLAYS
 
 TYPE_CHECKING = False
 
@@ -126,7 +124,7 @@ if TYPE_CHECKING:
 
 
 _SCHEMA_NAME = "metapathology.report"
-_SCHEMA_MAJOR = 2
+_SCHEMA_MAJOR = 3
 _SCHEMA_MINOR = 0
 
 
@@ -200,7 +198,7 @@ def _build_json_document(document: ReportDocument) -> ReportJSON:
         "findings": [_json_finding(finding) for finding in document.analysis.findings],
         "explanations": [_json_explanation(explanation) for explanation in document.analysis.explanations],
         "summary": _json_summary(document.analysis.summary),
-        "speculative_replay": _json_speculative_replay(document),
+        "probes": [_json_probe_run(run) for run in document.analysis.probes],
         "target_outcome": _json_target_outcome(document.analysis.target_outcome),
         "diagnostics": _json_diagnostics(document, internal_error_refs),
     }
@@ -227,22 +225,28 @@ def _json_mechanisms(
 ) -> list[MechanismJSON]:
     """Describe the independently enabled capture mechanisms."""
     return [
-        _mechanism("meta_path_mutations", document.capture.monitor_enabled, event_counts["mutations"], "best_effort"),
+        _mechanism("meta_path_mutations", document.capture.meta_path_enabled, event_counts["mutations"], "best_effort"),
         _mechanism(
             "meta_path_reassignments",
-            document.capture.monitor_enabled,
+            document.capture.meta_path_enabled and document.capture.import_audit_enabled,
             event_counts["reassignments"],
             "import_boundaries",
         ),
         _mechanism(
-            "import_audit_starts", document.capture.monitor_enabled, event_counts["audit_starts"], "resolution_starts"
+            "import_audit_starts",
+            document.capture.import_audit_enabled,
+            event_counts["audit_starts"],
+            "resolution_starts",
         ),
         _mechanism(
-            "finder_attribution", document.capture.monitor_enabled, event_counts["calls"], "instrumented_finders"
+            "finder_attribution",
+            document.capture.finder_attribution_enabled,
+            event_counts["calls"],
+            "instrumented_finders",
         ),
         _mechanism(
             "finder_contracts",
-            document.capture.monitor_enabled,
+            document.capture.finder_attribution_enabled,
             len(document.analysis.finder_contracts),
             "first_observation_per_identity",
         ),
@@ -276,14 +280,14 @@ def _json_mechanisms(
         ),
         _mechanism(
             "path_hooks_reassignments",
-            document.path_hooks.enabled,
+            document.path_hooks.enabled and document.capture.import_audit_enabled,
             event_counts["path_hook_reassignments"],
             "import_boundaries",
         ),
         _mechanism("sys_path_mutations", document.sys_path_enabled, event_counts["sys_path_mutations"], "best_effort"),
         _mechanism(
             "sys_path_reassignments",
-            document.sys_path_enabled,
+            document.sys_path_enabled and document.capture.import_audit_enabled,
             event_counts["sys_path_reassignments"],
             "import_boundaries",
         ),
@@ -735,7 +739,7 @@ def _json_resolution_route(route: ResolutionRoute) -> ResolutionRouteJSON:
         "status": route.status,
         "spec": None if summary is None else _json_spec_summary(summary),
         "exception_type_name": route.exception_type_name,
-        "event_ref": None if route.event_seq is None else f"event:{route.event_seq}",
+        "source_event_refs": [f"event:{seq}" for seq in route.source_event_seqs],
         "search_path": list(route.search_path),
         "search_path_kind": route.search_path_kind,
         "search_path_phase": route.search_path_phase,
@@ -795,32 +799,17 @@ def _json_spec_value(value: str | ObjectRef | None) -> SpecValueJSON:
     return value
 
 
-def _json_speculative_replay(document: ReportDocument) -> SpeculativeReplayInfoJSON:
-    """Project the bounded displaced-finder replay results.
-
-    Each entry states the displaced finder's current behavior only; the schema
-    intentionally exposes no field asserting the original import would have
-    succeeded.
-    """
+def _json_probe_run(run: ProbeRun) -> ProbeRunJSON:
+    """Project one probe policy/resource summary."""
     return {
-        "enabled": document.analysis.speculative_replay_enabled,
-        "omitted": document.analysis.speculative_replays_omitted,
-        "probe_cap": MAX_SPECULATIVE_REPLAYS,
-        "replays": [_json_one_speculative_replay(replay) for replay in document.analysis.speculative_replays],
-    }
-
-
-def _json_one_speculative_replay(replay: SpeculativeReplay) -> SpeculativeReplayJSON:
-    return {
-        "attempt_event_ref": f"event:{replay.attempt_seq}",
-        "diff_event_ref": f"event:{replay.diff_seq}",
-        "displaced_finder": _json_import_object(replay.displaced_finder),
-        "exception_type_name": replay.exception_type_name,
-        "fullname": replay.fullname,
-        "outcome": replay.outcome,
-        "path": replay.path,
-        "spec": None if replay.spec_summary is None else _json_spec_summary(replay.spec_summary),
-        "state_phase": "report",
+        "kind": run.kind,
+        "status": run.status,
+        "unavailable_reasons": list(run.unavailable_reasons),
+        "candidates": run.candidates,
+        "results": run.results,
+        "foreign_calls": run.foreign_calls,
+        "capacity": run.capacity,
+        "omitted": run.omitted,
     }
 
 
@@ -1127,7 +1116,7 @@ def failed_json_document(error_name: str) -> ReportJSON:
             "top_finding_ref": None,
             "top_explanation_ref": None,
         },
-        "speculative_replay": {"enabled": False, "omitted": 0, "probe_cap": MAX_SPECULATIVE_REPLAYS, "replays": []},
+        "probes": [],
         "target_outcome": None,
         "diagnostics": {
             "internal_error_refs": [],

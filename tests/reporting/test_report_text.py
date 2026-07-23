@@ -154,7 +154,9 @@ def test_standard_unwrapped_finders_are_explained(python_runner: PythonRunner) -
     assert "BuiltinImporter: class entry" not in proc.stdout
     assert "FrozenImporter: class entry" not in proc.stdout
     assert "PathFinder: class entry" not in proc.stdout
-    assert "monitoring: sys.meta_path, sys.path_hooks, sys.path_importer_cache" in proc.stdout
+    assert (
+        "monitoring: import audit, sys.meta_path, finder attribution, sys.path_hooks, sys.path_importer_cache"
+    ) in proc.stdout
     assert "unobservable" not in proc.stdout
     assert "sys.meta_path (unchanged since install):" in proc.stdout
     assert "Nothing was recorded for:" in proc.stdout

@@ -8,8 +8,11 @@ from contextlib import contextmanager, suppress
 
 from metapathology import _report
 from metapathology._config import (
+    AnalysisConfig,
+    CaptureConfig,
     InstallRequest,
-    _UnresolvedMonitoringOptions,
+    ResolvedAnalysisConfig,
+    ResolvedCaptureConfig,
     _UnresolvedReportingOptions,
     monitoring_request,
     normalize_report_destination,
@@ -41,6 +44,7 @@ class _AutomaticReporting:
         self._lock = threading.Lock()
         self._targets: tuple[_ReportTarget, ...] = (_ReportTarget(None, "text", "auto"),)
         self._registered = False
+        self._analysis = ResolvedAnalysisConfig(True, False)
         self._callback = self._write_at_exit
 
     def targets(self) -> tuple[_ReportTarget, ...]:
@@ -52,6 +56,7 @@ class _AutomaticReporting:
         """Apply resolved output policy after monitoring activation succeeds."""
         with self._lock:
             self._targets = request.report_targets or (_ReportTarget(None, "text", "auto"),)
+            self._analysis = request.analysis
             register = request.report_at_exit and not self._registered
             if register:
                 self._registered = True
@@ -70,7 +75,7 @@ class _AutomaticReporting:
         """Write the configured target, adding the current PID to file paths."""
         targets = self.targets()
         monitor = _require_monitor()
-        artifact = _capture_report(monitor)
+        artifact = _capture_report(monitor, self._analysis)
         first_error: Exception | None = None
         for target in targets:
             destination = target.destination
@@ -98,6 +103,8 @@ _singleton_lock = threading.Lock()
 _runtime_condition = threading.Condition()
 _runtime_transition = False
 _automatic_reporting = _AutomaticReporting()
+_active_capture: ResolvedCaptureConfig | None = None
+_active_analysis: ResolvedAnalysisConfig | None = None
 
 _monitoring_region_condition = threading.Condition()
 _monitoring_region_count = 0
@@ -116,18 +123,11 @@ def install(
     report_text: "str | PathLike[str] | Sequence[str | PathLike[str]] | None" = None,
     report_json: "str | PathLike[str] | Sequence[str | PathLike[str]] | None" = None,
     report_color: "Literal['auto', 'always', 'never'] | None" = None,
-    monitor_path_hooks: bool | None = None,
-    monitor_importer_cache: bool | None = None,
-    monitor_sys_path: bool | None = None,
-    deep: bool | None = None,
-    deep_path_hooks: bool | None = None,
-    deep_path_entry_finders: bool | None = None,
-    deep_loaders: bool | None = None,
-    deep_import_outcomes: bool | None = None,
-    deep_import_calls: bool | None = None,
-    speculative_replay: bool | None = None,
+    capture: CaptureConfig | None = None,
+    analysis: AnalysisConfig | None = None,
 ) -> Monitor:
     """Install the process-wide monitor and configure automatic reporting."""
+    global _active_analysis, _active_capture
     normalized_destination = normalize_report_destination(report_destination)
     normalized_text = normalize_report_destination(report_text)
     normalized_json = normalize_report_destination(report_json)
@@ -138,6 +138,7 @@ def install(
     try:
         monitor = _get_or_create_monitor()
         current_targets = _automatic_reporting.targets()
+        active = monitor.enabled
         request = resolve_install_request(
             reporting=_UnresolvedReportingOptions(
                 report_at_exit=report_at_exit,
@@ -146,24 +147,30 @@ def install(
                 json_destinations=normalized_json,
                 color=report_color,
             ),
-            monitoring=_UnresolvedMonitoringOptions(
-                monitor_path_hooks=monitor_path_hooks,
-                monitor_importer_cache=monitor_importer_cache,
-                monitor_sys_path=monitor_sys_path,
-                deep=deep,
-                deep_path_hooks=deep_path_hooks,
-                deep_path_entry_finders=deep_path_entry_finders,
-                deep_loaders=deep_loaders,
-                deep_import_outcomes=deep_import_outcomes,
-                deep_import_calls=deep_import_calls,
-                speculative_replay=speculative_replay,
-            ),
+            capture=CaptureConfig() if capture is None else capture,
+            analysis=AnalysisConfig() if analysis is None else analysis,
             use_environment=not monitor.enabled,
             configure_report=not monitor.enabled or report_configuration_explicit,
             current_report_targets=current_targets,
         )
+        if active:
+            requested_capture = _active_capture if capture is None else request.capture
+            requested_analysis = _active_analysis if analysis is None else request.analysis
+            if requested_capture != _active_capture or requested_analysis != _active_analysis:
+                raise RuntimeError("capture and analysis configuration cannot change during an active installation")
+            assert requested_capture is not None
+            assert requested_analysis is not None
+            request = InstallRequest(
+                request.report_at_exit,
+                request.report_targets,
+                requested_capture,
+                requested_analysis,
+                request.issues,
+            )
         monitor._install(monitoring_request(request))
         _automatic_reporting.configure(request)
+        _active_capture = request.capture
+        _active_analysis = request.analysis
         return monitor
     finally:
         _end_runtime_transition()
@@ -216,18 +223,21 @@ def write_report(
     *,
     format: "Literal['text', 'json']" = "text",
     color: "Literal['auto', 'always', 'never']" = "auto",
+    analysis: AnalysisConfig | None = None,
 ) -> None:
     """Write an explicit report to a stream or exact path."""
     monitor = _require_monitor()
     _report.validate_format(format)
     _report.validate_color(color)
-    _write_report(monitor, destination, format=format, color=color)
+    _write_report(monitor, destination, format=format, color=color, analysis=analysis)
 
 
-def render_report(*, format: "Literal['text', 'json']" = "text", color: bool = False) -> str:
+def render_report(
+    *, format: "Literal['text', 'json']" = "text", color: bool = False, analysis: AnalysisConfig | None = None
+) -> str:
     """Return an explicit report as text or stable JSON."""
     _report.validate_format(format)
-    artifact = _capture_report(_require_monitor())
+    artifact = _capture_report(_require_monitor(), _resolve_report_analysis(analysis))
     return _report.render_report(artifact, format=format, color=color)
 
 
@@ -258,16 +268,8 @@ def _release_monitoring_region() -> None:
 @contextmanager
 def monitoring(
     *,
-    monitor_path_hooks: bool | None = None,
-    monitor_importer_cache: bool | None = None,
-    monitor_sys_path: bool | None = None,
-    deep: bool | None = None,
-    deep_path_hooks: bool | None = None,
-    deep_path_entry_finders: bool | None = None,
-    deep_loaders: bool | None = None,
-    deep_import_outcomes: bool | None = None,
-    deep_import_calls: bool | None = None,
-    speculative_replay: bool | None = None,
+    capture: CaptureConfig | None = None,
+    analysis: AnalysisConfig | None = None,
 ) -> "Iterator[Monitor]":
     """Observe imports only while a nested or overlapping region is active."""
     global _monitoring_region_count, _monitoring_regions_own_installation, _monitoring_region_transition
@@ -289,16 +291,8 @@ def monitoring(
             warnings.warn(_PREEXISTING_MONITOR_WARNING, RuntimeWarning, stacklevel=3)
         monitor = install(
             report_at_exit=False,
-            monitor_path_hooks=monitor_path_hooks,
-            monitor_importer_cache=monitor_importer_cache,
-            monitor_sys_path=monitor_sys_path,
-            deep=deep,
-            deep_path_hooks=deep_path_hooks,
-            deep_path_entry_finders=deep_path_entry_finders,
-            deep_loaders=deep_loaders,
-            deep_import_outcomes=deep_import_outcomes,
-            deep_import_calls=deep_import_calls,
-            speculative_replay=speculative_replay,
+            capture=capture,
+            analysis=analysis,
         )
     except BaseException:
         if first_region:
@@ -337,12 +331,34 @@ def _require_monitor() -> Monitor:
     return monitor
 
 
-def _capture_report(monitor: Monitor) -> "ReportDocument | ReportFailure":
+def _resolve_report_analysis(analysis: AnalysisConfig | None) -> ResolvedAnalysisConfig:
+    """Resolve a one-report override against the active installed policy."""
+    active = _active_analysis
+    if active is None:
+        raise RuntimeError("metapathology.install() has not been called")
+    if analysis is None:
+        return active
+    values = (analysis.probes, analysis.standard_path_probe, analysis.displaced_finder_probe)
+    if any(value is not None and type(value) is not bool for value in values):
+        raise TypeError("analysis configuration fields must be bool or None")
+    standard_default = active.standard_path_probe if analysis.probes is None else analysis.probes
+    displaced_default = active.displaced_finder_probe if analysis.probes is None else analysis.probes
+    return ResolvedAnalysisConfig(
+        standard_path_probe=standard_default if analysis.standard_path_probe is None else analysis.standard_path_probe,
+        displaced_finder_probe=displaced_default
+        if analysis.displaced_finder_probe is None
+        else analysis.displaced_finder_probe,
+    )
+
+
+def _capture_report(
+    monitor: Monitor, analysis: ResolvedAnalysisConfig | None = None
+) -> "ReportDocument | ReportFailure":
     """Capture once while suppressing only this thread's diagnostic activity."""
     try:
         snapshot = monitor._snapshot()
         with monitor._suspend_observation():
-            return _report.capture_report(snapshot)
+            return _report.capture_report(snapshot, _resolve_report_analysis(None) if analysis is None else analysis)
     except Exception as exc:
         return _report.ReportFailure(type(exc).__name__)
 
@@ -353,9 +369,10 @@ def _write_report(
     *,
     format: "Literal['text', 'json']",
     color: "Literal['auto', 'always', 'never']",
+    analysis: AnalysisConfig | None,
 ) -> None:
     """Capture and write once, recording explicit output failures as evidence."""
-    artifact = _capture_report(monitor)
+    artifact = _capture_report(monitor, _resolve_report_analysis(analysis))
     try:
         _report.write_report(artifact, destination, format=format, color=color)
     except Exception as exc:

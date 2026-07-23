@@ -4,9 +4,14 @@ import os
 import sys
 import time
 
+from metapathology._config import ResolvedAnalysisConfig
 from metapathology._deep_diagnostics import original_path_hook
+from metapathology._displaced_finder_probe import (
+    MAX_DISPLACED_FINDER_PROBES,
+    probe_displaced_finders,
+)
 from metapathology._module_metadata import ModuleMetadata, inspect_module
-from metapathology._records import ObjectRef, SpeculativeReplay, type_name
+from metapathology._records import ObjectRef, type_name
 from metapathology._report_analysis import (
     _AnalysisInputs,
     _causal_explanations,
@@ -27,6 +32,7 @@ from metapathology._report_model import (
     LoaderInventory,
     MetaPathSnapshot,
     PathHooksSnapshot,
+    ProbeRun,
     ProcessInfo,
     ReportDocument,
     ReportError,
@@ -34,20 +40,18 @@ from metapathology._report_model import (
     StandardResolution,
     TargetOutcome,
 )
-from metapathology._speculative_replay import replay_displaced_finders
 
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
     from metapathology._monitor_model import MonitorSnapshot
-    from metapathology._records import MonitorEvent
     from metapathology._report_model import CausalExplanation, Finding, ResolutionRoute, RouteComparison
 
 
 _STANDARD_CLASS_FINDER_REASON_PREFIX = "standard CPython class finder;"
 
 
-def capture_document(snapshot: "MonitorSnapshot") -> ReportDocument:
+def capture_document(snapshot: "MonitorSnapshot", analysis: ResolvedAnalysisConfig) -> ReportDocument:
     """Copy evidence at one sequence cutoff before deriving any findings."""
     events = list(snapshot.events)
     finder_contracts = list(snapshot.finder_contracts)
@@ -81,16 +85,16 @@ def capture_document(snapshot: "MonitorSnapshot") -> ReportDocument:
         attempts=attempts,
         report_errors=report_errors,
     )
-    findings, explanations, resolution_routes, route_comparisons = _derive_findings(inputs, standard_resolutions)
-    # Speculative replay and the process snapshot run after finding derivation
-    # so their report_errors keep their historical position in the log.
-    speculative_replays, speculative_replays_omitted = _speculative_replays(snapshot, events)
+    findings, explanations, resolution_routes, route_comparisons, probes = _derive_findings(
+        inputs, standard_resolutions, snapshot, analysis
+    )
     summary = _report_summary(findings, explanations, attempts)
     process = _capture_process(report_errors)
     return ReportDocument(
         process=process,
         capture=_capture_info(snapshot, modules_since_install),
         meta_path=MetaPathSnapshot(
+            enabled=snapshot.meta_path_enabled,
             initial=snapshot.initial_meta_path,
             current=current_meta_path,
         ),
@@ -123,9 +127,7 @@ def capture_document(snapshot: "MonitorSnapshot") -> ReportDocument:
             summary=summary,
             target_outcome=_target_outcome(snapshot),
             report_errors=tuple(report_errors),
-            speculative_replay_enabled=snapshot.speculative_replay_enabled,
-            speculative_replays=speculative_replays,
-            speculative_replays_omitted=speculative_replays_omitted,
+            probes=probes,
         ),
     )
 
@@ -133,7 +135,9 @@ def capture_document(snapshot: "MonitorSnapshot") -> ReportDocument:
 def _derive_findings(
     inputs: _AnalysisInputs,
     standard_resolutions: tuple[StandardResolution, ...],
-) -> "tuple[tuple[Finding, ...], tuple[CausalExplanation, ...], tuple[ResolutionRoute, ...], tuple[RouteComparison, ...]]":
+    snapshot: "MonitorSnapshot",
+    analysis: ResolvedAnalysisConfig,
+) -> "tuple[tuple[Finding, ...], tuple[CausalExplanation, ...], tuple[ResolutionRoute, ...], tuple[RouteComparison, ...], tuple[ProbeRun, ...]]":
     """Run the finding/route/explanation pipeline from one captured snapshot.
 
     One allocator per element kind numbers ids in creation order; the shared
@@ -141,8 +145,14 @@ def _derive_findings(
     repeated-load passes so the numbering stays contiguous.
     """
     finding_ids = _IdAllocator("finding")
+    route_ids = _IdAllocator("route")
+    standard_available = snapshot.finder_attribution_enabled
     findings, resolution_routes, route_comparisons = _suspicious_findings(
-        inputs, finding_ids, _IdAllocator("route"), _IdAllocator("comparison")
+        inputs,
+        finding_ids,
+        route_ids,
+        _IdAllocator("comparison"),
+        analysis.standard_path_probe and standard_available,
     )
     findings = (
         *findings,
@@ -152,21 +162,54 @@ def _derive_findings(
     explanations = _causal_explanations(
         findings, inputs.attempts, standard_resolutions, route_comparisons, _IdAllocator("explanation"), inputs.events
     )
-    return findings, explanations, resolution_routes, route_comparisons
-
-
-def _speculative_replays(
-    snapshot: "MonitorSnapshot", events: list["MonitorEvent"]
-) -> tuple[tuple[SpeculativeReplay, ...], int]:
-    """Replay displaced importer-cache finders when the mechanism is enabled.
-
-    The runtime suspends observation around the whole artifact capture, so the
-    single foreign ``find_spec()`` per candidate records no monitor events and
-    cannot re-enter the tool's own instrumentation.
-    """
-    if not snapshot.speculative_replay_enabled:
-        return (), 0
-    return replay_displaced_finders(events, snapshot.retained_cache_finders)
+    standard_routes = tuple(route for route in resolution_routes if route.kind == "standard_path_probe")
+    if not analysis.standard_path_probe:
+        standard_run = ProbeRun("standard_path", "disabled", (), 0, 0, 0, None, 0)
+    elif not standard_available:
+        standard_run = ProbeRun("standard_path", "unavailable", ("finder_attribution_disabled",), 0, 0, 0, None, 0)
+    else:
+        standard_run = ProbeRun(
+            "standard_path",
+            "active",
+            (),
+            len(standard_routes),
+            len(standard_routes),
+            sum(route.status != "target_unavailable" for route in standard_routes),
+            None,
+            0,
+        )
+    displaced_available = snapshot.importer_cache.enabled and "path_entry_finders" in snapshot.deep_diagnostics
+    if not analysis.displaced_finder_probe:
+        displaced_routes: tuple[ResolutionRoute, ...] = ()
+        displaced_run = ProbeRun("displaced_finder", "disabled", (), 0, 0, 0, MAX_DISPLACED_FINDER_PROBES, 0)
+    elif not displaced_available:
+        reasons = []
+        if not snapshot.importer_cache.enabled:
+            reasons.append("importer_cache_disabled")
+        if "path_entry_finders" not in snapshot.deep_diagnostics:
+            reasons.append("deep_path_entry_finders_disabled")
+        displaced_routes = ()
+        displaced_run = ProbeRun(
+            "displaced_finder",
+            "unavailable",
+            tuple(reasons),
+            0,
+            0,
+            0,
+            MAX_DISPLACED_FINDER_PROBES,
+            0,
+        )
+    else:
+        displaced_routes, displaced_run = probe_displaced_finders(
+            inputs.events, snapshot.retained_cache_finders, route_ids.next_id
+        )
+    return (
+        findings,
+        explanations,
+        (*resolution_routes, *displaced_routes),
+        route_comparisons,
+        (standard_run, displaced_run),
+    )
 
 
 def _target_outcome(snapshot: "MonitorSnapshot") -> TargetOutcome | None:
@@ -225,6 +268,9 @@ def _capture_info(snapshot: "MonitorSnapshot", modules_since_install: tuple[str,
     return CaptureInfo(
         cutoff_seq=snapshot.cutoff_seq,
         monitor_enabled=snapshot.enabled,
+        import_audit_enabled=snapshot.import_audit_enabled,
+        meta_path_enabled=snapshot.meta_path_enabled,
+        finder_attribution_enabled=snapshot.finder_attribution_enabled,
         baseline_module_count=len(snapshot.baseline_modules),
         modules_since_install=modules_since_install,
         early_site_bootstrap=early_site_bootstrap,

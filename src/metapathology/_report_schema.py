@@ -41,18 +41,21 @@ CacheState = Literal["unavailable", "missing", "none", "object"]
 ProtocolAvailability = Literal["callable", "non_callable", "indeterminate", "absent"]
 LocationsState = Literal["not_applicable", "captured", "post_hoc", "deferred", "failed"]
 LocationsComparisonState = Literal["not_applicable", "captured", "post_hoc", "deferred", "failed", "unavailable"]
-SearchPathKind = Literal["sys_path", "parent_path"]
+SearchPathKind = Literal["sys_path", "parent_path", "path_entry"]
 SearchPathPhase = Literal["import"]
 StatePhase = Literal["import", "report"]
 ResolutionCategory = Literal["namespace", "built_in", "frozen", "source", "bytecode", "extension", "zip"]
 StandardEvidenceLevel = Literal["captured", "inferred"]
-RouteKind = Literal["captured_claim", "standard_path_probe"]
+RouteKind = Literal["captured_claim", "standard_path_probe", "displaced_finder_probe"]
 RoutePurpose = Literal[
     "record_selected_custom_meta_path_route",
     "show_standard_path_route_bypassed_by_captured_claim",
+    "probe_displaced_importer_cache_finder",
 ]
 RouteEvidenceLevel = Literal["captured", "live_probe"]
-RouteStatus = Literal["found", "not_found", "failed", "target_unavailable"]
+RouteStatus = Literal["found", "not_found", "failed", "target_unavailable", "finder_unavailable", "unsupported_finder"]
+ProbeKind = Literal["standard_path", "displaced_finder"]
+ProbeStatus = Literal["active", "disabled", "unavailable"]
 ImportPresence = Literal["unknown", "present_at_report", "absent_at_report"]
 ImportProgress = Literal[
     "started",
@@ -162,9 +165,8 @@ FinderContractCategory = Literal["indeterminate", "legacy_only", "modern", "mode
 FinderContractObservation = Literal["install", "reassignment", "mutation"]
 ModuleInspection = Literal["available", "unavailable"]
 ModuleLoaderSource = Literal["spec", "module", "none"]
-# Effective ``outcome`` vocabularies for deep-diagnostic and speculative-replay
-# payloads. Mirrors ``DeepOutcome`` and ``SpeculativeReplayOutcome`` in
-# ``_records``. ``FindingEvidenceJSON.outcome`` stays ``str``: it embeds the
+# Effective ``outcome`` vocabulary for deep-diagnostic payloads. Mirrors
+# ``DeepOutcome`` in ``_records``. ``FindingEvidenceJSON.outcome`` stays ``str``: it embeds the
 # raising exception type (``raised:<type>``) and is not a closed vocabulary.
 DeepOutcome = Literal[
     "started",
@@ -175,14 +177,6 @@ DeepOutcome = Literal[
     "returned",
     "raised",
     "unobserved_reentrant",
-]
-SpeculativeReplayOutcome = Literal[
-    "returned_spec",
-    "returned_none",
-    "raised",
-    "declined_target_unavailable",
-    "finder_unavailable",
-    "unsupported_finder",
 ]
 
 
@@ -385,7 +379,7 @@ class ResolutionRouteJSON(TypedDict):
     status: RouteStatus
     spec: SpecSummaryJSON | None
     exception_type_name: str | None
-    event_ref: str | None
+    source_event_refs: list[str]
     search_path: list[str]
     search_path_kind: SearchPathKind
     search_path_phase: SearchPathPhase
@@ -790,27 +784,19 @@ class DiagnosticsInfo(TypedDict):
     skipped_finders: list[SkippedFinderJSON]
 
 
-class SpeculativeReplayJSON(TypedDict):
-    attempt_event_ref: str
-    diff_event_ref: str
-    displaced_finder: ImportObjectJSON
-    exception_type_name: str | None
-    fullname: str
-    outcome: SpeculativeReplayOutcome
-    path: str
-    spec: SpecSummaryJSON | None
-    state_phase: StatePhase
-
-
-class SpeculativeReplayInfoJSON(TypedDict):
-    enabled: bool
+class ProbeRunJSON(TypedDict):
+    kind: ProbeKind
+    status: ProbeStatus
+    unavailable_reasons: list[str]
+    candidates: int
+    results: int
+    foreign_calls: int
+    capacity: int | None
     omitted: int
-    probe_cap: int
-    replays: list[SpeculativeReplayJSON]
 
 
 class ReportJSON(TypedDict):
-    """Complete schema 2.0 report document."""
+    """Complete schema 3.0 report document."""
 
     schema: SchemaVersion
     report_status: ReportStatus
@@ -829,7 +815,7 @@ class ReportJSON(TypedDict):
     findings: list[FindingJSON]
     explanations: list[ExplanationJSON]
     summary: SummaryInfo
-    speculative_replay: SpeculativeReplayInfoJSON
+    probes: list[ProbeRunJSON]
     target_outcome: TargetOutcomeJSON | None
     diagnostics: DiagnosticsInfo
 

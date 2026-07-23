@@ -9,6 +9,13 @@ truth for the supported public API.
 
 ## Lifecycle and reporting
 
+### Configuration records
+
+`CaptureConfig`, `DeepConfig`, and `AnalysisConfig` are immutable,
+value-comparable records. Every field accepts `True`, `False`, or `None`;
+`None` defers to the matching environment value and then the documented
+default. Invalid types are rejected before import state changes.
+
 ### `activate_frozen(integration, bootstrap_path) -> None`
 
 Installs the process-wide monitor and records activation inside a supported
@@ -18,7 +25,7 @@ fail-open startup files described in the [frozen application guide](frozen.md)
 over calling this function directly. Direct calls propagate invalid integration
 and installation errors to the application.
 
-### `install(*, report_at_exit=True, report_destination=None, report_text=None, report_json=None, report_color=None, monitor_path_hooks=None, monitor_importer_cache=None, monitor_sys_path=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None, deep_import_calls=None, speculative_replay=None) -> Monitor`
+### `install(*, report_at_exit=True, report_destination=None, report_text=None, report_json=None, report_color=None, capture=None, analysis=None) -> Monitor`
 
 Installs the process-wide monitor and returns it. Repeated calls return and
 enable the same monitor. Only activity after installation can be observed.
@@ -36,29 +43,24 @@ reports. API values override `METAPATHOLOGY_COLOR`; the default `"auto"` colors
 TTY destinations unless `NO_COLOR` is nonempty or `TERM=dumb`. JSON never
 contains ANSI escapes.
 
-`monitor_path_hooks` controls path-hook observation and defaults to true. A later
-true value enables it if initially disabled; false does not disable an active
-mechanism. Use `uninstall()` for cleanup.
-`monitor_importer_cache` has the same enable-later semantics and controls
-passive `sys.path_importer_cache` snapshots and diffs.
-`monitor_sys_path` opts into reversible list-mutation attribution and
-import-boundary reassignment detection for `sys.path`; it defaults to false
-unless `deep=True` and can also be set with
-`METAPATHOLOGY_MONITOR_SYS_PATH`.
-
-`deep=True` enables all five delegated deep mechanisms and `sys.path`
-monitoring. Each `deep_*` argument can
-override the umbrella independently for delegated path hooks, mutable
-path-entry finders, mutable loaders, exact import outcomes, or
-`builtins.__import__` calls. `deep_import_calls` wraps `__import__` to observe
+`capture` accepts an immutable `CaptureConfig`. Its `import_audit`,
+`meta_path`, and `finder_attribution` fields independently control audit-start
+evidence/reassignment recovery, reversible `sys.meta_path` list observation,
+and finder instance shadows. `path_hooks` and `importer_cache` default to true;
+`sys_path` defaults to false. `CaptureConfig.deep` accepts `DeepConfig`;
+`DeepConfig(enabled=True)` enables all five delegated mechanisms and makes
+`sys_path` default to true. Individual deep fields override that umbrella.
+`DeepConfig(import_calls=True)` wraps `__import__` to observe
 every import statement, including `sys.modules` cache hits that no other
 mechanism sees; the swap is chain-safe against other tools that also wrap
 `__import__`, and `importlib.import_module()` bypasses it. Path-hook
 wrapping changes callable identity; deep mechanisms put monitor code inline
 with imports and should be reserved for controlled diagnostic runs.
 
-`speculative_replay` is independent of `deep`. When enabled (or via
-`METAPATHOLOGY_SPECULATIVE_REPLAY`), report generation replays a finder that a
+`analysis` accepts `AnalysisConfig`. Standard-path probes default on.
+`AnalysisConfig(probes=True)` enables both standard-path and displaced-finder
+probes; individual fields override the umbrella. A displaced-finder probe
+asks a finder that a
 `sys.path_importer_cache` change displaced for a path entry against a module
 that later failed to resolve on that path, reporting whether the retained finder
 returns a spec now. It performs at most one foreign `find_spec()` per selected
@@ -67,7 +69,7 @@ reload-target lookups, and never claims the original import would have
 succeeded. Because it recomputes each report, repeated reports repeat those
 foreign calls.
 
-Capture booleans resolve consistently: an explicit API value wins, then its
+Configuration fields resolve consistently: an explicit API value wins, then its
 `METAPATHOLOGY_*` environment value, then the documented default. Accepted
 environment booleans are `1/0`, `true/false`, `yes/no`, and `on/off`
 (case-insensitive). `report_at_exit` remains API-only because it controls
@@ -83,7 +85,7 @@ not replace the target's exit status.
 
 [atexit]: https://docs.python.org/3/library/atexit.html
 
-### `monitoring(*, monitor_path_hooks=None, monitor_importer_cache=None, monitor_sys_path=None, deep=None, deep_path_hooks=None, deep_path_entry_finders=None, deep_loaders=None, deep_import_outcomes=None, deep_import_calls=None, speculative_replay=None) -> ContextManager[Monitor]`
+### `monitoring(*, capture=None, analysis=None) -> ContextManager[Monitor]`
 
 Defines a bounded monitoring region and yields the process-wide monitor. The
 monitor is installed on entry and, if the region began from an inactive state,
@@ -93,10 +95,9 @@ first region, `monitoring()` emits a `RuntimeWarning` and leaves it active
 afterward; this makes the likely lifecycle mismatch visible without tearing
 down instrumentation the region does not own.
 
-Nested regions share the monitor. A nested region may enable another mechanism,
-but mechanisms are not selectively disabled when that inner region exits; they
-remain enabled until the shared installation ends. This matches the monotonic
-enable-later behavior of `install()`.
+Nested regions share the monitor and must use the same resolved capture and
+analysis configuration. A differing active configuration raises; uninstall
+before selecting another configuration.
 
 The context manager does not register an atexit report because its cleanup
 boundary occurs before process exit. Recorded evidence remains available after
@@ -130,7 +131,7 @@ format or color mode. In `"auto"`, file paths and non-TTY streams remain plain;
 ### `render_report(*, format="text", color=False) -> str`
 
 Returns text or JSON, including its trailing newline. JSON uses the stable
-`metapathology.report` schema version 2.0. The bundled
+`metapathology.report` schema version 3.0. The bundled
 `metapathology/report.schema.json` file defines its language-neutral shape;
 `metapathology.ReportJSON` and `metapathology.ReportStatus` expose the Python
 typing contract without eagerly importing the reporting implementation.
@@ -146,6 +147,12 @@ Applications receive a `Monitor` from `install()`; directly constructing
 competing monitors is not supported because import state is process-global.
 
 - `enabled: bool` — whether observation is currently active.
+- `import_audit_enabled: bool` — whether import-start evidence and
+  import-boundary reassignment recovery are active.
+- `meta_path_enabled: bool` — whether the reversible `sys.meta_path` list
+  observer is active.
+- `finder_attribution_enabled: bool` — whether writable finder instances are
+  shadowed to record calls.
 - `initial_meta_path: tuple[str, ...]` — finder display names at installation.
 - `path_hooks_enabled: bool` — whether path-hook observation is currently active.
 - `initial_path_hooks: tuple[ObjectRef, ...]` — identities and safe

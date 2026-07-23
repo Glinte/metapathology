@@ -55,9 +55,13 @@ sys.path_importer_cache.pop(sentinel, None)
 sys.path.insert(0, sentinel)
 monitor = metapathology.install(
     report_at_exit=False,
-    deep_path_hooks=True,
-    deep_path_entry_finders=True,
-    deep_loaders=True,
+    capture=metapathology.CaptureConfig(
+        deep=metapathology.DeepConfig(
+            path_hooks=True,
+            path_entry_finders=True,
+            loaders=True,
+        )
+    ),
 )
 # The wrapper shadows the hook by identity but compares equal to it, so
 # ``in`` (which uses ``==``) still finds it while ``is`` sees the wrapper.
@@ -133,7 +137,7 @@ def test_distinct_hooks_accepting_one_path_report_structural_shadow(
         "sys.path_hooks[:0] = [first, second]\n"
         "sys.path.insert(0, sys.argv[1])\n"
         "sys.path_importer_cache.pop(sys.argv[1], None)\n"
-        "metapathology.install(report_at_exit=False, deep_path_hooks=True)\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(path_hooks=True)))\n"
         "sys.path_importer_cache.pop(sys.argv[1], None)\n"
         "try: __import__('shadow_first_missing')\n"
         "except ModuleNotFoundError: pass\n"
@@ -176,7 +180,7 @@ def test_deep_path_hook_wrapper_survives_equality_scan(python_runner: PythonRunn
         "    created.append(path)\n"
         "    return FallbackFinder()\n"
         "sys.path_hooks[:0] = [anchor_hook, tail_hook]\n"
-        "metapathology.install(report_at_exit=False, deep_path_hooks=True)\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(path_hooks=True)))\n"
         # Emulate the fallback scan: find our anchor by equality, then build
         # the first hook that comes after it.
         "anchor_seen = False\n"
@@ -225,7 +229,7 @@ class Finder:
 
 finder = Finder()
 sys.meta_path.insert(0, finder)
-monitor = metapathology.install(report_at_exit=False, deep_loaders=True)
+monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(loaders=True)))
 import deep_identity_ext
 first = deep_identity_ext
 spec = first.__spec__
@@ -284,8 +288,12 @@ def test_deep_mechanisms_are_independently_toggleable(python_runner: PythonRunne
     python_runner.run_code_ok(
         "import metapathology\n"
         "monitor = metapathology.install(\n"
-        "    report_at_exit=False, monitor_path_hooks=False, monitor_importer_cache=False,\n"
-        "    deep_path_entry_finders=True,\n"
+        "    report_at_exit=False,\n"
+        "    capture=metapathology.CaptureConfig(\n"
+        "        path_hooks=False,\n"
+        "        importer_cache=False,\n"
+        "        deep=metapathology.DeepConfig(path_entry_finders=True),\n"
+        "    ),\n"
         ")\n"
         "assert monitor.deep_diagnostics == ('path_entry_finders',)\n"
         "assert type(__import__('sys').path_hooks) is list\n"
@@ -300,7 +308,7 @@ def test_deep_path_entry_finder_preserves_later_shadow(python_runner: PythonRunn
         "    def find_spec(self, fullname, target=None): return None\n"
         "finder = Finder()\n"
         "sys.path_importer_cache['owned-finder-probe'] = finder\n"
-        "metapathology.install(report_at_exit=False, deep_path_entry_finders=True)\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(path_entry_finders=True)))\n"
         "replacement = lambda fullname, target=None: None\n"
         "finder.find_spec = replacement\n"
         "metapathology.uninstall()\n"
@@ -325,7 +333,7 @@ def test_deep_loader_preserves_later_method_shadows(python_runner: PythonRunner)
         "loader = Loader()\n"
         "finder = Finder(loader)\n"
         "sys.meta_path.insert(0, finder)\n"
-        "metapathology.install(report_at_exit=False, deep_loaders=True)\n"
+        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(deep=metapathology.DeepConfig(loaders=True)))\n"
         "import owned_loader_probe\n"
         "replacement_create = lambda spec: None\n"
         "replacement_exec = lambda module: None\n"
@@ -344,7 +352,13 @@ def test_deep_path_hooks_restore_only_owned_wrappers(python_runner: PythonRunner
     proc = python_runner.run_code_ok(
         "import sys, metapathology\n"
         "original_hooks = list(sys.path_hooks)\n"
-        "metapathology.install(report_at_exit=False, monitor_path_hooks=True, deep_path_hooks=True)\n"
+        "metapathology.install(\n"
+        "    report_at_exit=False,\n"
+        "    capture=metapathology.CaptureConfig(\n"
+        "        path_hooks=True,\n"
+        "        deep=metapathology.DeepConfig(path_hooks=True),\n"
+        "    ),\n"
+        ")\n"
         "replacement = lambda path: (_ for _ in ()).throw(ImportError)\n"
         "sys.path_hooks[0] = replacement\n"
         "metapathology.uninstall()\n"

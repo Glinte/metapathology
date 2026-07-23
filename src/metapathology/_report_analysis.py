@@ -449,6 +449,7 @@ def _suspicious_findings(
     finding_ids: _IdAllocator,
     route_ids: _IdAllocator,
     comparison_ids: _IdAllocator,
+    standard_path_probe: bool = True,
 ) -> tuple[tuple[Finding, ...], tuple[ResolutionRoute, ...], tuple[RouteComparison, ...]]:
     """Build neutral resolution routes, then promote only corroborated effects."""
     baseline_modules = inputs.baseline_modules
@@ -495,22 +496,25 @@ def _suspicious_findings(
                 structural_context,
                 winner.seq in meta_short_circuit_seqs,
                 report_errors,
+                standard_path_probe,
             )
-            routes.extend((captured_route, standard_route))
-            comparisons.append(comparison)
-            finding = _corroborated_route_finding(
-                name,
-                winner,
-                captured_route,
-                standard_route,
-                comparison,
-                structural_comparison,
-                attempts,
-                finding_ids,
-                winner.seq in meta_short_circuit_seqs,
-            )
-            if finding is not None:
-                findings.append(finding)
+            routes.append(captured_route)
+            if standard_route is not None and comparison is not None:
+                routes.append(standard_route)
+                comparisons.append(comparison)
+                finding = _corroborated_route_finding(
+                    name,
+                    winner,
+                    captured_route,
+                    standard_route,
+                    comparison,
+                    structural_comparison,
+                    attempts,
+                    finding_ids,
+                    winner.seq in meta_short_circuit_seqs,
+                )
+                if finding is not None:
+                    findings.append(finding)
             continue
         metadata = metadata_by_name.get(name)
         if metadata is not None and metadata.inspection == "available" and metadata.spec_is_none:
@@ -1262,7 +1266,8 @@ def _resolution_routes(
     structural_context: _ImportStructureComparator,
     meta_short_circuit: bool,
     report_errors: list[ReportError],
-) -> tuple[ResolutionRoute, ResolutionRoute, RouteComparison, StructuralComparison]:
+    standard_path_probe: bool,
+) -> tuple[ResolutionRoute, ResolutionRoute | None, RouteComparison | None, StructuralComparison]:
     """Describe a captured claim and an independent standard-path probe."""
     observed = winner.spec_summary
     if observed is not None:
@@ -1282,12 +1287,14 @@ def _resolution_routes(
         status="found",
         spec_summary=observed,
         exception_type_name=None,
-        event_seq=winner.seq,
+        source_event_seqs=(winner.seq,),
         search_path=winner.search_path,
         search_path_kind=winner.search_path_kind,
         search_path_phase="import",
         signals=("meta_path_short_circuit",) if meta_short_circuit else (),
     )
+    if not standard_path_probe:
+        return captured_route, None, None, structural_comparison
     target: types.ModuleType | None = None
     target_available = winner.target_state is None
     if (
@@ -1304,6 +1311,7 @@ def _resolution_routes(
         winner.search_path_kind,
         target,
         target_available,
+        (winner.seq,),
     )
     if standard_route.status == "failed":
         report_errors.append(ReportError("standard_path_probe", standard_route.exception_type_name or "Exception"))
@@ -1554,6 +1562,7 @@ def _probe_standard_path(
     search_path_kind: "SearchPathKind",
     target: types.ModuleType | None,
     target_available: bool,
+    source_event_seqs: tuple[int, ...],
 ) -> ResolutionRoute:
     """Probe PathFinder as one route without treating it as the alternative winner."""
     if not target_available:
@@ -1563,13 +1572,24 @@ def _probe_standard_path(
             search_path,
             search_path_kind,
             "target_unavailable",
+            source_event_seqs=source_event_seqs,
         )
     try:
         spec = PathFinder.find_spec(name, search_path, target)
         if spec is None:
-            return _standard_path_route(route_id, name, search_path, search_path_kind, "not_found")
+            return _standard_path_route(
+                route_id, name, search_path, search_path_kind, "not_found", source_event_seqs=source_event_seqs
+            )
         summary, _loader = summarize_spec(spec, iterate_foreign_locations=True)
-        return _standard_path_route(route_id, name, search_path, search_path_kind, "found", summary)
+        return _standard_path_route(
+            route_id,
+            name,
+            search_path,
+            search_path_kind,
+            "found",
+            summary,
+            source_event_seqs=source_event_seqs,
+        )
     except BaseException as exc:  # A broken finder chain must not break the report.
         return _standard_path_route(
             route_id,
@@ -1578,6 +1598,7 @@ def _probe_standard_path(
             search_path_kind,
             "failed",
             exception_type_name=type_name(exc),
+            source_event_seqs=source_event_seqs,
         )
 
 
@@ -1589,6 +1610,7 @@ def _standard_path_route(
     status: "RouteStatus",
     spec_summary: SpecSummary | None = None,
     exception_type_name: str | None = None,
+    source_event_seqs: tuple[int, ...] = (),
 ) -> ResolutionRoute:
     """Construct one uniformly qualified standard-path probe result."""
     return ResolutionRoute(
@@ -1609,7 +1631,7 @@ def _standard_path_route(
         status=status,
         spec_summary=spec_summary,
         exception_type_name=exception_type_name,
-        event_seq=None,
+        source_event_seqs=source_event_seqs,
         search_path=search_path,
         search_path_kind=search_path_kind,
         search_path_phase="import",
