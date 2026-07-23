@@ -37,6 +37,7 @@ CAPTURE_IMPORT_CALLS_ENV = "METAPATHOLOGY_CAPTURE_IMPORT_CALLS"
 CHECKS_ENV = "METAPATHOLOGY_CHECKS"
 STANDARD_PATH_CHECK_ENV = "METAPATHOLOGY_STANDARD_PATH_CHECK"
 DISPLACED_FINDER_CHECK_ENV = "METAPATHOLOGY_DISPLACED_FINDER_CHECK"
+UNSAFE_EXPLORE_IMPORT_BRANCHES_ENV = "METAPATHOLOGY_UNSAFE_EXPLORE_IMPORT_BRANCHES"
 
 _TRUE_ENV_VALUES = frozenset(("1", "true", "yes", "on"))
 _FALSE_ENV_VALUES = frozenset(("0", "false", "no", "off"))
@@ -137,6 +138,7 @@ class InstallRequest(_Record):
     report_targets: tuple[ReportTarget, ...]
     capture: ResolvedCaptureConfig
     analysis: ResolvedAnalysisConfig
+    unsafe_explore_import_branches: bool
     issues: tuple[str, ...]
 
 
@@ -154,6 +156,7 @@ class MonitoringRequest(_Record):
     capture_loader_calls: bool
     capture_import_results: bool
     capture_import_calls: bool
+    unsafe_explore_import_branches: bool
     issues: tuple[str, ...]
 
 
@@ -181,6 +184,7 @@ def monitoring_request(request: InstallRequest) -> MonitoringRequest:
         capture_loader_calls=request.capture.detailed.loaders,
         capture_import_results=request.capture.detailed.import_results,
         capture_import_calls=request.capture.detailed.import_calls,
+        unsafe_explore_import_branches=request.unsafe_explore_import_branches,
         issues=request.issues,
     )
 
@@ -223,10 +227,13 @@ def resolve_install_request(
     use_environment: bool,
     configure_report: bool,
     current_report_targets: tuple[ReportTarget, ...],
+    unsafe_explore_import_branches: bool | None = None,
 ) -> InstallRequest:
     """Resolve one complete request without mutating monitor or import state."""
     issues: list[str] = []
     _validate_configs(capture, analysis)
+    if unsafe_explore_import_branches is not None and type(unsafe_explore_import_branches) is not bool:
+        raise TypeError("unsafe_explore_import_branches must be bool or None")
     checks_enabled = _resolve_bool(analysis.checks, CHECKS_ENV, False, issues)
     checks_configured = analysis.checks is not None or os.environ.get(CHECKS_ENV) is not None
     resolved_standard_path_check = _resolve_bool(
@@ -237,6 +244,12 @@ def resolve_install_request(
     )
     resolved_displaced_finder_check = _resolve_bool(
         analysis.displaced_finder_check, DISPLACED_FINDER_CHECK_ENV, checks_enabled, issues
+    )
+    resolved_unsafe_exploration = _resolve_bool(
+        unsafe_explore_import_branches,
+        UNSAFE_EXPLORE_IMPORT_BRANCHES_ENV,
+        False,
+        issues,
     )
     detailed = (
         capture.detailed
@@ -250,18 +263,23 @@ def resolve_install_request(
     resolved_path_hooks = _resolve_bool(capture.path_hooks, PATH_HOOKS_ENV, True, issues)
     resolved_importer_cache = _resolve_bool(capture.importer_cache, IMPORTER_CACHE_ENV, True, issues)
     resolved_sys_path = _resolve_bool(capture.sys_path, SYS_PATH_ENV, detailed_enabled, issues)
-    resolved_path_hook_calls = _resolve_bool(detailed.path_hooks, CAPTURE_PATH_HOOK_CALLS_ENV, detailed_enabled, issues)
+    resolved_path_hook_calls = _resolve_bool(
+        detailed.path_hooks,
+        CAPTURE_PATH_HOOK_CALLS_ENV,
+        detailed_enabled or resolved_unsafe_exploration,
+        issues,
+    )
     resolved_path_entry_finder_calls = _resolve_bool(
         detailed.path_entry_finders,
         CAPTURE_PATH_ENTRY_FINDER_CALLS_ENV,
-        detailed_enabled or resolved_displaced_finder_check,
+        detailed_enabled or resolved_displaced_finder_check or resolved_unsafe_exploration,
         issues,
     )
     resolved_loader_calls = _resolve_bool(detailed.loaders, CAPTURE_LOADER_CALLS_ENV, detailed_enabled, issues)
     resolved_import_results = _resolve_bool(
         detailed.import_results,
         CAPTURE_IMPORT_RESULTS_ENV,
-        detailed_enabled,
+        detailed_enabled or resolved_unsafe_exploration,
         issues,
     )
     resolved_import_calls = _resolve_bool(
@@ -302,6 +320,7 @@ def resolve_install_request(
             standard_path_check=resolved_standard_path_check,
             displaced_finder_check=resolved_displaced_finder_check,
         ),
+        unsafe_explore_import_branches=resolved_unsafe_exploration,
         issues=tuple(issues),
     )
 

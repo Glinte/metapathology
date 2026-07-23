@@ -7,7 +7,11 @@ The governing rule is to observe import machinery with minimal perturbation and 
 ## Non-negotiable constraints
 
 - Runtime code is stdlib-only and supports CPython 3.10+.
-- Never handle an import or change its outcome. Observe and report only.
+- Outside explicitly enabled unsafe import-branch exploration, never handle an
+  import or change its outcome. Ordinary capture observes and reports only.
+  Unsafe exploration invokes skipped foreign finders and hooks, discards their
+  results, never executes alternative loaders, and must state that foreign side
+  effects can still change the diagnostic run.
 - `uninstall()` must restore ordinary lists and remove instance instrumentation. Audit hooks are irremovable, so they become inert.
 - Finders installed before startup, including those from already-processed `.pth` files, can only appear in the initial snapshot. Keep this limitation documented.
 

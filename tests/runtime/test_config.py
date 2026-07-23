@@ -49,6 +49,7 @@ def _resolve(
     use_environment: bool = True,
     configure_report: bool = True,
     current_report_targets: tuple[ReportTarget, ...] = (ReportTarget(None, "text", "auto"),),
+    unsafe_explore_import_branches: bool | None = None,
 ) -> InstallRequest:
     return resolve_install_request(
         reporting=_UnresolvedReportingOptions(
@@ -63,6 +64,7 @@ def _resolve(
         use_environment=use_environment,
         configure_report=configure_report,
         current_report_targets=current_report_targets,
+        unsafe_explore_import_branches=unsafe_explore_import_branches,
     )
 
 
@@ -128,6 +130,28 @@ def test_detailed_and_check_group_settings_respect_explicit_overrides() -> None:
     assert request.capture.detailed.import_calls is True
     assert request.analysis.standard_path_check is False
     assert request.analysis.displaced_finder_check is True
+
+
+def test_unsafe_exploration_is_independent_and_auto_enables_prerequisites(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert _resolve(use_environment=False).unsafe_explore_import_branches is False
+    request = _resolve(unsafe_explore_import_branches=True, use_environment=False)
+    assert request.unsafe_explore_import_branches is True
+    assert request.capture.finder_attribution is True
+    assert request.capture.path_hooks is True
+    assert request.capture.importer_cache is True
+    assert request.capture.detailed.path_hooks is True
+    assert request.capture.detailed.path_entry_finders is True
+    assert request.capture.detailed.import_results is True
+    assert request.capture.detailed.loaders is False
+
+    monkeypatch.setenv("METAPATHOLOGY_UNSAFE_EXPLORE_IMPORT_BRANCHES", "on")
+    assert _resolve().unsafe_explore_import_branches is True
+    assert _resolve(unsafe_explore_import_branches=False).unsafe_explore_import_branches is False
+
+    with pytest.raises(TypeError, match="unsafe_explore_import_branches"):
+        _resolve(unsafe_explore_import_branches=cast(bool, 1))
 
 
 @settings(suppress_health_check=[HealthCheck.function_scoped_fixture])

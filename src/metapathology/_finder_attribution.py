@@ -44,6 +44,17 @@ if TYPE_CHECKING:
     class _FinderAttributionHost(Protocol):
         """Shared monitor services required by finder attribution."""
 
+        def _unsafe_exploration_active(self) -> bool: ...
+
+        def _explore_after_meta_path_exception(
+            self,
+            finder: object,
+            fullname: str,
+            path: object,
+            target: object,
+            trigger_event_seq: int | None,
+        ) -> None: ...
+
         _record_lock: LockType
         _enabled: bool
         _seq: int
@@ -107,7 +118,7 @@ class _FinderAttribution:
         instance_dict, previous = self._instance_shadow_state(finder)
         if not self._prepare_claim(finder_id, finder, previous, monitor):
             return
-        wrapper = self._make_wrapper(type_name(finder), finder_id, original, monitor)
+        wrapper = self._make_wrapper(type_name(finder), finder_id, finder, original, monitor)
         if not self._install_shadow(finder_id, finder, original, instance_dict, previous, wrapper, monitor):
             return
         self._commit_shadow(finder_id, finder, original, previous, wrapper, monitor)
@@ -271,7 +282,12 @@ class _FinderAttribution:
                 self._skipped[finder_id] = (finder, reason)
 
     def _make_wrapper(
-        self, finder_type_name: str, finder_id: int, original: "_FindSpec", monitor: "_FinderAttributionHost"
+        self,
+        finder_type_name: str,
+        finder_id: int,
+        finder: object,
+        original: "_FindSpec",
+        monitor: "_FinderAttributionHost",
     ) -> "_FindSpec":
         copy_metadata = isinstance(original, (types.FunctionType, types.MethodType))
         assigned = functools.WRAPPER_ASSIGNMENTS if copy_metadata else ()
@@ -283,11 +299,12 @@ class _FinderAttribution:
             path: "Sequence[str] | None" = None,
             target: "ModuleType | None" = None,
         ) -> "ModuleSpec | None":
-            if monitor._local.active or not monitor._enabled:
+            if monitor._local.active or monitor._unsafe_exploration_active() or not monitor._enabled:
                 return original(fullname, path, target)
             monitor._local.active = True
             spec = None
             exception_type_name: str | None = None
+            explore_exception = False
             module_state_before = module_cache_state(sys.modules, fullname)
             try:
                 search_path = self._snapshot_search_path(path)
@@ -295,9 +312,10 @@ class _FinderAttribution:
                     spec = original(fullname, path, target)
                 except BaseException as exc:
                     exception_type_name = type(exc).__name__
+                    explore_exception = isinstance(exc, Exception)
                     raise
                 finally:
-                    self._record_find_spec(
+                    event_seq = self._record_find_spec(
                         finder_type_name,
                         finder_id,
                         fullname,
@@ -310,6 +328,14 @@ class _FinderAttribution:
                         None if target is None else ModuleCacheState("object", id(target), type_name(target)),
                         monitor,
                     )
+                    if explore_exception:
+                        monitor._explore_after_meta_path_exception(
+                            finder=finder,
+                            fullname=fullname,
+                            path=path,
+                            target=target,
+                            trigger_event_seq=event_seq,
+                        )
             finally:
                 monitor._local.active = False
             return spec
@@ -329,7 +355,7 @@ class _FinderAttribution:
         module_state_after: ModuleCacheState,
         target_state: ModuleCacheState | None,
         monitor: "_FinderAttributionHost",
-    ) -> None:
+    ) -> int | None:
         """Reduce and append one finder-attribution event."""
         try:
             loader_type_name: str | None = None
@@ -367,8 +393,10 @@ class _FinderAttribution:
                         target_state=target_state,
                     )
                 )
+                return monitor._seq
         except Exception as exc:
             monitor._record_monitoring_error("record_find_spec", exc)
+            return None
 
     @staticmethod
     def _snapshot_search_path(path: "Sequence[str] | None") -> tuple[str, ...]:

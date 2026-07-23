@@ -213,6 +213,7 @@ class _DetailedCapture:
         if not self._enabled or not self._detailed_import_results or self._local.observation_suspended:
             return
         try:
+            self._monitor._branch_exploration.profile(frame, event, arg)
             if frame.f_code is self._path_finder_code:
                 self._profile_path_finder(frame, event, arg)
             elif frame.f_code is self._detailed_import_code and event == "call":
@@ -406,6 +407,8 @@ class _DetailedCapture:
             def wrapped(fullname: str, target: object = None) -> object:
                 if not self._enabled or self._local.observation_suspended:
                     return original(fullname, target)
+                if self._monitor._branch_exploration.active:
+                    return original(fullname, target)
                 target_state = None if target is None else ModuleCacheState("object", id(target), type_name(target))
                 if self._detailed_local.active:
                     self._record_detailed_call(
@@ -424,7 +427,7 @@ class _DetailedCapture:
                     try:
                         spec = original(fullname, target)
                     except BaseException as exc:
-                        self._record_detailed_call(
+                        event_seq = self._record_detailed_call(
                             "path_entry_finder",
                             finder_id,
                             finder_name,
@@ -434,6 +437,10 @@ class _DetailedCapture:
                             type(exc).__name__,
                             target_state=target_state,
                         )
+                        if isinstance(exc, Exception):
+                            self._monitor._branch_exploration.after_path_entry_exception(
+                                finder, fullname, path, target, event_seq
+                            )
                         raise
                     self._record_detailed_call(
                         "path_entry_finder",
@@ -601,7 +608,7 @@ class _DetailedCapture:
         module_state_after: ModuleCacheState | None = None,
         target_state: ModuleCacheState | None = None,
         returned_finder: ObjectIdentity | None = None,
-    ) -> None:
+    ) -> int:
         """Append primitive-only detailed evidence without holding a lock across delegation."""
         thread_name = threading.current_thread().name
         with self._record_lock:
@@ -625,6 +632,7 @@ class _DetailedCapture:
                     returned_finder,
                 )
             )
+            return self._seq
 
     def uninstall(self) -> None:
         """Release every detailed mechanism still owned by this monitor."""
@@ -718,6 +726,8 @@ class _DetailedPathHook:
         hook = self._hook
         if not monitor._enabled or monitor._local.observation_suspended:
             return hook(path)
+        if monitor._monitor._branch_exploration.active:
+            return hook(path)
         if monitor._detailed_local.active:
             monitor._record_detailed_call(
                 "path_hook", self._hook_id, self._hook_name, None, path, "unobserved_reentrant", None
@@ -728,11 +738,13 @@ class _DetailedPathHook:
             try:
                 finder = hook(path)
             except BaseException as exc:
-                monitor._record_detailed_call(
+                event_seq = monitor._record_detailed_call(
                     "path_hook", self._hook_id, self._hook_name, None, path, "raised", type(exc).__name__
                 )
+                if isinstance(exc, Exception) and not isinstance(exc, ImportError):
+                    monitor._monitor._branch_exploration.after_path_hook(hook, path, "raised", event_seq)
                 raise
-            monitor._record_detailed_call(
+            event_seq = monitor._record_detailed_call(
                 "path_hook",
                 self._hook_id,
                 self._hook_name,
@@ -742,6 +754,7 @@ class _DetailedPathHook:
                 None,
                 returned_finder=ObjectIdentity.of(finder),
             )
+            monitor._monitor._branch_exploration.after_path_hook(hook, path, "returned", event_seq)
             monitor.instrument_path_entry_finder(finder, path)
             return finder
         finally:

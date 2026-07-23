@@ -28,6 +28,13 @@ if TYPE_CHECKING:
         "active_all_threads_including_cache_hits",
         "inactive_after_uninstall",
     ]
+    UnsafeImportBranchExplorationStatus = Literal[
+        "disabled",
+        "active_exhaustive_direct_siblings",
+        "partial_profiler_unavailable",
+        "partial_capture_prerequisites_disabled",
+        "inactive_after_uninstall",
+    ]
 
 
 _MISSING = object()
@@ -111,4 +118,5 @@ class MonitorSnapshot(_Record):
     import_results_capture_status: "ImportResultsCaptureStatus"
     import_calls_capture_status: "ImportCallsCaptureStatus"
     path_finder_capture_status: "PathFinderCaptureStatus"
+    unsafe_import_branch_exploration_status: "UnsafeImportBranchExplorationStatus"
     program_outcome: _ProgramOutcomeState | None

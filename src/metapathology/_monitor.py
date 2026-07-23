@@ -12,6 +12,7 @@ import traceback
 import warnings
 from contextlib import contextmanager
 
+from metapathology._branch_exploration import ImportBranchExplorer
 from metapathology._detailed_capture import _DetailedCapture
 from metapathology._finder_attribution import _FinderAttribution
 from metapathology._importer_cache import _ImporterCacheObserver
@@ -183,6 +184,7 @@ class Monitor:
         self._local = _ImportThreadState()
         self._finder_attribution = _FinderAttribution()
         self._detailed = _DetailedCapture(self)
+        self._branch_exploration = ImportBranchExplorer(self)
         self._importer_cache = _ImporterCacheObserver(self)
         self._import_audit_enabled = False
         self._meta_path_enabled = False
@@ -288,9 +290,35 @@ class Monitor:
         """Availability of exact aggregate standard-finder evidence."""
         return self._detailed.path_finder_capture_status
 
+    @property
+    def unsafe_import_branch_exploration_status(self) -> str:
+        """Activation and coverage of explicitly unsafe branch exploration."""
+        return self._branch_exploration.status
+
     def _original_path_hook(self, hook: object) -> object:
         """Normalize one detailed wrapper to the foreign hook it delegates to."""
         return self._detailed.original_path_hook(hook)
+
+    def _unsafe_exploration_active(self) -> bool:
+        """Return whether this thread is executing a skipped foreign candidate."""
+        return self._branch_exploration.active
+
+    def _explore_after_meta_path_exception(
+        self,
+        finder: object,
+        fullname: str,
+        path: object,
+        target: object,
+        trigger_event_seq: int | None,
+    ) -> None:
+        """Delegate one terminal finder exception to the unsafe explorer."""
+        self._branch_exploration.after_meta_path_exception(
+            finder,
+            fullname,
+            path,
+            target,
+            trigger_event_seq,
+        )
 
     @property
     def program_outcome(self) -> "_ProgramOutcomeState | None":
@@ -359,6 +387,7 @@ class Monitor:
                 import_results_capture_status=self._detailed.import_results_capture_status,
                 import_calls_capture_status=self._detailed.import_calls_capture_status,
                 path_finder_capture_status=self._detailed.path_finder_capture_status,
+                unsafe_import_branch_exploration_status=self._branch_exploration.status,
                 program_outcome=self._program_outcome,
             )
 
@@ -454,6 +483,8 @@ class Monitor:
 
     def _activate_requested_mechanisms(self, request: "MonitoringRequest") -> None:
         """Enable requested independent mechanisms without disabling active ones."""
+        if request.unsafe_explore_import_branches and not self._branch_exploration.enabled:
+            self._branch_exploration.enable()
         if request.path_hooks and not self._path_hooks_enabled:
             self._enable_path_hooks()
         if request.importer_cache and not self._importer_cache.enabled:
@@ -468,6 +499,17 @@ class Monitor:
             self._detailed.enable_path_hooks()
         if request.capture_import_results and not self._detailed.import_results_enabled:
             self._detailed.enable_import_results()
+        if request.unsafe_explore_import_branches:
+            self._branch_exploration.set_capture_coverage(
+                profiler=self._detailed.import_results_enabled,
+                prerequisites=(
+                    request.finder_attribution
+                    and request.path_hooks
+                    and request.importer_cache
+                    and request.capture_path_hook_calls
+                    and request.capture_path_entry_finder_calls
+                ),
+            )
         if request.capture_import_calls and not self._detailed.import_calls_enabled:
             self._detailed.enable_import_calls()
 
@@ -510,6 +552,7 @@ class Monitor:
                 return
             self._importer_cache.observe("uninstall")
             self._enabled = False
+            self._branch_exploration.uninstall()
             self._detailed.uninstall()
             current = sys.meta_path
             meta_path_lease = self._meta_path_lease

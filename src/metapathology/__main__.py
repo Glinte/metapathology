@@ -60,6 +60,7 @@ class _Arguments(argparse.Namespace):
         self.checks: bool | None = None
         self.standard_path_check: bool | None = None
         self.displaced_finder_check: bool | None = None
+        self.unsafe_explore_import_branches: bool | None = None
         self.is_module = False
         self.target: str | None = None
         self.target_args: list[str] = []
@@ -89,6 +90,7 @@ class _Arguments(argparse.Namespace):
             self.checks,
             self.standard_path_check,
             self.displaced_finder_check,
+            self.unsafe_explore_import_branches,
         )
 
 
@@ -117,6 +119,7 @@ class _Invocation(_Record):
     checks: bool | None
     standard_path_check: bool | None
     displaced_finder_check: bool | None
+    unsafe_explore_import_branches: bool | None
 
 
 def _make_parser() -> _ArgumentParser:
@@ -239,6 +242,12 @@ def _make_parser() -> _ArgumentParser:
         action=argparse.BooleanOptionalAction,
         help="check selected finders displaced from the importer cache",
     )
+    unsafe = parser.add_argument_group("unsafe execution")
+    unsafe.add_argument(
+        "--unsafe-explore-import-branches",
+        action=argparse.BooleanOptionalAction,
+        help="invoke finders and hooks skipped by live imports; may change program behavior",
+    )
     parser.add_argument("-m", dest="is_module", action="store_true", help="run TARGET as a module")
     parser.add_argument(
         "target",
@@ -350,6 +359,7 @@ def _run(invocation: _Invocation) -> int:
                 standard_path_check=invocation.standard_path_check,
                 displaced_finder_check=invocation.displaced_finder_check,
             ),
+            unsafe_explore_import_branches=invocation.unsafe_explore_import_branches,
         )
     except ValueError as exc:
         _PARSER._print_error(str(exc))

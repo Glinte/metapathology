@@ -105,6 +105,7 @@ _runtime_transition = False
 _automatic_reporting = _AutomaticReporting()
 _active_capture: ResolvedCaptureConfig | None = None
 _active_analysis: ResolvedAnalysisConfig | None = None
+_active_unsafe_exploration: bool | None = None
 
 _monitoring_region_condition = threading.Condition()
 _monitoring_region_count = 0
@@ -125,9 +126,10 @@ def install(
     report_color: "Literal['auto', 'always', 'never'] | None" = None,
     capture: CaptureConfig | None = None,
     analysis: AnalysisConfig | None = None,
+    unsafe_explore_import_branches: bool | None = None,
 ) -> Monitor:
     """Install the process-wide monitor and configure automatic reporting."""
-    global _active_analysis, _active_capture
+    global _active_analysis, _active_capture, _active_unsafe_exploration
     normalized_destination = normalize_report_destination(report_destination)
     normalized_text = normalize_report_destination(report_text)
     normalized_json = normalize_report_destination(report_json)
@@ -152,25 +154,38 @@ def install(
             use_environment=not monitor.enabled,
             configure_report=not monitor.enabled or report_configuration_explicit,
             current_report_targets=current_targets,
+            unsafe_explore_import_branches=unsafe_explore_import_branches,
         )
         if active:
             requested_capture = _active_capture if capture is None else request.capture
             requested_analysis = _active_analysis if analysis is None else request.analysis
-            if requested_capture != _active_capture or requested_analysis != _active_analysis:
+            requested_unsafe_exploration = (
+                _active_unsafe_exploration
+                if unsafe_explore_import_branches is None
+                else request.unsafe_explore_import_branches
+            )
+            if (
+                requested_capture != _active_capture
+                or requested_analysis != _active_analysis
+                or requested_unsafe_exploration != _active_unsafe_exploration
+            ):
                 raise RuntimeError("capture and analysis configuration cannot change during an active installation")
             assert requested_capture is not None
             assert requested_analysis is not None
+            assert requested_unsafe_exploration is not None
             request = InstallRequest(
-                request.report_at_exit,
-                request.report_targets,
-                requested_capture,
-                requested_analysis,
-                request.issues,
+                report_at_exit=request.report_at_exit,
+                report_targets=request.report_targets,
+                capture=requested_capture,
+                analysis=requested_analysis,
+                unsafe_explore_import_branches=requested_unsafe_exploration,
+                issues=request.issues,
             )
         monitor._install(monitoring_request(request))
         _automatic_reporting.configure(request)
         _active_capture = request.capture
         _active_analysis = request.analysis
+        _active_unsafe_exploration = request.unsafe_explore_import_branches
         return monitor
     finally:
         _end_runtime_transition()
@@ -270,6 +285,7 @@ def monitoring(
     *,
     capture: CaptureConfig | None = None,
     analysis: AnalysisConfig | None = None,
+    unsafe_explore_import_branches: bool | None = None,
 ) -> "Iterator[Monitor]":
     """Observe imports only while a nested or overlapping region is active."""
     global _monitoring_region_count, _monitoring_regions_own_installation, _monitoring_region_transition
@@ -293,6 +309,7 @@ def monitoring(
             report_at_exit=False,
             capture=capture,
             analysis=analysis,
+            unsafe_explore_import_branches=unsafe_explore_import_branches,
         )
     except BaseException:
         if first_region:
