@@ -60,6 +60,8 @@ def test_finder_shadowing_path_hooks_reports_neutral_result_difference(
     assert "real_mod" in proc.stdout
     assert "SneakyLoader" in proc.stdout
     assert "SourceFileLoader" in proc.stdout
+    assert "further investigation:" in proc.stdout
+    assert "--unsafe-explore-import-branches" in proc.stdout
     # Result comparisons lead the raw event timeline, and paths under the
     # reported cwd are relativized.
     assert proc.stdout.index("-- modules found by a custom finder") < proc.stdout.index("-- event timeline")

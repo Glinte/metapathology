@@ -219,6 +219,8 @@ referenced_seqs = [int(ref.split(":", 1)[1]) for ref in explanation["event_refs"
 assert referenced_seqs, explanation
 
 text = metapathology.render_report()
+assert "further investigation:" in text
+assert "--unsafe-explore-import-branches" in text
 timeline = text.split("-- event timeline", 1)[1].split("-- sys.meta_path changes", 1)[0]
 for sequence in referenced_seqs:
     assert f"#{sequence} " in timeline, (sequence, timeline)

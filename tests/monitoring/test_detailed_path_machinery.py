@@ -150,7 +150,10 @@ def test_distinct_hooks_accepting_one_path_report_structural_shadow(
         "assert finding['subject'] == {'kind': 'path', 'value': sys.argv[1]}\n"
         "assert finding['evidence']['level'] == 'inferred_from_state'\n"
         "assert len(finding['evidence']['event_refs']) == 2\n"
-        "assert '[competing-path-hooks]' in metapathology.render_report()\n"
+        "text = metapathology.render_report()\n"
+        "assert '[competing-path-hooks]' in text\n"
+        "assert 'further investigation:' in text\n"
+        "assert '--unsafe-explore-import-branches' in text\n"
         "print('OK')\n",
         str(tmp_path),
     )

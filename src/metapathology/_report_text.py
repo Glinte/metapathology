@@ -398,6 +398,17 @@ _WHY_IT_MATTERS = {
     ),
 }
 
+_UNSAFE_FURTHER_INVESTIGATION = {
+    "missing_namespace_locations": (
+        "rerun a disposable reproduction with --unsafe-explore-import-branches "
+        "to ask the skipped PathFinder during the import"
+    ),
+    "competing_path_hooks": (
+        "rerun a disposable reproduction with --unsafe-explore-import-branches "
+        "to ask the skipped hook's finder about this module"
+    ),
+}
+
 _SEVERITY_ORDER = {"problem": 0, "risk": 1, "note": 2}
 
 
@@ -437,6 +448,9 @@ def _narrative_lines(document: ReportDocument, context: _RenderContext) -> list[
         if consequence is not None:
             block.append(f"    why it matters: {consequence}")
         block.append(f"    {_finding_confidence_line(finding, context)}")
+        further_investigation = _UNSAFE_FURTHER_INVESTIGATION.get(finding.kind)
+        if further_investigation is not None:
+            block.append(f"    further investigation: {further_investigation}")
         block.append(f"    guide: {_REPORT_GUIDE_URL}#{finding.kind.replace('_', '-')}")
         lines.extend(block)
 
@@ -1926,6 +1940,10 @@ def _result_comparison_lines(
         )
     else:
         lines.append(f"    {_structural_evidence_line(comparison.structural_comparison)}")
+        lines.append(
+            "    further investigation: if report-time state may differ, rerun a disposable reproduction "
+            "with --unsafe-explore-import-branches"
+        )
     return lines
 
 
