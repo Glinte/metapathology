@@ -1,8 +1,12 @@
 """Observed ``sys.meta_path`` list and reassignment semantics."""
 
-from hypothesis import HealthCheck, given, settings
+from types import FrameType
+
+from hypothesis import given
 from hypothesis import strategies as st
-from support import PythonRunner, source_with_literal
+from support import PythonRunner
+
+from metapathology._instrumented_list import _InstrumentedList
 
 MutationOperation = tuple[str, int, int]
 MUTATION_OPERATIONS = st.lists(
@@ -151,109 +155,119 @@ def test_instrumented_meta_path_can_be_detailed_copied(python_runner: PythonRunn
     assert "OK" in proc.stdout
 
 
-MUTATION_SEQUENCE = """
-import sys
+class _RecordingList(_InstrumentedList[object]):
+    """Exercise shared mutation semantics without installing an audit hook."""
 
-import metapathology
-from metapathology import MetaPathChange
+    __slots__ = ("operations",)
 
-operations = __OPERATIONS__
+    def __init__(self, contents: list[object]) -> None:
+        list.__init__(self, contents)
+        self.operations: list[str] = []
 
-class DummyFinder:
-    def find_spec(self, fullname, path=None, target=None):
-        return None
+    def _notify(
+        self,
+        op: str,
+        added: tuple[object, ...],
+        removed: tuple[object, ...],
+        frame: FrameType,
+    ) -> None:
+        del added, removed, frame
+        self.operations.append(op)
 
-def new_finders(count):
-    return [DummyFinder() for _ in range(count)]
 
-monitor = metapathology.install(report_at_exit=False)
-expected = list(sys.meta_path)
-expected_ops = []
+_RECORDED_OPERATION = {
+    "del_item": "__delitem__",
+    "del_slice": "__delitem__",
+    "iadd": "__iadd__",
+    "imul": "__imul__",
+    "set_item": "__setitem__",
+    "set_slice": "__setitem__",
+}
 
-for op, first, second in operations:
+
+def _apply_mutation(  # noqa: C901, PLR0912, PLR0915
+    actual: _RecordingList,
+    expected: list[object],
+    operation: MutationOperation,
+) -> bool:
+    """Apply one generated operation; the explicit dispatch is the tested vocabulary."""
+    op, first, second = operation
     if op == "append":
-        item = DummyFinder()
-        sys.meta_path.append(item)
+        item = object()
+        actual.append(item)
         expected.append(item)
     elif op == "clear":
-        sys.meta_path.clear()
+        actual.clear()
         expected.clear()
     elif op == "del_item":
         if not expected:
-            continue
+            return False
         index = first % len(expected)
-        del sys.meta_path[index]
+        del actual[index]
         del expected[index]
     elif op == "del_slice":
         index = slice(first, second)
-        del sys.meta_path[index]
+        del actual[index]
         del expected[index]
     elif op == "extend":
-        items = new_finders(abs(first) % 3)
-        sys.meta_path.extend(iter(items))
+        items = [object() for _ in range(abs(first) % 3)]
+        actual.extend(iter(items))
         expected.extend(items)
     elif op == "iadd":
-        items = new_finders(abs(first) % 3)
-        sys.meta_path += iter(items)
+        items = [object() for _ in range(abs(first) % 3)]
+        assert actual.__iadd__(iter(items)) is actual
         expected += items
     elif op == "imul":
         multiplier = abs(first) % 3
-        sys.meta_path *= multiplier
+        assert actual.__imul__(multiplier) is actual
         expected *= multiplier
     elif op == "insert":
-        item = DummyFinder()
-        sys.meta_path.insert(first, item)
+        item = object()
+        actual.insert(first, item)
         expected.insert(first, item)
     elif op == "pop":
         if not expected:
-            continue
+            return False
         index = first % len(expected)
-        assert sys.meta_path.pop(index) is expected.pop(index)
+        assert actual.pop(index) is expected.pop(index)
     elif op == "reverse":
-        sys.meta_path.reverse()
+        actual.reverse()
         expected.reverse()
     elif op == "set_item":
         if not expected:
-            continue
+            return False
         index = first % len(expected)
-        item = DummyFinder()
-        sys.meta_path[index] = item
+        item = object()
+        actual[index] = item
         expected[index] = item
     elif op == "set_slice":
         index = slice(first, second)
-        items = new_finders(abs(first - second) % 3)
-        sys.meta_path[index] = iter(items)
+        items = [object() for _ in range(abs(first - second) % 3)]
+        actual[index] = iter(items)
         expected[index] = items
     elif op == "sort":
-        sys.meta_path.sort(key=id, reverse=bool(first % 2))
+        actual.sort(key=id, reverse=bool(first % 2))
         expected.sort(key=id, reverse=bool(first % 2))
     else:
         raise AssertionError(op)
-
-    expected_ops.append({
-        "del_item": "__delitem__",
-        "del_slice": "__delitem__",
-        "iadd": "__iadd__",
-        "imul": "__imul__",
-        "set_item": "__setitem__",
-        "set_slice": "__setitem__",
-    }.get(op, op))
-    assert len(sys.meta_path) == len(expected)
-    assert all(actual is wanted for actual, wanted in zip(sys.meta_path, expected))
-
-recorded_ops = [event.op for event in monitor.events() if isinstance(event, MetaPathChange)]
-assert recorded_ops == expected_ops, (recorded_ops, expected_ops)
-print("OK")
-"""
+    return True
 
 
-@settings(max_examples=12, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(operations=MUTATION_OPERATIONS)
-def test_generated_mutation_sequences_match_plain_list(
-    python_runner: PythonRunner, operations: list[MutationOperation]
-) -> None:
-    proc = python_runner.run_code_ok(source_with_literal(MUTATION_SEQUENCE, "__OPERATIONS__", operations))
-    assert "OK" in proc.stdout
+def test_generated_mutation_sequences_match_plain_list(operations: list[MutationOperation]) -> None:
+    initial = [object(), object(), object()]
+    actual = _RecordingList(initial)
+    expected = list(initial)
+    expected_ops: list[str] = []
+
+    for operation in operations:
+        if not _apply_mutation(actual, expected, operation):
+            continue
+        expected_ops.append(_RECORDED_OPERATION.get(operation[0], operation[0]))
+        assert len(actual) == len(expected)
+        assert all(observed is wanted for observed, wanted in zip(actual, expected))
+
+    assert actual.operations == expected_ops
 
 
 UNINSTALL_PRESERVES_REPLACEMENTS = """
