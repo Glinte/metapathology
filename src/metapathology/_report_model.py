@@ -575,6 +575,15 @@ class FrozenBootstrap(_Record):
     boundary: str
 
 
+class RemoteAttachment(_Record):
+    """Report-safe provenance for late attachment to a running process."""
+
+    session_id: str
+    installed_at: str
+    transport: str
+    observation_boundary: str
+
+
 class ProcessInfo(_Record):
     """Host-process identity shared by the text header and JSON ``process`` block."""
 
@@ -595,6 +604,7 @@ class CaptureInfo(_Record):
     modules_since_install: tuple[str, ...] | None
     early_site_bootstrap: EarlySiteBootstrap | None
     frozen_bootstrap: FrozenBootstrap | None
+    remote_attachment: RemoteAttachment | None
     detailed_capture: tuple[str, ...]
     import_results_capture_status: "ImportResultsCaptureStatus"
     import_calls_capture_status: "ImportCallsCaptureStatus"

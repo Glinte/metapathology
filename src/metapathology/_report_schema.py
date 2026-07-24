@@ -304,6 +304,13 @@ class FrozenBootstrapJSON(TypedDict):
     path: str | None
 
 
+class RemoteAttachmentJSON(TypedDict):
+    installed_at: str
+    observation_boundary: str
+    session_id: str
+    transport: str
+
+
 class ImporterCacheEntryJSON(TypedDict):
     finder: ImportObjectJSON | None
     path: str
@@ -320,6 +327,7 @@ class CaptureInfo(TypedDict, total=False):
     cutoff_seq: int | None
     early_site_bootstrap: EarlySiteBootstrapJSON | None
     frozen_bootstrap: FrozenBootstrapJSON | None
+    remote_attachment: RemoteAttachmentJSON | None
     enabled: bool
     mechanisms: list[MechanismJSON]
     modules_since_install: list[str] | None

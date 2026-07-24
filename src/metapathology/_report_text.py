@@ -749,6 +749,11 @@ def _mechanism_header_lines(document: ReportDocument, context: _RenderContext) -
         lines.append(f"frozen integration: {frozen_bootstrap.integration}")
         lines.append(f"frozen bootstrap: {context.display_path(frozen_bootstrap.path)}")
         lines.append(f"frozen monitoring started: {frozen_bootstrap.boundary}")
+    remote_attachment = document.capture.remote_attachment
+    if remote_attachment is not None:
+        lines.append(f"remote attachment session: {remote_attachment.session_id}")
+        lines.append(f"remote monitoring installed: {remote_attachment.installed_at}")
+        lines.append(f"remote observation boundary: {_humanize(remote_attachment.observation_boundary)}")
     return lines
 
 

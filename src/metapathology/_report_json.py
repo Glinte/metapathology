@@ -53,6 +53,7 @@ from metapathology._report_model import (
     ImportSearch,
     LoaderInventory,
     ProgramOutcome,
+    RemoteAttachment,
     ReportDocument,
     ReportSummary,
     StandardResolution,
@@ -108,6 +109,7 @@ from metapathology._report_schema import (
     ProcessInfo,
     ProgramOutcomeJSON,
     ReassignmentDataJSON,
+    RemoteAttachmentJSON,
     ReportJSON,
     ReportStatus,
     SnapshotJSON,
@@ -185,6 +187,7 @@ def _build_json_document(document: ReportDocument) -> ReportJSON:
             "cutoff_seq": document.capture.cutoff_seq,
             "early_site_bootstrap": _json_early_site_bootstrap(document.capture.early_site_bootstrap),
             "frozen_bootstrap": _json_frozen_bootstrap(document.capture.frozen_bootstrap),
+            "remote_attachment": _json_remote_attachment(document.capture.remote_attachment),
             "enabled": document.capture.monitor_enabled,
             "mechanisms": _json_mechanisms(document, event_counts),
             "modules_since_install": None
@@ -483,6 +486,18 @@ def _json_frozen_bootstrap(bootstrap: FrozenBootstrap | None) -> FrozenBootstrap
         "boundary": bootstrap.boundary,
         "integration": bootstrap.integration,
         "path": bootstrap.path,
+    }
+
+
+def _json_remote_attachment(attachment: RemoteAttachment | None) -> RemoteAttachmentJSON | None:
+    """Serialize remote activation provenance without exposing session secrets."""
+    if attachment is None:
+        return None
+    return {
+        "installed_at": attachment.installed_at,
+        "observation_boundary": attachment.observation_boundary,
+        "session_id": attachment.session_id,
+        "transport": attachment.transport,
     }
 
 

@@ -36,6 +36,7 @@ from metapathology._report_model import (
     PathHooksSnapshot,
     ProcessInfo,
     ProgramOutcome,
+    RemoteAttachment,
     ReportDocument,
     ReportError,
     SkippedFinder,
@@ -65,6 +66,8 @@ def capture_document(snapshot: "MonitorSnapshot", analysis: ResolvedAnalysisConf
     current_meta_path = _current_meta_path_names(report_errors)
     current_path_hooks = _current_path_hooks(snapshot, report_errors)
     module_items = _module_items(report_errors)
+    if snapshot.remote_attachment is not None:
+        module_items = _without_attachment_package(module_items)
     loader_inventory = _loader_inventory(module_items)
     searches = _import_searches(events, module_items)
     standard_resolutions = _standard_resolutions(events, searches, loader_inventory.entries)
@@ -282,6 +285,16 @@ def _capture_info(snapshot: "MonitorSnapshot", modules_since_install: tuple[str,
             snapshot.frozen_bootstrap.boundary,
         )
     )
+    remote_attachment = (
+        None
+        if snapshot.remote_attachment is None
+        else RemoteAttachment(
+            snapshot.remote_attachment.session_id,
+            snapshot.remote_attachment.installed_at,
+            snapshot.remote_attachment.transport,
+            snapshot.remote_attachment.observation_boundary,
+        )
+    )
     return CaptureInfo(
         cutoff_seq=snapshot.cutoff_seq,
         monitor_enabled=snapshot.enabled,
@@ -292,6 +305,7 @@ def _capture_info(snapshot: "MonitorSnapshot", modules_since_install: tuple[str,
         modules_since_install=modules_since_install,
         early_site_bootstrap=early_site_bootstrap,
         frozen_bootstrap=frozen_bootstrap,
+        remote_attachment=remote_attachment,
         detailed_capture=snapshot.detailed_capture,
         import_results_capture_status=snapshot.import_results_capture_status,
         import_calls_capture_status=snapshot.import_calls_capture_status,
@@ -426,6 +440,19 @@ def _loader_inventory(module_items: list[tuple[object, object]] | None) -> Loade
             continue
         entries.append(inspect_module(name, module))
     return LoaderInventory(True, tuple(entries), non_string_keys)
+
+
+def _without_attachment_package(
+    module_items: list[tuple[object, object]] | None,
+) -> list[tuple[object, object]] | None:
+    """Exclude the remotely staged tool package and its retained archive paths."""
+    if module_items is None:
+        return None
+    return [
+        (name, module)
+        for name, module in module_items
+        if name != "metapathology" and not (type(name) is str and name.startswith("metapathology."))
+    ]
 
 
 def _modules_since_install(

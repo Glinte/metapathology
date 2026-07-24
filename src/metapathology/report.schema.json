@@ -57,6 +57,16 @@
               "type": "null"
             }
           ]
+        },
+        "remote_attachment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RemoteAttachmentJSON"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [],
@@ -3117,6 +3127,30 @@
         "old_contents",
         "stack",
         "thread_name"
+      ],
+      "type": "object"
+    },
+    "RemoteAttachmentJSON": {
+      "additionalProperties": false,
+      "properties": {
+        "installed_at": {
+          "type": "string"
+        },
+        "observation_boundary": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "transport": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "installed_at",
+        "observation_boundary",
+        "session_id",
+        "transport"
       ],
       "type": "object"
     },

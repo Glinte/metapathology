@@ -25,6 +25,7 @@ from metapathology._monitor_model import (
     _OwnedAttribute,
     _OwnedValue,
     _ProgramOutcomeState,
+    _RemoteAttachmentState,
 )
 from metapathology._records import (
     ImporterCacheEntry,
@@ -109,11 +110,23 @@ def _capture_stack(frame: "FrameType") -> traceback.StackSummary:
 
     ``lookup_lines=False`` keeps source reading (and any ``__loader__.get_source``
     side effects) out of the import hot path; lines resolve at format time.
+    Implementation frames are omitted here so remotely staged archive paths
+    never enter immutable evidence or structured reports.
 
     Args:
         frame: Innermost frame to start walking from.
     """
-    return traceback.StackSummary.extract(traceback.walk_stack(frame), limit=_STACK_CAPTURE_LIMIT, lookup_lines=False)
+    frames = (
+        (candidate, lineno) for candidate, lineno in traceback.walk_stack(frame) if not _metapathology_frame(candidate)
+    )
+    return traceback.StackSummary.extract(frames, limit=_STACK_CAPTURE_LIMIT, lookup_lines=False)
+
+
+def _metapathology_frame(frame: "FrameType") -> bool:
+    """Identify an implementation frame without relying on its staged filename."""
+    globals_ = frame.f_globals
+    package = dict.get(globals_, "__package__") if type(globals_) is dict else None
+    return package == "metapathology" or (type(package) is str and package.startswith("metapathology."))
 
 
 def _audit_resolution_name(args: tuple[object, ...]) -> str | None:
@@ -209,6 +222,7 @@ class Monitor:
         # because a later site directory cannot move the evidence cutoff earlier.
         self._early_site_bootstrap: _EarlySiteBootstrapState | None = None
         self._frozen_bootstrap: _FrozenBootstrapState | None = None
+        self._remote_attachment: _RemoteAttachmentState | None = None
         # The exact list object we last put into sys.meta_path. The audit hook
         # compares by identity: a mismatch means someone reassigned sys.meta_path.
         self._instrumented: _InstrumentedMetaPath | None = None
@@ -389,6 +403,7 @@ class Monitor:
                 retained_cache_finders=self._importer_cache.retained_finders_locked(),
                 early_site_bootstrap=self._early_site_bootstrap,
                 frozen_bootstrap=self._frozen_bootstrap,
+                remote_attachment=self._remote_attachment,
                 enabled=self._enabled,
                 baseline_modules=self.baseline_modules,
                 initial_meta_path=self.initial_meta_path,
@@ -425,6 +440,18 @@ class Monitor:
         with self._record_lock:
             if self._frozen_bootstrap is None:
                 self._frozen_bootstrap = state
+
+    def _set_remote_attachment(self, session_id: str, installed_at: str) -> None:
+        """Attach late remote-install provenance to this capture."""
+        state = _RemoteAttachmentState(
+            session_id,
+            installed_at,
+            "pep_768_remote_exec",
+            "future_import_activity_after_attachment_only",
+        )
+        with self._record_lock:
+            if self._remote_attachment is None:
+                self._remote_attachment = state
 
     @contextmanager
     def _suspend_observation(self) -> "Iterator[None]":

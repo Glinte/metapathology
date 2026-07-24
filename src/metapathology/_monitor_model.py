@@ -85,6 +85,15 @@ class _FrozenBootstrapState(_Record):
     boundary: str
 
 
+class _RemoteAttachmentState(_Record):
+    """Provenance for a monitor installed through CPython remote execution."""
+
+    session_id: str
+    installed_at: str
+    transport: str
+    observation_boundary: str
+
+
 class _ProgramOutcomeState(_Record):
     """Plain reduction of how the monitored target finished."""
 
@@ -105,6 +114,7 @@ class MonitorSnapshot(_Record):
     retained_cache_finders: tuple[tuple[int, object], ...]
     early_site_bootstrap: _EarlySiteBootstrapState | None
     frozen_bootstrap: _FrozenBootstrapState | None
+    remote_attachment: _RemoteAttachmentState | None
     enabled: bool
     baseline_modules: frozenset[str]
     initial_meta_path: tuple[str, ...]
