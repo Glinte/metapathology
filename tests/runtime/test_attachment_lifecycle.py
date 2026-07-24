@@ -40,7 +40,9 @@ import time
 
 root, ready, stop, restored = map(pathlib.Path, sys.argv[1:])
 session = root / f"pid-{os.getpid()}"
-ready.write_text(str(os.getpid()), encoding="ascii")
+ready_temporary = ready.with_name(f".{ready.name}.{os.getpid()}.tmp")
+ready_temporary.write_text(str(os.getpid()), encoding="ascii")
+ready_temporary.replace(ready)
 start_script = session / "start.py"
 while not start_script.exists():
     time.sleep(0.01)
