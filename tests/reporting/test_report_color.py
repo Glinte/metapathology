@@ -82,9 +82,9 @@ def test_invalid_install_color_does_not_instrument_import_state(python_runner: P
     assert proc.stdout.strip() == "OK"
 
 
-def test_explicit_render_color_preserves_plain_content_and_json(python_runner: PythonRunner) -> None:
+def test_explicit_render_color_preserves_plain_content(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(
-        "import io, json, re, sys\n"
+        "import io, re, sys\n"
         "import metapathology\n"
         "metapathology.install(report_at_exit=False)\n"
         "class Finder:\n"
@@ -100,10 +100,6 @@ def test_explicit_render_color_preserves_plain_content_and_json(python_runner: P
         "assert '\\x1b[32m+' in colored\n"
         "assert '\\x1b[1;31m-' in colored\n"
         "assert re.sub(r'\\x1b\\[[0-9;]*m', '', colored) == plain\n"
-        "plain_json = metapathology.render_report(format='json')\n"
-        "colored_json = metapathology.render_report(format='json', color=True)\n"
-        "assert json.loads(plain_json)['schema'] == json.loads(colored_json)['schema']\n"
-        "assert '\\x1b[' not in colored_json\n"
         "class Terminal(io.StringIO):\n"
         "    def isatty(self):\n"
         "        return True\n"

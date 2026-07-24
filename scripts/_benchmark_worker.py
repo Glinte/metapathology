@@ -7,6 +7,7 @@ the process whose imports are being measured.
 
 import argparse
 import gc
+import io
 import json
 import sys
 import time
@@ -23,7 +24,7 @@ _ResultValue = int | float | str
 # was before the package began exposing its public API lazily. Startup cases in
 # benchmark.py measure the one-time public-API cost separately.
 _install = metapathology.install
-_render_report = metapathology.render_report
+_write_report = metapathology.write_report
 
 
 class _DelegatingFinder:
@@ -149,7 +150,9 @@ def _time_trial(args: argparse.Namespace) -> dict[str, _ResultValue]:
     report_bytes = 0
     if monitor is not None:
         report_started = time.perf_counter_ns()
-        report = _render_report(format="json")
+        destination = io.StringIO()
+        _write_report(destination, format="json")
+        report = destination.getvalue()
         report_seconds = (time.perf_counter_ns() - report_started) / 1_000_000_000
         report_bytes = len(report.encode("utf-8"))
     return {
@@ -182,8 +185,9 @@ def _memory_trial(args: argparse.Namespace) -> dict[str, _ResultValue]:
     current, _ = tracemalloc.get_traced_memory()
     tracemalloc.reset_peak()
     if monitor is not None:
-        report = _render_report(format="json")
-        del report
+        destination = io.StringIO()
+        _write_report(destination, format="json")
+        del destination
     gc.collect()
     _, report_peak = tracemalloc.get_traced_memory()
     return {

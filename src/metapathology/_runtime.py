@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
     from metapathology._report import ReportFailure
     from metapathology._report_model import ReportDocument
+    from metapathology._report_schema import ReportJSON
 
     _ColorMode = Literal["auto", "always", "never"]
     _ReportFormat = Literal["text", "json"]
@@ -302,28 +303,41 @@ def write_report(
     _write_report(monitor, destination, format=format, color=color, analysis=analysis)
 
 
-def render_report(
-    *, format: "Literal['text', 'json']" = "text", color: bool = False, analysis: AnalysisConfig | None = None
-) -> str:
-    """Render a report from the current capture.
+def get_report(*, analysis: AnalysisConfig | None = None) -> "ReportJSON":
+    """Return a structured report from the current capture.
 
     Args:
-        format: Output format.
-        color: Include terminal color escapes in text output.
         analysis: Per-report analysis override. It does not change the
             installation default.
 
     Returns:
-        The complete text or JSON report.
+        A document conforming to the bundled JSON schema.
 
     Raises:
         RuntimeError: Monitoring has not been installed.
         TypeError: ``analysis`` is not an ``AnalysisConfig``.
-        ValueError: ``format`` is invalid.
     """
-    _report.validate_format(format)
     artifact = _capture_report(_require_monitor(), _resolve_report_analysis(analysis))
-    return _report.render_report(artifact, format=format, color=color)
+    return _report.get_report(artifact)
+
+
+def render_report(*, color: bool = False, analysis: AnalysisConfig | None = None) -> str:
+    """Render a human-readable report from the current capture.
+
+    Args:
+        color: Include terminal color escapes in the output.
+        analysis: Per-report analysis override. It does not change the
+            installation default.
+
+    Returns:
+        The complete text report.
+
+    Raises:
+        RuntimeError: Monitoring has not been installed.
+        TypeError: ``analysis`` is not an ``AnalysisConfig``.
+    """
+    artifact = _capture_report(_require_monitor(), _resolve_report_analysis(analysis))
+    return _report.render_report(artifact, color=color)
 
 
 def write_configured_report() -> None:

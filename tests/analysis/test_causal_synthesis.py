@@ -77,7 +77,7 @@ except ModuleNotFoundError:
 else:
     raise AssertionError("truncated namespace unexpectedly found child")
 
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 comparison = next(
     item for item in document["finder_result_comparisons"] if item["only_in_right_result"]
 )

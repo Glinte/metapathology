@@ -16,7 +16,7 @@ monitor = metapathology.install(report_at_exit=False)
 {_ACTIVITY}
 
 metapathology.write_report("streamed.txt")
-buffered = metapathology.render_report(format="text")
+buffered = metapathology.render_report()
 
 with open("streamed.txt", encoding="utf-8") as handle:
     streamed = handle.read()

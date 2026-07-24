@@ -111,10 +111,14 @@ A report override does not mutate the installed default.
 `destination=None` writes to standard error. A path is replaced atomically;
 streams are written directly.
 
-Calling `render_report()` or `write_report()` before installation raises
-`RuntimeError`. I/O errors from an explicit `write_report()` call are re-raised.
-Automatic exit reporting suppresses them so a diagnostic cannot replace the
-target's exit behavior.
+`render_report()` returns the human-readable text report. `get_report()` returns
+the structured `ReportJSON` document for programmatic inspection. JSON encoding
+happens when `write_report(..., format="json")` writes to a destination.
+
+Calling `get_report()`, `render_report()`, or `write_report()` before
+installation raises `RuntimeError`. I/O errors from an explicit
+`write_report()` call are re-raised. Automatic exit reporting suppresses them
+so a diagnostic cannot replace the target's exit behavior.
 
 Automatic output can be configured through `install()` with
 `report_destination`, `report_text`, `report_json`, `report_color`, and
@@ -155,6 +159,8 @@ otherwise; `None` uses the corresponding environment setting or normal default.
 ### Reports
 
 ::: metapathology.write_report
+
+::: metapathology.get_report
 
 ::: metapathology.render_report
 

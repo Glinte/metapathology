@@ -1,6 +1,5 @@
 """Run pytest#12179 under metapathology and verify its diagnostic evidence."""
 
-import json
 import sys
 
 import metapathology
@@ -20,7 +19,7 @@ def main() -> int:
             "tests/repro_pkg/test_value.py",
         ]
     )
-    document = json.loads(metapathology.render_report(format="json"))
+    document = metapathology.get_report()
     contracts = document["finder_contracts"]
     contract = next(item for item in contracts if item["finder_type_name"] == "_SixMetaPathImporter")
     assert contract["category"] == "legacy_only", contract

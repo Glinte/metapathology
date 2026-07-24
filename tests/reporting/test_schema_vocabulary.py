@@ -162,7 +162,7 @@ importlib.import_module("colorsys")
 importlib.import_module("fractions")
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
-print(metapathology.render_report(format="json"))
+print(json.dumps(metapathology.get_report()))
 """
 
 

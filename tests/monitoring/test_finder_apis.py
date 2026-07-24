@@ -92,7 +92,7 @@ sys.meta_path.append(finder)
 replacement_finder = LegacyFinder()
 sys.meta_path = [replacement_finder, *sys.meta_path]
 import fractions
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 legacy_apis = [item for item in document["finder_apis"] if item["finder_type_name"] == "LegacyFinder"]
 observation = next(item for item in legacy_apis if item["finder_id"] == hex(id(finder)))
 assert observation["category"] == "legacy_only", observation

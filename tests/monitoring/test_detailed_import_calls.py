@@ -34,7 +34,7 @@ metapathology.uninstall()
 assert builtins.__import__ is before, "wrapper not restored on uninstall"
 
 # The JSON projection carries the same evidence.
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 hits = [
     event
     for event in document["timeline"]

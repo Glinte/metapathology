@@ -86,7 +86,7 @@ import inventory_zip
 
 metapathology.install(report_at_exit=False)
 sys.modules[42] = None
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 text = metapathology.render_report()
 del sys.modules[42]
 

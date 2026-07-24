@@ -60,7 +60,7 @@ assert executed == ["actual"], executed
 assert [item[0] for item in calls] == ["found", "raised"], calls
 assert all(item[2] is None and item[3] is None for item in calls)
 
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 mechanism = next(
     item for item in document["capture"]["mechanisms"]
     if item["name"] == "unsafe_import_branch_exploration"
@@ -167,7 +167,7 @@ import unsafe_path_target
 assert executed == ["actual"], executed
 assert calls == [("unsafe_path_target", None)], calls
 
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 events = [
     item["data"] for item in document["timeline"]
     if item["kind"] == "import_branch_exploration_call"
@@ -230,7 +230,7 @@ metapathology.install(
 sys.meta_path[0:0] = [Actual(), Later()]
 import unsafe_default_target
 assert calls == []
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 mechanism = next(
     item for item in document["capture"]["mechanisms"]
     if item["name"] == "unsafe_import_branch_exploration"

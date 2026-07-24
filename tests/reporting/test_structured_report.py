@@ -7,7 +7,7 @@ from pathlib import Path
 
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
-from support import PythonRunner
+from support import PythonRunner, assert_mapping_contains, one_matching
 
 from metapathology._records import MonitorEvent, MonitoringError
 from metapathology._report_json import _json_events
@@ -31,7 +31,8 @@ def test_json_event_projection_traverses_exhaustive_log_once() -> None:
     timeline, counts, monitoring_error_refs = _json_events(events)
 
     assert events.iterations == 1
-    assert timeline[0]["kind"] == "monitoring_error"
+    error = one_matching(timeline, kind="monitoring_error")
+    assert_mapping_contains(error, id="event:7", kind="monitoring_error")
     assert monitoring_error_refs == ["event:7"]
     assert all(count == 0 for count in counts.values())
 
@@ -59,7 +60,7 @@ sys.meta_path.insert(0, CheckFinder())
 import observed_mod
 sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
 
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 assert document["schema"] == {"major": 3, "minor": 1, "name": "metapathology.report"}
 assert document["report_status"] == "complete"
 assert isinstance(document["finder_results"], list)
@@ -154,7 +155,7 @@ def test_failure_report_has_the_same_top_level_contract(python_runner: PythonRun
         "import metapathology\n"
         "from metapathology._report_json import failed_json_document\n"
         "monitor = metapathology.install(report_at_exit=False)\n"
-        "complete = __import__('json').loads(metapathology.render_report(format='json'))\n"
+        "complete = metapathology.get_report()\n"
         "failed = failed_json_document('BrokenReport')\n"
         "assert set(failed) == set(complete)\n"
         "assert failed['report_status'] == 'generation_failed'\n"
@@ -166,7 +167,6 @@ def test_failure_report_has_the_same_top_level_contract(python_runner: PythonRun
 
 def test_one_captured_artifact_can_be_exported_in_multiple_formats(python_runner: PythonRunner) -> None:
     proc = python_runner.run_code_ok(
-        "import json\n"
         "import metapathology\n"
         "from metapathology import _report\n"
         "from metapathology._runtime import _capture_report\n"
@@ -175,8 +175,8 @@ def test_one_captured_artifact_can_be_exported_in_multiple_formats(python_runner
         "artifact = _capture_report(monitor)\n"
         "cutoff = artifact.capture.cutoff_seq\n"
         "import fractions\n"
-        "text = _report.render_report(artifact, format='text')\n"
-        "document = json.loads(_report.render_report(artifact, format='json'))\n"
+        "text = _report.render_report(artifact)\n"
+        "document = _report.get_report(artifact)\n"
         "assert document['capture']['cutoff_seq'] == cutoff\n"
         "assert not any(item['fullname'] == 'fractions' for item in document['import_searches'])\n"
         "assert 'metapathology report' in text\n"
@@ -191,7 +191,7 @@ def test_bundled_json_schema_matches_report_version(python_runner: PythonRunner)
         "import metapathology\n"
         "schema = json.loads(importlib.resources.files('metapathology').joinpath('report.schema.json').read_text())\n"
         "monitor = metapathology.install(report_at_exit=False)\n"
-        "report = json.loads(metapathology.render_report(format='json'))\n"
+        "report = metapathology.get_report()\n"
         "version = schema['$defs']['SchemaVersion']['properties']\n"
         "assert version['major']['const'] == report['schema']['major']\n"
         "assert version['minor']['const'] == report['schema']['minor']\n"
@@ -221,7 +221,7 @@ import metapathology
 metapathology.install(report_at_exit=False)
 for index in range(int(sys.argv[1])):
     importlib.import_module(f"generated_reference_{index}")
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 
 ids = set()
 for section_name in (
@@ -283,7 +283,7 @@ assert any(
     isinstance(event, MonitoringError) and event.where == "report_write"
     for event in monitor.events()
 )
-document = __import__("json").loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 assert "monitoring_error" in {event["kind"] for event in document["timeline"]}
 assert document["diagnostics"]["monitoring_error_refs"]
 print("OK")

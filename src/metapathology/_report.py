@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from metapathology._config import ResolvedAnalysisConfig
     from metapathology._monitor_model import MonitorSnapshot
     from metapathology._report_model import ReportDocument
+    from metapathology._report_schema import ReportJSON
 
     _ColorMode = Literal["auto", "always", "never"]
     _ReportFormat = Literal["text", "json"]
@@ -81,7 +82,9 @@ def write_report(
     ):
         _write_text_file(destination, artifact, color=use_color)
         return
-    rendered = render_report(artifact, format=report_format, color=use_color)
+    rendered = (
+        _serialize_json(get_report(artifact)) if report_format == "json" else render_report(artifact, color=use_color)
+    )
     if destination is None:
         sys.stderr.write(rendered)
     elif isinstance(destination, (str, os.PathLike)):
@@ -90,39 +93,44 @@ def write_report(
         destination.write(rendered)
 
 
-def render_report(
-    artifact: "ReportDocument | ReportFailure", *, format: "_ReportFormat" = "text", color: bool = False
-) -> str:
-    """Render the full diagnostic report as text or stable JSON.
+def render_report(artifact: "ReportDocument | ReportFailure", *, color: bool = False) -> str:
+    """Render the full human-readable diagnostic report.
 
     Args:
         artifact: Captured report document or generation failure.
-        format: Text or stable JSON output.
-        color: Include ANSI styling in text output. JSON is never styled.
+        color: Include ANSI styling in the output.
 
     Capture has already reduced ordinary failures into a reusable artifact.
     """
-    report_format = validate_format(format)
     try:
-        return _render_artifact(artifact, report_format, color)
+        if isinstance(artifact, ReportFailure):
+            return _render_text_failure(artifact.error_name, color)
+        return "\n".join(render_lines(artifact, color=color)) + "\n"
     except Exception as exc:
-        return _render_failure(type_name(exc), report_format, color)
+        return _render_text_failure(type_name(exc), color)
 
 
-def _render_artifact(artifact: "ReportDocument | ReportFailure", report_format: "_ReportFormat", color: bool) -> str:
-    """Project one captured artifact without consulting live monitor state."""
-    if isinstance(artifact, ReportFailure):
-        return _render_failure(artifact.error_name, report_format, color)
-    if report_format == "json":
-        json_report = json_document(artifact)
-        return json.dumps(json_report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    return "\n".join(render_lines(artifact, color=color)) + "\n"
+def get_report(artifact: "ReportDocument | ReportFailure") -> "ReportJSON":
+    """Return the structured report document for a captured artifact.
+
+    Capture has already reduced ordinary failures into a reusable artifact.
+    Projection failures are represented by a generation-failed document.
+    """
+    try:
+        if isinstance(artifact, ReportFailure):
+            return failed_json_document(artifact.error_name)
+        return json_document(artifact)
+    except Exception as exc:
+        return failed_json_document(type_name(exc))
 
 
-def _render_failure(error_name: str, report_format: "_ReportFormat", color: bool) -> str:
-    """Render a format-appropriate failure artifact."""
-    if report_format == "json":
-        return json.dumps(failed_json_document(error_name), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+def _serialize_json(document: "ReportJSON") -> str:
+    """Serialize one structured report for an output destination."""
+    return json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
+def _render_text_failure(error_name: str, color: bool) -> str:
+    """Render a human-readable failure artifact."""
     return "\n".join(render_failure_lines(error_name, color=color)) + "\n"
 
 
@@ -197,4 +205,4 @@ def _write_text_file(path: "str | PathLike[str]", document: "ReportDocument", *,
         except Exception as exc:
             temporary.seek(0)
             temporary.truncate()
-            temporary.write(_render_failure(type_name(exc), "text", color))
+            temporary.write(_render_text_failure(type_name(exc), color))

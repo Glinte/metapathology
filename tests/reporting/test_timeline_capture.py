@@ -58,7 +58,7 @@ assert positions == sorted(positions), timeline
 assert "import started: 'timeline_target'" in timeline
 assert "Events are numbered in the order they were recorded" in timeline
 
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 assert document["schema"] == {"major": 3, "minor": 1, "name": "metapathology.report"}
 audit = next(
     event

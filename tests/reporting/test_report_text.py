@@ -33,7 +33,7 @@ module = __import__(target_name)
 assert module.VALUE == 7
 
 text = metapathology.render_report()
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 results = [item for item in document["finder_results"] if item["module"] == target_name]
 captured = next(item for item in results if item["kind"] == "observed_finder_result")
 check = next(item for item in results if item["kind"] == "standard_path_check")
@@ -92,7 +92,7 @@ def test_source_and_archive_results_are_compared_without_classifying_a_defect(
         "metapathology.install(report_at_exit=False)\n"
         "sys.meta_path.insert(0, Finder())\n"
         "import archive_conflict\n"
-        "document = json.loads(metapathology.render_report(format='json'))\n"
+        "document = metapathology.get_report()\n"
         "results = [item for item in document['finder_results'] if item['module'] == 'archive_conflict']\n"
         "check = next(item for item in results if item['kind'] == 'standard_path_check')\n"
         "assert check['spec']['loader']['type_name'] == 'zipimporter'\n"

@@ -213,7 +213,7 @@ for name in ("ref_pad_three", "ref_pad_four"):
     except ModuleNotFoundError:
         pass
 
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 explanation = next(item for item in document["explanations"] if item["kind"] == "missing_namespace_locations_failure")
 referenced_seqs = [int(ref.split(":", 1)[1]) for ref in explanation["event_refs"]]
 assert referenced_seqs, explanation

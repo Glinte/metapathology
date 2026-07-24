@@ -106,7 +106,7 @@ def test_shared_loader_uses_each_call_actual_module_name(python_runner: PythonRu
         "sys.meta_path.insert(0, finder)\n"
         "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(loaders=True)))\n"
         "import shared_first, shared_second\n"
-        "document = json.loads(metapathology.render_report(format='json'))\n"
+        "document = metapathology.get_report()\n"
         "calls = [event['data'] for event in document['timeline'] "
         "if event['kind'] == 'import_mechanism_call' and event['data']['boundary'].startswith('loader_')]\n"
         "assert {(event['boundary'], event['fullname']) for event in calls} == {\n"
@@ -181,7 +181,7 @@ __import__("detailed_outcome_cached")
 thread = threading.Thread(target=lambda: __import__("detailed_outcome_threaded"))
 thread.start(); thread.join()
 
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 by_name = {}
 for attempt in document["import_searches"]:
     by_name.setdefault(attempt["fullname"], []).append(attempt)
@@ -228,7 +228,7 @@ def test_import_failed_after_state_change_requires_mutation_inside_failed_attemp
         "    import mutated_during_resolution\n"
         "except RuntimeError:\n"
         "    pass\n"
-        "document = json.loads(metapathology.render_report(format='json'))\n"
+        "document = metapathology.get_report()\n"
         "finding = next(item for item in document['findings'] "
         "if item['kind'] == 'import_failed_after_state_change')\n"
         "assert finding['module'] == 'mutated_during_resolution'\n"

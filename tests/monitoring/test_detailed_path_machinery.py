@@ -87,7 +87,7 @@ except RuntimeError:
 else:
     raise AssertionError("loader exception changed")
 assert isinstance(sys.path_importer_cache[sentinel], Finder)
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 detailed = [event["data"] for event in document["timeline"] if event["kind"] == "import_mechanism_call"]
 assert {event["boundary"] for event in detailed} == {
     "path_hook", "path_entry_finder", "loader_create_module", "loader_exec_module"
@@ -145,7 +145,7 @@ def test_distinct_hooks_accepting_one_path_report_structural_shadow(
         "sys.path_importer_cache.pop(sys.argv[1], None)\n"
         "try: __import__('shadow_second_missing')\n"
         "except ModuleNotFoundError: pass\n"
-        "document = json.loads(metapathology.render_report(format='json'))\n"
+        "document = metapathology.get_report()\n"
         "finding = next(item for item in document['findings'] if item['kind'] == 'competing_path_hooks')\n"
         "assert finding['subject'] == {'kind': 'path', 'value': sys.argv[1]}\n"
         "assert finding['evidence']['level'] == 'inferred_from_state'\n"
@@ -257,7 +257,7 @@ assert events[1].module_state_before.object_id == id(second)
 assert events[1].module_state_after.object_id == id(second)
 assert events[1].target_state.object_id == id(second)
 assert first.__spec__.origin == second.__spec__.origin == "shared.ext"
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 finding = next(item for item in document["findings"] if item["kind"] == "module_executed_again")
 assert finding["module"] == "detailed_identity_ext"
 assert finding["evidence"]["level"] == "observed"

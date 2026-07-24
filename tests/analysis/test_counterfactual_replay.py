@@ -65,7 +65,7 @@ current_spec = PathFinder.find_spec("counterfactual_target", [module_dir])
 assert current_spec is not None
 assert type(current_spec.loader).__name__ == "CurrentLoader"
 
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 results = [item for item in document["finder_results"] if item["module"] == "counterfactual_target"]
 captured = next(item for item in results if item["kind"] == "observed_finder_result")
 check = next(item for item in results if item["kind"] == "standard_path_check")
@@ -153,7 +153,7 @@ import failed_replay_target
 
 sys.path_hooks.insert(0, failing_hook)
 sys.path_importer_cache.pop(module_dir, None)
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 assert {
     (error["where"], error["exception_type_name"])
     for error in document["diagnostics"]["report_errors"]
@@ -212,7 +212,7 @@ sys.meta_path.insert(0, DelegatingFinder())
 import isolated_check_target
 
 before = sum(isinstance(event, ImportMechanismCall) for event in monitor.events())
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 after = sum(isinstance(event, ImportMechanismCall) for event in monitor.events())
 assert after == before
 results_by_id = {item["id"]: item for item in document["finder_results"]}
@@ -280,7 +280,7 @@ assert type(reload_check_target.__loader__).__name__ == "InitialLoader"
 importlib.reload(reload_check_target)
 assert type(reload_check_target.__loader__).__name__ == "ReloadLoader"
 
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 check = next(
     item
     for item in document["finder_results"]

@@ -177,7 +177,7 @@ metapathology.install(report_at_exit=False)
 sys.meta_path.insert(0, TruncatingFinder(name, first + "/" + name))
 __import__(name)
 
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 results = [item for item in document["finder_results"] if item["module"] == name]
 captured = next(item for item in results if item["kind"] == "observed_finder_result")
 check = next(item for item in results if item["kind"] == "standard_path_check")

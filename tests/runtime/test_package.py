@@ -37,6 +37,7 @@ _EXPECTED_PUBLIC_API = frozenset(
         "__version__",
         "activate_frozen",
         "get_monitor",
+        "get_report",
         "install",
         "monitoring",
         "render_report",

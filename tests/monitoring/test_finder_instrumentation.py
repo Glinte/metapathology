@@ -149,7 +149,7 @@ assert calls["identity_replaced"].module_state_after.object_id == id(replacement
 assert calls["identity_raised"].exception_type_name == "RuntimeError"
 assert calls["identity_raised"].module_state_after.state == "object"
 
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 event = next(
     item["data"]
     for item in document["timeline"]

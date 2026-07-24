@@ -154,7 +154,7 @@ metapathology.install(
         detailed=metapathology.DetailedCaptureConfig(path_entry_finders=True),
     ),
 )
-document = json.loads(metapathology.render_report(format="json"))
+document = metapathology.get_report()
 run = next(check for check in document["checks"] if check["kind"] == "displaced_finder")
 assert run["status"] == "disabled"
 assert run["foreign_calls"] == 0

@@ -44,7 +44,15 @@ if TYPE_CHECKING:
         SysPathReplacement,
     )
     from metapathology._report_schema import ReportJSON, ReportStatus
-    from metapathology._runtime import get_monitor, install, monitoring, render_report, uninstall, write_report
+    from metapathology._runtime import (
+        get_monitor,
+        get_report,
+        install,
+        monitoring,
+        render_report,
+        uninstall,
+        write_report,
+    )
 
 # Keep this in sync with ``project.version`` in pyproject.toml. The package
 # test enforces that invariant without making every CLI invocation import the
@@ -53,7 +61,9 @@ __version__ = "0.5.0"
 
 _MONITOR_EXPORTS = frozenset(("Monitor",))
 _CONFIG_EXPORTS = frozenset(("AnalysisConfig", "CaptureConfig", "DetailedCaptureConfig"))
-_RUNTIME_EXPORTS = frozenset(("get_monitor", "install", "monitoring", "render_report", "uninstall", "write_report"))
+_RUNTIME_EXPORTS = frozenset(
+    ("get_monitor", "get_report", "install", "monitoring", "render_report", "uninstall", "write_report")
+)
 _FROZEN_EXPORTS = frozenset(("activate_frozen",))
 _RECORD_EXPORTS = frozenset(
     (
@@ -115,6 +125,7 @@ __all__ = [
     "__version__",
     "activate_frozen",
     "get_monitor",
+    "get_report",
     "install",
     "monitoring",
     "render_report",

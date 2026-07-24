@@ -22,7 +22,7 @@ def test_sys_path_monitor_is_opt_in_reversible_and_reports_mutations(
         "sys.path = replacement\n"
         "import sys_path_recovery_target\n"
         "assert sys.path is not replacement and isinstance(sys.path, list)\n"
-        "document = json.loads(metapathology.render_report(format='json'))\n"
+        "document = metapathology.get_report()\n"
         "mutations = [event for event in document['timeline'] if event['kind'] == 'sys_path_change']\n"
         "assert [event['data']['op'] for event in mutations] == ['insert', 'append', 'pop']\n"
         "assert mutations[1]['data']['added'] == ['<object>']\n"

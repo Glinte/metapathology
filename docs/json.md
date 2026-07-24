@@ -7,6 +7,16 @@ issue:
 python -m metapathology --report diagnosis.json app.py
 ```
 
+Library integrations can inspect the structured report directly:
+
+```python
+import metapathology
+
+document = metapathology.get_report()
+for finding in document["findings"]:
+    inspect_finding(finding)
+```
+
 The bundled schema is available as package data:
 
 ```python
