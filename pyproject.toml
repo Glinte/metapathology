@@ -104,6 +104,26 @@ select = [
     "PLR0915",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/scenarios/**/*.py" = [
+    "E401",
+    "E701",
+    "E702",
+    "E731",
+    "F401",
+    "F811",
+    "F841",
+    "I001",
+    "PERF203",
+    "PT017",
+    "PT018",
+    "RET501",
+    "RUF005",
+    "RUF007",
+    "RUF100",
+    "SIM105",
+]
+
 [tool.ruff.lint.mccabe]
 max-complexity = 12
 
@@ -118,7 +138,7 @@ pythonVersion = "3.10"
 pythonPlatform = "All"
 typeCheckingMode = "standard"
 include = ["src", "tests"]
-exclude = ["**/__pycache__", "**/.*"]
+exclude = ["**/__pycache__", "**/.*", "tests/scenarios"]
 strictListInference = true
 strictDictionaryInference = true
 strictSetInference = true
@@ -130,6 +150,7 @@ reportUnnecessaryContains = "error"
 
 [tool.pyrefly]
 project-includes = ["src/**/*.py", "tests/**/*.py"]
+project-excludes = ["tests/scenarios/**/*.py"]
 python-version = "3.10"
 search-path = ["src", "tests"]
 

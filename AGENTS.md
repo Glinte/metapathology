@@ -63,6 +63,7 @@ Concurrency and randomized tests must be reproducible from a reported seed or ex
 
 - Use `uv` for all project commands: `uv run pytest`, type checks, linting, and builds. The default test run uses four xdist workers; use `uv run pytest -n 0` when debugging serially. Ignore the stray root `venv/`; `uv` uses `.venv`.
 - Test global import-state behavior in fresh subprocesses because audit hooks cannot be removed.
+- Author static child programs as ordinary files under `tests/scenarios/` and run them through `PythonRunner.run_scenario*`; keep inline source for genuinely generated programs only. Scenario files preserve `python -c` path behavior, are syntax-checked and formatted, and intentionally allow hostile or import-for-effect constructs that the typed parent tests avoid.
 - Keep opt-in freezer tests in the shared `freezer` xdist group so executable builds remain sequential.
 - Add regression coverage for behavior changes; for bug fixes, reproduce the failure first.
 - Prefer real finders, modules, files, and subprocesses over mocks. Test project behavior, not third-party internals.

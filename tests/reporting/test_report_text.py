@@ -5,46 +5,6 @@ from pathlib import Path
 
 from support import PythonRunner
 
-BYPASS = """
-import json
-import sys
-from importlib.machinery import SourceFileLoader
-from importlib.util import spec_from_file_location
-
-import metapathology
-
-class SneakyLoader(SourceFileLoader):
-    pass
-
-class SneakyFinder:
-    def __init__(self, name, path):
-        self.name = name
-        self.path = path
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname == self.name:
-            return spec_from_file_location(fullname, self.path, loader=SneakyLoader(fullname, self.path))
-        return None
-
-target_name, target_file = sys.argv[1], sys.argv[2]
-monitor = metapathology.install(report_at_exit=False)
-sys.meta_path.insert(0, SneakyFinder(target_name, target_file))
-
-module = __import__(target_name)
-assert module.VALUE == 7
-
-text = metapathology.render_report()
-document = metapathology.get_report()
-results = [item for item in document["finder_results"] if item["module"] == target_name]
-captured = next(item for item in results if item["kind"] == "observed_finder_result")
-check = next(item for item in results if item["kind"] == "standard_path_check")
-assert check["evidence_level"] == "current_state_check", check
-assert check["state_phase"] == "report", check
-assert check["predicts_alternative_winner"] is False, check
-assert "meta_path_short_circuit" in captured["signals"], captured
-assert not any(item["module"] == target_name for item in document["findings"])
-print(text)
-"""
-
 
 def test_finder_shadowing_path_hooks_reports_neutral_result_difference(
     python_runner: PythonRunner, tmp_path: Path
@@ -53,7 +13,7 @@ def test_finder_shadowing_path_hooks_reports_neutral_result_difference(
     # with a plain SourceFileLoader; the sneaky finder finder_calls it first.
     module_file = tmp_path / "real_mod.py"
     module_file.write_text("VALUE = 7\n")
-    proc = python_runner.run_code_ok(BYPASS, "real_mod", str(module_file))
+    proc = python_runner.run_scenario_ok("reporting/report_text.py", "bypass", "real_mod", str(module_file))
     assert "[loader-displacement]" not in proc.stdout
     assert "-- modules found by a custom finder" in proc.stdout
     assert "note: this finder ran before PathFinder, so the standard path search never saw the module" in proc.stdout
@@ -78,31 +38,12 @@ def test_source_and_archive_results_are_compared_without_classifying_a_defect(
     custom = tmp_path / "custom" / "archive_conflict.py"
     custom.parent.mkdir()
     custom.write_text("VALUE = 7\n", encoding="utf-8")
-    proc = python_runner.run_code_ok(
-        "import json, sys\n"
-        "from importlib.machinery import SourceFileLoader\n"
-        "from importlib.util import spec_from_file_location\n"
-        "import metapathology\n"
-        "class Finder:\n"
-        "    def find_spec(self, fullname, path=None, target=None):\n"
-        "        if fullname == 'archive_conflict':\n"
-        "            return spec_from_file_location(fullname, sys.argv[2], loader=SourceFileLoader(fullname, sys.argv[2]))\n"
-        "        return None\n"
-        "sys.path.insert(0, sys.argv[1])\n"
-        "metapathology.install(report_at_exit=False)\n"
-        "sys.meta_path.insert(0, Finder())\n"
-        "import archive_conflict\n"
-        "document = metapathology.get_report()\n"
-        "results = [item for item in document['finder_results'] if item['module'] == 'archive_conflict']\n"
-        "check = next(item for item in results if item['kind'] == 'standard_path_check')\n"
-        "assert check['spec']['loader']['type_name'] == 'zipimporter'\n"
-        "assert not any(item['module'] == 'archive_conflict' for item in document['findings'])\n"
-        "assert '[frozen-source-conflict]' not in metapathology.render_report()\n"
-        "print('OK')\n",
+    python_runner.run_scenario_ok(
+        "reporting/report_text.py",
+        "source_and_archive_results_are_compared_without_classifying_a_defect",
         str(archive),
         str(custom),
     )
-    assert proc.stdout.strip() == "OK"
 
 
 def test_module_invisible_to_path_machinery_has_a_not_found_standard_result(
@@ -114,44 +55,18 @@ def test_module_invisible_to_path_machinery_has_a_not_found_standard_result(
     hidden.mkdir()
     module_file = hidden / "hidden_mod.py"
     module_file.write_text("VALUE = 7\n")
-    proc = python_runner.run_code_ok(BYPASS, "hidden_mod", str(module_file))
+    proc = python_runner.run_scenario_ok("reporting/report_text.py", "bypass_2", "hidden_mod", str(module_file))
     assert "[unfindable]" not in proc.stdout
     assert "PathFinder status not_found" in proc.stdout
     assert "hidden_mod" in proc.stdout
 
 
-NO_SPEC = """
-import sys
-import types
-
-import metapathology
-
-metapathology.install(report_at_exit=False)
-sys.modules["ghost_mod"] = types.ModuleType("ghost_mod")
-
-text = metapathology.render_report()
-assert "note (1):" in text, text
-assert "[module-without-spec]" in text, text
-assert "ghost_mod" in text, text
-print("OK")
-"""
-
-
 def test_manually_registered_module_is_flagged_as_module_without_spec(python_runner: PythonRunner) -> None:
-    proc = python_runner.run_code_ok(NO_SPEC)
-    assert "OK" in proc.stdout
-
-
-DEFAULT_FINDERS = """
-import metapathology
-
-metapathology.install(report_at_exit=False)
-print(metapathology.render_report())
-"""
+    python_runner.run_scenario_ok("reporting/report_text.py", "no_spec")
 
 
 def test_standard_unwrapped_finders_are_explained(python_runner: PythonRunner) -> None:
-    proc = python_runner.run_code_ok(DEFAULT_FINDERS)
+    proc = python_runner.run_scenario_ok("reporting/report_text.py", "default_finders")
     assert "report guide: https://glinte.github.io/metapathology/report/" in proc.stdout
     assert "standard CPython finders left unwrapped (expected)" in proc.stdout
     assert "BuiltinImporter: class entry" not in proc.stdout
@@ -166,65 +81,12 @@ def test_standard_unwrapped_finders_are_explained(python_runner: PythonRunner) -
     assert "-- sys.path_hooks changes (0) --" not in proc.stdout
 
 
-PATH_REMOVED_AFTER_IMPORT = """
-import sys
-from importlib.machinery import PathFinder
-
-import metapathology
-
-class DelegatingFinder:
-    def find_spec(self, fullname, path=None, target=None):
-        return PathFinder.find_spec(fullname, path, target)
-
-module_dir = sys.argv[1]
-sys.path.insert(0, module_dir)
-metapathology.install(report_at_exit=False)
-sys.meta_path.insert(0, DelegatingFinder())
-
-import transient_path_mod
-assert transient_path_mod.VALUE == 7
-sys.path.remove(module_dir)
-
-text = metapathology.render_report()
-assert "[unfindable] 'transient_path_mod'" not in text, text
-assert "[loader-displacement] 'transient_path_mod'" not in text, text
-print("OK")
-"""
-
-
 def test_path_removal_after_import_does_not_create_bypass_finding(python_runner: PythonRunner, tmp_path: Path) -> None:
     module_dir = tmp_path / "temporary_path"
     module_dir.mkdir()
     (module_dir / "transient_path_mod.py").write_text("VALUE = 7\n")
 
-    proc = python_runner.run_code_ok(PATH_REMOVED_AFTER_IMPORT, str(module_dir))
-    assert "OK" in proc.stdout
-
-
-CWD_CHANGED_AFTER_IMPORT = """
-import os
-import sys
-from importlib.machinery import PathFinder
-
-import metapathology
-
-class DelegatingFinder:
-    def find_spec(self, fullname, path=None, target=None):
-        return PathFinder.find_spec(fullname, path, target)
-
-new_cwd = sys.argv[1]
-metapathology.install(report_at_exit=False)
-sys.meta_path.insert(0, DelegatingFinder())
-
-import cwd_sensitive_mod
-assert cwd_sensitive_mod.VALUE == 7
-os.chdir(new_cwd)
-
-text = metapathology.render_report()
-assert "[unfindable] 'cwd_sensitive_mod'" not in text, text
-assert "[loader-displacement] 'cwd_sensitive_mod'" not in text, text
-print("OK")
-"""
+    python_runner.run_scenario_ok("reporting/report_text.py", "path_removed_after_import", str(module_dir))
 
 
 def test_cwd_change_after_import_does_not_create_false_bypass_finding(
@@ -234,33 +96,8 @@ def test_cwd_change_after_import_does_not_create_false_bypass_finding(
     new_cwd = tmp_path / "elsewhere"
     new_cwd.mkdir()
 
-    proc = python_runner.run_code_ok(CWD_CHANGED_AFTER_IMPORT, str(new_cwd))
-    assert "OK" in proc.stdout
-
-
-HOSTILE_MODULE_SPEC = """
-import sys
-
-import metapathology
-
-class HostileModule:
-    touched = False
-    def __getattribute__(self, name):
-        type(self).touched = True
-        raise SystemExit(94)
-        return super().__getattribute__(name)
-
-metapathology.install(report_at_exit=False)
-hostile = HostileModule()
-sys.modules["hostile_module"] = hostile
-text = metapathology.render_report()
-assert "metadata unavailable" in text, text
-del sys.modules["hostile_module"]
-assert not HostileModule.touched
-print("OK")
-"""
+    python_runner.run_scenario_ok("reporting/report_text.py", "cwd_changed_after_import", str(new_cwd))
 
 
 def test_report_does_not_dispatch_to_foreign_module_like_objects(python_runner: PythonRunner) -> None:
-    proc = python_runner.run_code_ok(HOSTILE_MODULE_SPEC)
-    assert "OK" in proc.stdout
+    python_runner.run_scenario_ok("reporting/report_text.py", "hostile_module_spec")

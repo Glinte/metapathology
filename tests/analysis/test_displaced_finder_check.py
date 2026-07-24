@@ -136,38 +136,5 @@ def test_repeated_checks_do_not_mutate_captured_evidence() -> None:
     assert len(first) == len(second) == 1
 
 
-OFF_BY_DEFAULT = r"""
-import json
-
-import metapathology
-
-
-class Finder:
-    def find_spec(self, fullname, target=None):
-        raise AssertionError("disabled checks must not call foreign finders")
-
-
-metapathology.install(
-    report_at_exit=False,
-    capture=metapathology.CaptureConfig(
-        importer_cache=True,
-        detailed=metapathology.DetailedCaptureConfig(path_entry_finders=True),
-    ),
-)
-document = metapathology.get_report()
-run = next(check for check in document["checks"] if check["kind"] == "displaced_finder")
-assert run["status"] == "disabled"
-assert run["foreign_calls"] == 0
-assert not [
-    result
-    for result in document["finder_results"]
-    if result["kind"] == "displaced_finder_check"
-]
-print("OK")
-"""
-
-
 def test_check_performs_no_foreign_calls_unless_requested(python_runner: PythonRunner) -> None:
-    proc = python_runner.run_code_ok(OFF_BY_DEFAULT)
-
-    assert proc.stdout.strip() == "OK"
+    python_runner.run_scenario_ok("analysis/displaced_finder_check.py", "off_by_default")

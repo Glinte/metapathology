@@ -88,84 +88,31 @@ def test_standard_loader_categories_are_explicit() -> None:
 
 def test_default_report_infers_namespace_before_later_finder(python_runner: PythonRunner, tmp_path: Path) -> None:
     (tmp_path / "standard_namespace").mkdir()
-    proc = python_runner.run_code_ok(
-        "import json, sys, metapathology\n"
-        "class LaterFinder:\n"
-        "    def find_spec(self, fullname, path=None, target=None): return None\n"
-        "monitor = metapathology.install(report_at_exit=False)\n"
-        "sys.meta_path.append(LaterFinder())\n"
-        "import standard_namespace\n"
-        "document = metapathology.get_report()\n"
-        "resolution = next(item for item in document['standard_resolutions'] "
-        "if item['fullname'] == 'standard_namespace')\n"
-        "assert resolution['finder_type_name'] == 'PathFinder'\n"
-        "assert resolution['category'] == 'namespace'\n"
-        "assert resolution['evidence_level'] == 'inferred'\n"
-        "assert resolution['state_phase'] == 'report'\n"
-        "assert resolution['event_ref'] is None\n"
-        "assert resolution['later_finders'] == ['LaterFinder']\n"
-        "assert not any(event['kind'] == 'meta_path_finder_call' "
-        "and event['data']['fullname'] == 'standard_namespace' "
-        "and event['data']['finder_type_name'] == 'LaterFinder' for event in document['timeline'])\n"
-        "text = metapathology.render_report()\n"
-        "assert '[inferred]' in text\n"
-        "assert 'later meta path entries were never reached: [LaterFinder]' in text\n"
-        "print('OK')\n"
+    python_runner.run_scenario_ok(
+        "analysis/standard_resolution.py", "default_report_infers_namespace_before_later_finder"
     )
-    assert proc.stdout.strip() == "OK"
 
 
 def test_ordinary_standard_modules_do_not_finder_call_later_finders_are_relevant(
     python_runner: PythonRunner, tmp_path: Path
 ) -> None:
     (tmp_path / "ordinary_source.py").write_text("VALUE = 1\n", encoding="utf-8")
-    proc = python_runner.run_code_ok(
-        "import json, sys, metapathology\n"
-        "class LaterFinder:\n"
-        "    def find_spec(self, fullname, path=None, target=None): return None\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(import_results=True)))\n"
-        "sys.meta_path.append(LaterFinder())\n"
-        "sys.path.insert(0, sys.argv[1])\n"
-        "import ordinary_source\n"
-        "document = metapathology.get_report()\n"
-        "resolution = next(item for item in document['standard_resolutions'] "
-        "if item['fullname'] == 'ordinary_source')\n"
-        "assert resolution['later_finders'] == []\n"
-        "assert not any(item['kind'] == 'path_finder_precedence' "
-        "and item['subject'] == 'ordinary_source' for item in document['explanations'])\n"
-        "print('OK')\n",
+    python_runner.run_scenario_ok(
+        "analysis/standard_resolution.py",
+        "ordinary_standard_modules_do_not_finder_call_later_finders_are_relevant",
         str(tmp_path),
     )
-    assert proc.stdout.strip() == "OK"
 
 
 def test_detailed_report_captures_source_resolution(python_runner: PythonRunner, tmp_path: Path) -> None:
     module_dir = tmp_path / "detailed_standard"
     module_dir.mkdir()
     (module_dir / "standard_source.py").write_text("VALUE = 1\n", encoding="utf-8")
-    proc = python_runner.run_code_ok(
-        "import json, sys, metapathology\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(enabled=True)))\n"
-        f"sys.path.insert(0, {str(module_dir)!r})\n"
-        "import standard_source\n"
-        "document = metapathology.get_report()\n"
-        "resolution = next(item for item in document['standard_resolutions'] "
-        "if item['fullname'] == 'standard_source')\n"
-        "assert resolution['category'] == 'source'\n"
-        "assert resolution['loader_type_name'] == 'SourceFileLoader'\n"
-        "assert resolution['evidence_level'] == 'observed'\n"
-        "assert resolution['state_phase'] == 'import'\n"
-        "assert resolution['event_ref'] is not None\n"
-        "assert resolution['component_event_refs']\n"
-        "component = next(event for event in document['timeline'] "
-        "if event['id'] == resolution['component_event_refs'][0])\n"
-        f"assert component['data']['path'] == {str(module_dir)!r}\n"
-        "text = metapathology.render_report()\n"
-        "assert 'PathFinder result capture: active path finder aggregate' in text\n"
-        "assert '[observed]' in text\n"
-        "print('OK')\n"
+    python_runner.run_scenario_ok(
+        "analysis/standard_resolution.py",
+        "detailed_report_captures_source_resolution",
+        str(module_dir),
     )
-    assert proc.stdout.strip() == "OK"
 
 
 def test_detailed_report_explains_namespace_candidate_hidden_by_later_regular_module(
@@ -178,48 +125,13 @@ def test_detailed_report_explains_namespace_candidate_hidden_by_later_regular_mo
     regular_module = regular_root / "candidate_pkg.py"
     regular_module.write_text("VALUE = 1\n", encoding="utf-8")
 
-    proc = python_runner.run_code_ok(
-        "import json, sys, metapathology\n"
-        "sys.path[:0] = sys.argv[1:3]\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(enabled=True)))\n"
-        "import candidate_pkg\n"
-        "try:\n"
-        "    import candidate_pkg.child\n"
-        "except ModuleNotFoundError:\n"
-        "    pass\n"
-        "else:\n"
-        "    raise AssertionError('regular module unexpectedly allowed a child import')\n"
-        "try:\n"
-        "    import candidate_pkg.other\n"
-        "except ModuleNotFoundError:\n"
-        "    pass\n"
-        "else:\n"
-        "    raise AssertionError('regular module unexpectedly allowed another child import')\n"
-        "document = metapathology.get_report()\n"
-        "finding = next(item for item in document['findings'] "
-        "if item['kind'] == 'module_hides_namespace')\n"
-        "assert finding['module'] == 'candidate_pkg'\n"
-        "assert finding['severity'] == 'problem'\n"
-        "explanations = [item for item in document['explanations'] "
-        "if item['kind'] == 'namespace_candidate_hidden']\n"
-        "assert {item['subject'] for item in explanations} == "
-        "{'candidate_pkg.child', 'candidate_pkg.other'}\n"
-        "explanation = explanations[0]\n"
-        "assert explanation['effect_status'] == 'descendant_failed'\n"
-        "assert explanation['cause_finding_ref'] == finding['id']\n"
-        "assert explanation['candidate_path'] == sys.argv[1]\n"
-        "assert explanation['origin'] == sys.argv[3]\n"
-        "assert explanation['confidence'] == 'correlated'\n"
-        "assert len(explanation['event_refs']) >= 3\n"
-        "text = metapathology.render_report()\n"
-        "assert 'namespace candidate from' in text\n"
-        "assert 'continued searching and selected the regular module' in text\n"
-        "print('OK')\n",
+    python_runner.run_scenario_ok(
+        "analysis/standard_resolution.py",
+        "detailed_report_explains_namespace_candidate_hidden_by_later_regular_module",
         str(namespace_root),
         str(regular_root),
         str(regular_module),
     )
-    assert proc.stdout.strip() == "OK"
 
 
 def test_detailed_report_correlates_repeated_failure_at_same_origin(
@@ -237,52 +149,12 @@ def test_detailed_report_correlates_repeated_failure_at_same_origin(
         encoding="utf-8",
     )
 
-    proc = python_runner.run_code_ok(
-        "import json, sys, metapathology\n"
-        "sys.path.insert(0, sys.argv[1])\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(enabled=True)))\n"
-        "import repeated_source\n"
-        "del sys.modules['repeated_source']\n"
-        "try:\n"
-        "    import repeated_source\n"
-        "except RuntimeError:\n"
-        "    pass\n"
-        "else:\n"
-        "    raise AssertionError('second import unexpectedly loaded')\n"
-        "try:\n"
-        "    import repeated_source\n"
-        "except RuntimeError:\n"
-        "    pass\n"
-        "else:\n"
-        "    raise AssertionError('third import unexpectedly loaded')\n"
-        "document = metapathology.get_report()\n"
-        "finding = next(item for item in document['findings'] "
-        "if item['kind'] == 'module_failed_after_loading')\n"
-        "assert finding['module'] == 'repeated_source'\n"
-        "assert finding['severity'] == 'problem'\n"
-        "assert finding['evidence']['level'] == 'correlated'\n"
-        "assert {'same_loader', 'same_origin', 'earlier_search_loaded', "
-        "'later_search_failed'} <= set(finding['signals'])\n"
-        "explanation = next(item for item in document['explanations'] "
-        "if item['kind'] == 'module_failed_after_loading')\n"
-        "assert explanation['cause_finding_ref'] == finding['id']\n"
-        "assert explanation['finder_type_name'] == 'SourceFileLoader'\n"
-        "assert explanation['origin'] == sys.argv[2]\n"
-        "assert explanation['effect_status'] == 'later_import_failed'\n"
-        "failed_searches = [item for item in document['import_searches'] "
-        "if item['fullname'] == 'repeated_source' and item['progress'] == 'failed']\n"
-        "assert len(failed_searches) == 2\n"
-        "assert {item['id'] for item in failed_searches} < set(finding['data']['search_refs'])\n"
-        "assert {ref for attempt in failed_searches for ref in attempt['evidence_event_refs']} "
-        "<= set(explanation['event_refs'])\n"
-        "text = metapathology.render_report()\n"
-        "assert \"same origin was selected again for 'repeated_source'\" in text\n"
-        "assert 'the earlier import loaded, but the later import failed' in text\n"
-        "print('OK')\n",
+    python_runner.run_scenario_ok(
+        "analysis/standard_resolution.py",
+        "detailed_report_correlates_repeated_failure_at_same_origin",
         str(module_dir),
         str(module_file),
     )
-    assert proc.stdout.strip() == "OK"
 
 
 def test_distributed_7782_fixture_explains_unreachable_editable_finder() -> None:

@@ -11,6 +11,13 @@ from pathlib import Path
 from typing import TypeAlias, cast
 
 DEFAULT_SUBPROCESS_TIMEOUT = 25
+_SCENARIO_ROOT = Path(__file__).parents[1] / "scenarios"
+_SCENARIO_BOOTSTRAP = (
+    "import sys\n"
+    "_scenario_path = sys.argv.pop(1)\n"
+    "globals()['__file__'] = _scenario_path\n"
+    "exec(compile(sys.stdin.read(), _scenario_path, 'exec'))\n"
+)
 
 ProcessResult: TypeAlias = subprocess.CompletedProcess[str]
 JsonScalar: TypeAlias = None | bool | int | float | str
@@ -185,6 +192,49 @@ class PythonRunner:
             self.run_script(script, *argv, cwd=cwd, env=env, input_text=input_text, timeout=timeout)
         )
 
+    def run_scenario(
+        self,
+        scenario: str,
+        name: str,
+        *argv: str,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> ProcessResult:
+        """Run one branch from a syntax-highlighted isolated scenario file."""
+        source_path = _scenario_path(scenario)
+        return self.run_command(
+            [self.executable, "-c", _SCENARIO_BOOTSTRAP, str(source_path), name, *argv],
+            cwd=cwd,
+            env=env,
+            input_text=source_path.read_text(encoding="utf-8"),
+            timeout=timeout,
+        )
+
+    def run_scenario_ok(
+        self,
+        scenario: str,
+        name: str,
+        *argv: str,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> ProcessResult:
+        """Run one isolated scenario branch and require a successful exit."""
+        return assert_success(self.run_scenario(scenario, name, *argv, cwd=cwd, env=env, timeout=timeout))
+
+    def run_scenario_json(
+        self,
+        scenario: str,
+        name: str,
+        *argv: str,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, JsonValue]:
+        """Run one isolated scenario branch and decode its JSON object."""
+        return json_object_stdout(self.run_scenario(scenario, name, *argv, cwd=cwd, env=env, timeout=timeout))
+
     def environment(self, **overrides: str | None) -> dict[str, str]:
         """Copy the current environment and apply string overrides or removals."""
         environment = os.environ.copy()
@@ -194,3 +244,12 @@ class PythonRunner:
             else:
                 environment[name] = value
         return environment
+
+
+def _scenario_path(relative: str) -> Path:
+    """Resolve a repository scenario without allowing traversal."""
+    root = _SCENARIO_ROOT.resolve()
+    candidate = (root / relative).resolve()
+    if not candidate.is_relative_to(root) or candidate.suffix != ".py":
+        raise ValueError(f"invalid scenario path: {relative!r}")
+    return candidate

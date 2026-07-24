@@ -63,53 +63,11 @@ def test_failure_report_styling_is_bounded() -> None:
 
 
 def test_invalid_install_color_does_not_instrument_import_state(python_runner: PythonRunner) -> None:
-    proc = python_runner.run_code_ok(
-        "import sys\n"
-        "import metapathology\n"
-        "before = sys.meta_path\n"
-        "try:\n"
-        "    metapathology.install(report_color='sometimes')\n"
-        "except ValueError as exception:\n"
-        "    assert 'unknown color mode' in str(exception)\n"
-        "else:\n"
-        "    raise AssertionError('invalid color accepted')\n"
-        "assert sys.meta_path is before\n"
-        "assert metapathology.get_monitor() is not None\n"
-        "assert not metapathology.get_monitor().enabled\n"
-        "print('OK')\n"
-    )
-
-    assert proc.stdout.strip() == "OK"
+    python_runner.run_scenario_ok("reporting/report_color.py", "invalid_install_color_does_not_instrument_import_state")
 
 
 def test_explicit_render_color_preserves_plain_content(python_runner: PythonRunner) -> None:
-    proc = python_runner.run_code_ok(
-        "import io, re, sys\n"
-        "import metapathology\n"
-        "metapathology.install(report_at_exit=False)\n"
-        "class Finder:\n"
-        "    def find_spec(self, fullname, path=None, target=None):\n"
-        "        return None\n"
-        "finder = Finder()\n"
-        "sys.meta_path.append(finder)\n"
-        "sys.meta_path.remove(finder)\n"
-        "plain = metapathology.render_report()\n"
-        "colored = metapathology.render_report(color=True)\n"
-        "assert '\\x1b[' not in plain\n"
-        "assert '\\x1b[1;36m== metapathology report ==\\x1b[0m' in colored\n"
-        "assert '\\x1b[32m+' in colored\n"
-        "assert '\\x1b[1;31m-' in colored\n"
-        "assert re.sub(r'\\x1b\\[[0-9;]*m', '', colored) == plain\n"
-        "class Terminal(io.StringIO):\n"
-        "    def isatty(self):\n"
-        "        return True\n"
-        "stream = Terminal()\n"
-        "metapathology.write_report(stream)\n"
-        "assert '\\x1b[1;36m== metapathology report ==\\x1b[0m' in stream.getvalue()\n"
-        "print('OK')\n"
-    )
-
-    assert proc.stdout.strip() == "OK"
+    python_runner.run_scenario_ok("reporting/report_color.py", "explicit_render_color_preserves_plain_content")
 
 
 def test_no_color_empty_value_does_not_disable_auto(monkeypatch: pytest.MonkeyPatch) -> None:

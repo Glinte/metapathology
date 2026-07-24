@@ -5,118 +5,9 @@ from pathlib import Path
 
 from support import PythonRunner
 
-DETAILED_CAPTURE = r"""
-import importlib.machinery
-import json
-import sys
-
-import metapathology
-
-
-class Loader:
-    def __init__(self, fullname):
-        self.fullname = fullname
-
-    def create_module(self, spec):
-        return None
-
-    def exec_module(self, module):
-        if self.fullname == "detailed_broken":
-            raise RuntimeError("target failure")
-        module.VALUE = self.fullname
-
-
-class Finder:
-    def __init__(self):
-        self.loaders = []
-
-    def find_spec(self, fullname, target=None):
-        if fullname == "detailed_outer":
-            __import__("detailed_nested")
-        if fullname not in {"detailed_outer", "detailed_nested", "detailed_broken"}:
-            return None
-        loader = Loader(fullname)
-        self.loaders.append(loader)
-        return importlib.machinery.ModuleSpec(fullname, loader)
-
-
-finder = Finder()
-sentinel = sys.path[0] + "\\detailed-sentinel"
-
-
-def hook(path):
-    if path != sentinel:
-        raise ImportError
-    return finder
-
-
-sys.path_hooks.insert(0, hook)
-sys.path_importer_cache.pop(sentinel, None)
-sys.path.insert(0, sentinel)
-monitor = metapathology.install(
-    report_at_exit=False,
-    capture=metapathology.CaptureConfig(
-        detailed=metapathology.DetailedCaptureConfig(
-            path_hooks=True,
-            path_entry_finders=True,
-            loaders=True,
-        )
-    ),
-)
-# The wrapper shadows the hook by identity but compares equal to it, so
-# ``in`` (which uses ``==``) still finds it while ``is`` sees the wrapper.
-assert hook in sys.path_hooks
-assert not any(candidate is hook for candidate in sys.path_hooks)
-assert any(getattr(candidate, "__wrapped__", None) is hook for candidate in sys.path_hooks)
-
-
-def later_hook(path):
-    raise ImportError
-
-
-sys.path_hooks.append(later_hook)
-assert later_hook in sys.path_hooks
-assert not any(candidate is later_hook for candidate in sys.path_hooks)
-assert any(getattr(candidate, "__wrapped__", None) is later_hook for candidate in sys.path_hooks)
-sys.path_importer_cache.pop(sentinel, None)
-__import__("detailed_outer")
-try:
-    __import__("detailed_broken")
-except RuntimeError:
-    pass
-else:
-    raise AssertionError("loader exception changed")
-assert isinstance(sys.path_importer_cache[sentinel], Finder)
-document = metapathology.get_report()
-detailed = [event["data"] for event in document["timeline"] if event["kind"] == "import_mechanism_call"]
-assert {event["boundary"] for event in detailed} == {
-    "path_hook", "path_entry_finder", "loader_create_module", "loader_exec_module"
-}, detailed
-assert any(event["outcome"] == "unobserved_reentrant" for event in detailed), detailed
-# A successful path hook captures the identity of the finder it returned, so the
-# report can link an accepting hook to the finder it installed in the cache.
-assert any(
-    event["boundary"] == "path_hook"
-    and event["outcome"] == "returned"
-    and event["returned_finder"] is not None
-    and event["returned_finder"]["type_name"] == "Finder"
-    for event in detailed
-), detailed
-assert any(event["fullname"] == "detailed_broken" and event["outcome"] == "raised" for event in detailed), detailed
-assert document["capture"]["mechanisms"][4]["enabled"] is True
-text = metapathology.render_report()
-assert "WARNING: opt-in detailed capture" in text
-metapathology.uninstall()
-assert hook in sys.path_hooks
-assert later_hook in sys.path_hooks
-assert "find_spec" not in finder.__dict__
-assert all("create_module" not in loader.__dict__ and "exec_module" not in loader.__dict__ for loader in finder.loaders)
-print(json.dumps({"detailed": detailed, "mechanisms": monitor.detailed_capture}))
-"""
-
 
 def test_detailed_boundaries_delegate_record_and_restore(python_runner: PythonRunner) -> None:
-    proc = python_runner.run_code_ok(DETAILED_CAPTURE)
+    proc = python_runner.run_scenario_ok("monitoring/detailed_path_machinery.py", "detailed_capture")
     result = json.loads(proc.stdout)
     assert result["mechanisms"] == []
 
@@ -124,40 +15,11 @@ def test_detailed_boundaries_delegate_record_and_restore(python_runner: PythonRu
 def test_distinct_hooks_accepting_one_path_report_structural_shadow(
     python_runner: PythonRunner, tmp_path: Path
 ) -> None:
-    proc = python_runner.run_code_ok(
-        "import json, sys, metapathology\n"
-        "class Finder:\n"
-        "    def find_spec(self, fullname, target=None): return None\n"
-        "def first(path):\n"
-        "    if path == sys.argv[1]: return Finder()\n"
-        "    raise ImportError\n"
-        "def second(path):\n"
-        "    if path == sys.argv[1]: return Finder()\n"
-        "    raise ImportError\n"
-        "sys.path_hooks[:0] = [first, second]\n"
-        "sys.path.insert(0, sys.argv[1])\n"
-        "sys.path_importer_cache.pop(sys.argv[1], None)\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(path_hooks=True)))\n"
-        "sys.path_importer_cache.pop(sys.argv[1], None)\n"
-        "try: __import__('shadow_first_missing')\n"
-        "except ModuleNotFoundError: pass\n"
-        "list.__setitem__(sys.path_hooks, slice(0, 2), [sys.path_hooks[1], sys.path_hooks[0]])\n"
-        "sys.path_importer_cache.pop(sys.argv[1], None)\n"
-        "try: __import__('shadow_second_missing')\n"
-        "except ModuleNotFoundError: pass\n"
-        "document = metapathology.get_report()\n"
-        "finding = next(item for item in document['findings'] if item['kind'] == 'competing_path_hooks')\n"
-        "assert finding['subject'] == {'kind': 'path', 'value': sys.argv[1]}\n"
-        "assert finding['evidence']['level'] == 'inferred_from_state'\n"
-        "assert len(finding['evidence']['event_refs']) == 2\n"
-        "text = metapathology.render_report()\n"
-        "assert '[competing-path-hooks]' in text\n"
-        "assert 'further investigation:' in text\n"
-        "assert '--unsafe-explore-import-branches' in text\n"
-        "print('OK')\n",
+    python_runner.run_scenario_ok(
+        "monitoring/detailed_path_machinery.py",
+        "distinct_hooks_accepting_one_path_report_structural_shadow",
         str(tmp_path),
     )
-    assert proc.stdout.strip() == "OK"
 
 
 def test_detailed_path_hook_wrapper_survives_equality_scan(python_runner: PythonRunner, tmp_path: Path) -> None:
@@ -169,205 +31,36 @@ def test_detailed_path_hook_wrapper_survives_equality_scan(python_runner: Python
     to the shadowed hook broke that scan, silently disabling on-disk extension
     imports in frozen apps. The wrapper delegates equality, so the scan works.
     """
-    proc = python_runner.run_code_ok(
-        "import sys, metapathology\n"
-        "created = []\n"
-        "sentinel = sys.argv[1]\n"
-        "class FallbackFinder:\n"
-        "    def find_spec(self, fullname, target=None): return None\n"
-        "def anchor_hook(path):\n"
-        "    raise ImportError\n"
-        "def tail_hook(path):\n"
-        "    if path != sentinel:\n"
-        "        raise ImportError\n"
-        "    created.append(path)\n"
-        "    return FallbackFinder()\n"
-        "sys.path_hooks[:0] = [anchor_hook, tail_hook]\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(path_hooks=True)))\n"
-        # Emulate the fallback scan: find our anchor by equality, then build
-        # the first hook that comes after it.
-        "anchor_seen = False\n"
-        "fallback = None\n"
-        "for hook in sys.path_hooks:\n"
-        "    if hook == anchor_hook:\n"
-        "        anchor_seen = True\n"
-        "        continue\n"
-        "    if not anchor_seen:\n"
-        "        continue\n"
-        "    try:\n"
-        "        fallback = hook(sentinel)\n"
-        "        break\n"
-        "    except ImportError:\n"
-        "        pass\n"
-        "assert anchor_seen, 'anchor hook not found via == scan'\n"
-        "assert isinstance(fallback, FallbackFinder), fallback\n"
-        "assert created == [sentinel], created\n"
-        "print('OK')\n",
+    python_runner.run_scenario_ok(
+        "monitoring/detailed_path_machinery.py",
+        "detailed_path_hook_wrapper_survives_equality_scan",
         str(tmp_path),
     )
-    assert proc.stdout.strip() == "OK"
-
-
-DISCORD_10017_MODULE_REPLACEMENT = r"""
-import importlib.machinery
-import json
-import sys
-import types
-
-import metapathology
-
-class ReplacingLoader:
-    def create_module(self, spec):
-        return None
-    def exec_module(self, module):
-        module.LOADED = True
-
-class Finder:
-    def __init__(self):
-        self.loader = ReplacingLoader()
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname != "detailed_identity_ext":
-            return None
-        return importlib.machinery.ModuleSpec(fullname, self.loader, origin="shared.ext")
-
-finder = Finder()
-sys.meta_path.insert(0, finder)
-monitor = metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(loaders=True)))
-import detailed_identity_ext
-first = detailed_identity_ext
-spec = first.__spec__
-second = types.ModuleType("detailed_identity_ext")
-second.__spec__ = spec
-second.__loader__ = spec.loader
-sys.modules["detailed_identity_ext"] = second
-spec.loader.exec_module(second)
-sys.modules["detailed_identity_ext"] = first
-
-events = [
-    event for event in monitor.events()
-    if isinstance(event, metapathology.ImportMechanismCall)
-    and event.boundary == "loader_exec_module"
-    and event.fullname == "detailed_identity_ext"
-]
-assert len(events) == 2, events
-assert events[0].module_state_before.object_id == id(first)
-assert events[0].module_state_after.object_id == id(first)
-assert events[0].target_state.object_id == id(first)
-assert events[1].module_state_before.object_id == id(second)
-assert events[1].module_state_after.object_id == id(second)
-assert events[1].target_state.object_id == id(second)
-assert first.__spec__.origin == second.__spec__.origin == "shared.ext"
-document = metapathology.get_report()
-finding = next(item for item in document["findings"] if item["kind"] == "module_executed_again")
-assert finding["module"] == "detailed_identity_ext"
-assert finding["evidence"]["level"] == "observed"
-assert set(finding["evidence"]["event_refs"]) == {"event:" + str(events[0].sequence), "event:" + str(events[1].sequence)}
-assert finding["data"]["import_mechanism_call"]["event_ref"] == "event:" + str(events[1].sequence)
-assert finding["data"]["module_state_baseline"]["object_id"] == hex(id(first))
-assert finding["data"]["import_mechanism_call"]["module_state_before"]["object_id"] == hex(id(second))
-assert finding["data"]["import_mechanism_call"]["module_state_after"]["object_id"] == hex(id(second))
-assert finding["data"]["import_mechanism_call"]["target_state"]["object_id"] == hex(id(second))
-explanation = next(item for item in document["explanations"] if item["kind"] == "module_executed_again")
-assert explanation["confidence"] == "observed"
-assert explanation["cause_finding_ref"] == finding["id"]
-assert explanation["state_before"]["object_id"] == hex(id(first))
-assert explanation["state_after"]["object_id"] == hex(id(second))
-assert explanation["effect_status"] == "separate_module_executed"
-text = metapathology.render_report()
-assert "[module-executed-again] 'detailed_identity_ext'" in text, text
-assert "internal steps and temporary objects are unknown" in text, text
-assert "[observed] ReplacingLoader executed 'detailed_identity_ext' again with a different module object" in text, text
-metapathology.uninstall()
-print("OK")
-"""
 
 
 def test_discord_10017_valid_spec_module_replacement_fixture(python_runner: PythonRunner) -> None:
-    proc = python_runner.run_code_ok(DISCORD_10017_MODULE_REPLACEMENT)
-    assert proc.stdout.strip() == "OK"
+    python_runner.run_scenario_ok("monitoring/detailed_path_machinery.py", "discord_10017_module_replacement")
 
 
 def test_detailed_mechanisms_are_independently_toggleable(python_runner: PythonRunner) -> None:
-    python_runner.run_code_ok(
-        "import metapathology\n"
-        "monitor = metapathology.install(\n"
-        "    report_at_exit=False,\n"
-        "    capture=metapathology.CaptureConfig(\n"
-        "        path_hooks=False,\n"
-        "        importer_cache=False,\n"
-        "        detailed=metapathology.DetailedCaptureConfig(path_entry_finders=True),\n"
-        "    ),\n"
-        ")\n"
-        "assert monitor.detailed_capture == ('path_entry_finders',)\n"
-        "assert type(__import__('sys').path_hooks) is list\n"
-        "metapathology.uninstall()\n"
+    python_runner.run_scenario_ok(
+        "monitoring/detailed_path_machinery.py", "detailed_mechanisms_are_independently_toggleable"
     )
 
 
 def test_detailed_path_entry_finder_preserves_later_shadow(python_runner: PythonRunner) -> None:
-    proc = python_runner.run_code_ok(
-        "import sys, metapathology\n"
-        "class Finder:\n"
-        "    def find_spec(self, fullname, target=None): return None\n"
-        "finder = Finder()\n"
-        "sys.path_importer_cache['owned-finder-check'] = finder\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(path_entry_finders=True)))\n"
-        "replacement = lambda fullname, target=None: None\n"
-        "finder.find_spec = replacement\n"
-        "metapathology.uninstall()\n"
-        "assert finder.__dict__['find_spec'] is replacement\n"
-        "print('OK')\n"
+    python_runner.run_scenario_ok(
+        "monitoring/detailed_path_machinery.py", "detailed_path_entry_finder_preserves_later_shadow"
     )
-    assert proc.stdout.strip() == "OK"
 
 
 def test_detailed_loader_preserves_later_method_shadows(python_runner: PythonRunner) -> None:
-    proc = python_runner.run_code_ok(
-        "import importlib.util, sys, metapathology\n"
-        "class Loader:\n"
-        "    def create_module(self, spec): return None\n"
-        "    def exec_module(self, module): module.VALUE = 1\n"
-        "class Finder:\n"
-        "    def __init__(self, loader): self.loader = loader\n"
-        "    def find_spec(self, fullname, path=None, target=None):\n"
-        "        if fullname == 'owned_loader_check':\n"
-        "            return importlib.util.spec_from_loader(fullname, self.loader)\n"
-        "        return None\n"
-        "loader = Loader()\n"
-        "finder = Finder(loader)\n"
-        "sys.meta_path.insert(0, finder)\n"
-        "metapathology.install(report_at_exit=False, capture=metapathology.CaptureConfig(detailed=metapathology.DetailedCaptureConfig(loaders=True)))\n"
-        "import owned_loader_check\n"
-        "replacement_create = lambda spec: None\n"
-        "replacement_exec = lambda module: None\n"
-        "loader.create_module = replacement_create\n"
-        "loader.exec_module = replacement_exec\n"
-        "metapathology.uninstall()\n"
-        "assert loader.__dict__['create_module'] is replacement_create\n"
-        "assert loader.__dict__['exec_module'] is replacement_exec\n"
-        "sys.meta_path.remove(finder)\n"
-        "print('OK')\n"
+    python_runner.run_scenario_ok(
+        "monitoring/detailed_path_machinery.py", "detailed_loader_preserves_later_method_shadows"
     )
-    assert proc.stdout.strip() == "OK"
 
 
 def test_detailed_path_hooks_restore_only_owned_wrappers(python_runner: PythonRunner) -> None:
-    proc = python_runner.run_code_ok(
-        "import sys, metapathology\n"
-        "original_hooks = list(sys.path_hooks)\n"
-        "metapathology.install(\n"
-        "    report_at_exit=False,\n"
-        "    capture=metapathology.CaptureConfig(\n"
-        "        path_hooks=True,\n"
-        "        detailed=metapathology.DetailedCaptureConfig(path_hooks=True),\n"
-        "    ),\n"
-        ")\n"
-        "replacement = lambda path: (_ for _ in ()).throw(ImportError)\n"
-        "sys.path_hooks[0] = replacement\n"
-        "metapathology.uninstall()\n"
-        "assert sys.path_hooks[0] is replacement\n"
-        "assert all(current is original for current, original in zip(sys.path_hooks[1:], original_hooks[1:]))\n"
-        "sys.path_hooks = original_hooks\n"
-        "print('OK')\n"
+    python_runner.run_scenario_ok(
+        "monitoring/detailed_path_machinery.py", "detailed_path_hooks_restore_only_owned_wrappers"
     )
-    assert proc.stdout.strip() == "OK"

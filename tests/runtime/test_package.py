@@ -52,23 +52,14 @@ def test_runtime_version_matches_distribution_metadata() -> None:
 
 
 def test_package_import_defers_monitor_and_distribution_metadata(python_runner: PythonRunner) -> None:
-    proc = python_runner.run_code_ok(
-        "import sys\n"
-        "assert 'importlib.metadata' not in sys.modules\n"
-        "import metapathology\n"
-        "deferred = ('importlib.metadata', 'metapathology._monitor', 'metapathology._records', 'typing')\n"
-        "print([name for name in deferred if name in sys.modules])\n"
+    proc = python_runner.run_scenario_ok(
+        "runtime/package.py", "package_import_defers_monitor_and_distribution_metadata"
     )
     assert proc.stdout.strip() == "[]"
 
 
 def test_record_api_does_not_load_dataclasses_or_typing(python_runner: PythonRunner) -> None:
-    proc = python_runner.run_code_ok(
-        "import sys\n"
-        "from metapathology import MonitoringError\n"
-        "deferred = ('dataclasses', 'traceback', 'typing')\n"
-        "print([name for name in deferred if name in sys.modules])\n"
-    )
+    proc = python_runner.run_scenario_ok("runtime/package.py", "record_api_does_not_load_dataclasses_or_typing")
     assert proc.stdout.strip() == "[]"
 
 
