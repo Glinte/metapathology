@@ -14,6 +14,11 @@ Anything completed before installation is historical context, not observed
 activity. This includes finders added by already-processed `.pth` files. They
 appear in the initial snapshot without an installation stack.
 
+Remote attachment starts later still: the boundary is the target-observed
+installation time, not the controller command time. Its normal-shutdown report
+recovery is best effort and cannot cover forced or fatal termination. See
+[Attach to a running process](attachment.md).
+
 ## The import audit event is only a start
 
 CPython's `import` audit event precedes resolution. It:

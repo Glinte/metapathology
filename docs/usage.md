@@ -48,6 +48,9 @@ The target's integer `SystemExit` status is preserved. An unhandled exception
 prints its traceback and exits with status 1. The report is written in both
 cases.
 
+If restarting the program under the wrapper is impractical, CPython 3.14+
+can [attach to a running same-user process](attachment.md).
+
 ## Save the report
 
 With no report option, text is written to standard error. `--report` infers the
