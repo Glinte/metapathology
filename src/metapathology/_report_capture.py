@@ -11,7 +11,7 @@ from metapathology._displaced_finder_check import (
     check_displaced_finders,
 )
 from metapathology._module_metadata import ModuleMetadata, inspect_module
-from metapathology._records import ImportBranchExplorationCall, ObjectIdentity, type_name
+from metapathology._records import ImportBranchExplorationCall, ImporterCacheEntry, ObjectIdentity, type_name
 from metapathology._report_analysis import (
     _AnalysisInputs,
     _causal_explanations,
@@ -62,6 +62,13 @@ def capture_document(snapshot: "MonitorSnapshot", analysis: ResolvedAnalysisConf
     events = list(snapshot.events)
     finder_apis = list(snapshot.finder_apis)
     importer_cache = snapshot.importer_cache
+    staging_path = None if snapshot.remote_attachment is None else snapshot.remote_attachment.staging_path
+    initial_importer_cache = _without_staging_entries(importer_cache.initial_entries, staging_path)
+    current_importer_cache = (
+        None
+        if importer_cache.latest_entries is None
+        else _without_staging_entries(importer_cache.latest_entries, staging_path)
+    )
     report_errors: list[ReportError] = []
     current_meta_path = _current_meta_path_names(report_errors)
     current_path_hooks = _current_path_hooks(snapshot, report_errors)
@@ -85,8 +92,8 @@ def capture_document(snapshot: "MonitorSnapshot", analysis: ResolvedAnalysisConf
         events=events,
         initial_path_hooks=snapshot.initial_path_hooks,
         current_path_hooks=current_path_hooks,
-        initial_importer_cache=importer_cache.initial_entries,
-        current_importer_cache=importer_cache.latest_entries,
+        initial_importer_cache=initial_importer_cache,
+        current_importer_cache=current_importer_cache,
         module_items=module_items,
         module_metadata=loader_inventory.entries,
         finder_apis=finder_apis,
@@ -113,9 +120,9 @@ def capture_document(snapshot: "MonitorSnapshot", analysis: ResolvedAnalysisConf
         ),
         importer_cache=ImporterCacheSnapshot(
             enabled=importer_cache.enabled,
-            initial=importer_cache.initial_entries,
+            initial=initial_importer_cache,
             initial_non_string_keys=importer_cache.initial_non_string_keys,
-            current=importer_cache.latest_entries,
+            current=current_importer_cache,
             current_non_string_keys=importer_cache.latest_non_string_keys,
             observations=importer_cache.observations,
             coalesced=importer_cache.coalesced,
@@ -453,6 +460,17 @@ def _without_attachment_package(
         for name, module in module_items
         if name != "metapathology" and not (type(name) is str and name.startswith("metapathology."))
     ]
+
+
+def _without_staging_entries(
+    entries: tuple[ImporterCacheEntry, ...],
+    staging_path: str | None,
+) -> tuple[ImporterCacheEntry, ...]:
+    """Remove controller-owned archive paths from public cache evidence."""
+    if staging_path is None:
+        return entries
+    prefixes = (f"{staging_path}/", f"{staging_path}\\")
+    return tuple(entry for entry in entries if entry.path != staging_path and not entry.path.startswith(prefixes))
 
 
 def _modules_since_install(

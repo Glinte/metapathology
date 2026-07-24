@@ -6,6 +6,7 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
 from support.process import DEFAULT_SUBPROCESS_TIMEOUT
 
 from metapathology._attachment import _start_script, _stop_script
@@ -20,10 +21,12 @@ from metapathology._attachment_protocol import (
 )
 
 
+@pytest.mark.skipif(sys.version_info < (3, 14), reason="remote attachment requires CPython 3.14+")
 def test_staged_agent_reports_future_import_and_restores_import_state(tmp_path: Path) -> None:
     root = tmp_path / "attachment"
     root.mkdir()
     package = stage_package(root)
+    archive_path = package.path.as_posix()
     ready = tmp_path / "ready"
     stop = tmp_path / "stop"
     restored = tmp_path / "restored"
@@ -74,7 +77,7 @@ restored.write_text(
             "token": "a" * 64,
             "pid": target_pid,
             "process_identity": identity_json(identity),
-            "package_archive": str(package.path),
+            "package_archive": archive_path,
             "package_fingerprint": package.fingerprint,
             "status_path": str(paths.status),
             "text_artifact": str(paths.text_artifact),
@@ -132,8 +135,8 @@ restored.write_text(
     text = paths.text_artifact.read_text(encoding="utf-8")
     assert "remote attachment session: lifecycle-session" in text
     assert "remote observation boundary: future import activity after attachment only" in text
-    assert str(package.path) not in raw_json
-    assert str(package.path) not in text
+    assert archive_path not in raw_json
+    assert archive_path not in text
 
 
 def _wait_for_path(path: Path) -> None:

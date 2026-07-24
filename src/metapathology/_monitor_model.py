@@ -92,6 +92,7 @@ class _RemoteAttachmentState(_Record):
     installed_at: str
     transport: str
     observation_boundary: str
+    staging_path: str
 
 
 class _ProgramOutcomeState(_Record):

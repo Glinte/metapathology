@@ -56,6 +56,7 @@ def test_repeated_stop_waits_for_existing_pending_request(
     write_controller_status(paths.controller_status, "active")
     write_status(paths.status, "active", process_identity=identity, installed_at="2026-01-01T00:00:00Z")
     scheduled: list[tuple[int, Path]] = []
+    monkeypatch.setattr(_attachment, "_require_remote_exec", lambda: None)
     monkeypatch.setattr(_attachment, "ensure_root", lambda _owner: root)
     monkeypatch.setattr(_attachment, "_remote_exec", lambda pid, script: scheduled.append((pid, script)))
     monkeypatch.setattr(_attachment, "_current_identity_or_none", lambda _pid: identity)

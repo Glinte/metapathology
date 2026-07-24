@@ -12,7 +12,11 @@ from metapathology._record import _Record
 TYPE_CHECKING = False
 
 if TYPE_CHECKING:
-    from typing import Literal
+    from typing import Literal, no_type_check
+else:
+
+    def no_type_check(obj: object) -> object:
+        return obj
 
 
 class ProcessIdentity(_Record):
@@ -177,6 +181,7 @@ class _FileTime(ctypes.Structure):
     _fields_ = [("low", ctypes.c_uint32), ("high", ctypes.c_uint32)]
 
 
+@no_type_check
 def _windows_identity(pid: int) -> ProcessIdentity:  # noqa: PLR0915
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)

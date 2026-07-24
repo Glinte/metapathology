@@ -82,7 +82,7 @@ def start(manifest_path: str) -> None:
             unsafe_explore_import_branches=unsafe,
         )
         installed_at = _utc_now()
-        monitor._set_remote_attachment(session_id, installed_at)
+        monitor._set_remote_attachment(session_id, installed_at, os.fspath(archive))
         _REMOTE_ACTIVE = True
         write_status(status_path, "active", process_identity=identity, installed_at=installed_at)
     except BaseException as exc:

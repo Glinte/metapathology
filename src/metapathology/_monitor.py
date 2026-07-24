@@ -441,13 +441,14 @@ class Monitor:
             if self._frozen_bootstrap is None:
                 self._frozen_bootstrap = state
 
-    def _set_remote_attachment(self, session_id: str, installed_at: str) -> None:
+    def _set_remote_attachment(self, session_id: str, installed_at: str, staging_path: str) -> None:
         """Attach late remote-install provenance to this capture."""
         state = _RemoteAttachmentState(
             session_id,
             installed_at,
             "pep_768_remote_exec",
             "future_import_activity_after_attachment_only",
+            staging_path,
         )
         with self._record_lock:
             if self._remote_attachment is None:

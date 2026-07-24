@@ -374,6 +374,15 @@ try:
                 list.remove(_s.path, _archive)
             except (ValueError, TypeError):
                 pass
+    _cache = _s.path_importer_cache
+    if type(_cache) is dict:
+        for _key in list(_cache):
+            if type(_key) is str and (
+                _key == _archive
+                or _key.startswith(_archive + _o.sep)
+                or _key.startswith(_archive + "/")
+            ):
+                dict.pop(_cache, _key, None)
     _agent.start(_manifest)
 except BaseException as _exc:
     _failed(_exc)
