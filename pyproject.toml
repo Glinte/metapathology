@@ -58,6 +58,7 @@ dev = [
 # Zensical is isolated from the development toolchain because it is needed
 # only to build and publish the user documentation site.
 docs = [
+    "mkdocstrings-python>=1.18,<2",
     "zensical>=0.0.47,<0.1",
 ]
 

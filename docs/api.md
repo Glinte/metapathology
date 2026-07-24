@@ -1,10 +1,10 @@
 # Library API
 
 Prefer `python -m metapathology` when possible. It installs before target code
-and handles target outcomes and automatic reporting. The API is for notebooks,
-embedded interpreters, and code that cannot be wrapped.
+and handles target outcomes and automatic reporting. Use the API for notebooks,
+embedded interpreters, or code that cannot be wrapped.
 
-## Install and remove
+## Monitor a reproduction
 
 ```python
 import metapathology
@@ -14,40 +14,19 @@ try:
     reproduce_problem()
 finally:
     metapathology.write_report("diagnosis.txt")
-metapathology.uninstall()
+    metapathology.uninstall()
 ```
 
-The complete installation signature is:
-
-```python
-install(
-    *,
-    report_at_exit=True,
-    report_destination=None,
-    report_text=None,
-    report_json=None,
-    report_color=None,
-    capture=None,
-    analysis=None,
-    unsafe_explore_import_branches=None,
-) -> Monitor
-```
-
-`install()` is process-wide. With the same resolved configuration it is
-idempotent. A different active capture or analysis configuration raises before
-mutation.
+`install()` is process-wide. Repeating it with the same resolved capture and
+analysis settings returns the existing monitor. Changing those settings while
+the monitor is active raises before import state is changed.
 
 `uninstall()` restores ordinary `list` objects and removes owned finder
-instrumentation. Python does not provide a way to remove a
+instrumentation. Python cannot remove a
 [`sys.addaudithook()` hook](https://docs.python.org/3/library/sys.html#sys.addaudithook),
-so that hook remains installed but becomes inert.
+so the hook remains installed but becomes inert.
 
-`unsafe_explore_import_branches=True` calls skipped finders and hooks during the
-import. Use it only in a disposable process or container. Returned specs are
-discarded, but other side effects are not undone. See
-[Unsafe import-branch exploration](capture.md#unsafe-import-branch-exploration).
-
-## Scoped monitoring
+For code with a clear reproduction boundary, a context manager handles cleanup:
 
 ```python
 with metapathology.monitoring() as monitor:
@@ -59,7 +38,7 @@ metapathology.write_report("diagnosis.json", format="json")
 Nested and overlapping regions share the process monitor. A context that did
 not create an existing installation does not remove it.
 
-## Capture configuration
+## Choose what to capture
 
 Defaults need no object:
 
@@ -89,15 +68,20 @@ metapathology.CaptureConfig(
 )
 ```
 
-All configuration records are immutable and value-comparable. Fields are
+Configuration records are immutable and value-comparable. Their fields are
 tri-state: `True` enables a mechanism, `False` disables it, and `None` means
-“use the environment or normal default.” In `DetailedCaptureConfig`,
-`enabled` supplies the value for detailed fields that remain `None`.
+“use the environment or normal default.” In `DetailedCaptureConfig`, `enabled`
+supplies the value for detailed fields left as `None`.
 
-## Analysis configuration
+`unsafe_explore_import_branches=True` calls skipped finders and hooks during the
+import. Use it only in a disposable process or container. Returned specs are
+discarded, but other side effects are not undone. See
+[Unsafe import-branch exploration](capture.md#unsafe-import-branch-exploration).
+
+## Choose report-time checks
 
 Analysis controls checks run while a report is built. Checks may call existing
-finder code, so they are kept separate from passive capture:
+finder code, so they are separate from passive capture:
 
 ```python
 analysis = metapathology.AnalysisConfig(
@@ -106,7 +90,7 @@ analysis = metapathology.AnalysisConfig(
 )
 ```
 
-Pass it to `install()` for the default policy or override one artifact:
+Pass it to `install()` for the default policy or override one report:
 
 ```python
 text = metapathology.render_report(
@@ -120,25 +104,23 @@ metapathology.write_report(
 )
 ```
 
-An artifact override does not mutate the installed default.
+A report override does not mutate the installed default.
 
-## Reporting
+## Produce a report
 
-- `render_report(format="text" | "json", color=False, analysis=None) -> str`
-- `write_report(destination=None, format="text" | "json", color="auto", analysis=None) -> None`
+`destination=None` writes to standard error. A path is replaced atomically;
+streams are written directly.
 
-`destination=None` writes to standard error. A path is replaced atomically.
-Streams are written directly.
-
-Calling either function before installation raises `RuntimeError`. I/O errors
-from an explicit `write_report()` call are re-raised. Automatic exit reporting
-suppresses them so a diagnostic cannot replace the target's exit behavior.
+Calling `render_report()` or `write_report()` before installation raises
+`RuntimeError`. I/O errors from an explicit `write_report()` call are re-raised.
+Automatic exit reporting suppresses them so a diagnostic cannot replace the
+target's exit behavior.
 
 Automatic output can be configured through `install()` with
 `report_destination`, `report_text`, `report_json`, `report_color`, and
 `report_at_exit`.
 
-## Monitor evidence
+## Inspect captured evidence
 
 `monitor.events()` returns immutable event records copied from the monitor.
 Public record names describe the observation directly, including
@@ -148,12 +130,56 @@ Public record names describe the observation directly, including
 Treat these records as low-level evidence. Integrations usually want the JSON
 report instead.
 
-Useful monitor properties include `enabled`, the six core `*_enabled` values,
-`detailed_capture`, and the three detailed status properties. A status explains
-whether exact import results, import-call capture, or aggregate `PathFinder`
-capture was active or why it was unavailable.
+Monitor properties report which capture mechanisms are active and why detailed
+evidence may be unavailable. In particular,
+`unsafe_import_branch_exploration_status` is `complete`, `partial`, `disabled`,
+or `uninstalled`. Partial coverage means a profiler was already installed or a
+prerequisite was disabled, so some skipped calls may be missing.
 
-`unsafe_import_branch_exploration_status` reports complete, partial, disabled,
-or uninstalled coverage. Partial coverage means some skipped calls may be
-missing because a profiler was already installed or a prerequisite was
-disabled.
+## Reference
+
+The signatures and parameter descriptions below are generated from the library
+source. Configuration fields accept `True`, `False`, or `None` unless stated
+otherwise; `None` uses the corresponding environment setting or normal default.
+
+### Lifecycle
+
+::: metapathology.install
+
+::: metapathology.monitoring
+
+::: metapathology.uninstall
+
+::: metapathology.get_monitor
+
+### Reports
+
+::: metapathology.write_report
+
+::: metapathology.render_report
+
+### Configuration
+
+::: metapathology.CaptureConfig
+
+::: metapathology.DetailedCaptureConfig
+
+::: metapathology.AnalysisConfig
+
+::: metapathology.Monitor
+    options:
+      show_signature: false
+      members:
+        - enabled
+        - import_audit_enabled
+        - meta_path_enabled
+        - finder_attribution_enabled
+        - path_hooks_enabled
+        - importer_cache_enabled
+        - sys_path_enabled
+        - detailed_capture
+        - import_results_capture_status
+        - import_calls_capture_status
+        - path_finder_capture_status
+        - unsafe_import_branch_exploration_status
+        - events

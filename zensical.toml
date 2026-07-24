@@ -61,3 +61,19 @@ line_spans = "__span"
 pygments_lang_class = true
 [project.markdown_extensions.pymdownx.inlinehilite]
 [project.markdown_extensions.pymdownx.superfences]
+
+[project.plugins.mkdocstrings.handlers.python]
+inventories = ["https://docs.python.org/3/objects.inv"]
+paths = ["src"]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+docstring_style = "google"
+heading_level = 3
+merge_init_into_class = true
+separate_signature = true
+show_root_full_path = false
+show_root_heading = true
+show_signature_annotations = true
+show_source = false
+show_symbol_type_heading = true
+signature_crossrefs = true
