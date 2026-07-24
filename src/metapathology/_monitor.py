@@ -724,11 +724,17 @@ class Monitor:
         thread_name = threading.current_thread().name
         importer_cache_id = None if cache_fingerprint is None else cache_fingerprint[0]
         importer_cache_size = None if cache_fingerprint is None else cache_fingerprint[1]
+        # On CPython 3.15+, the profiler can observe _find_and_load before this
+        # audit event. Reuse that search instead of recording one import twice.
+        profiler_search_id = self._detailed.active_import_search_id(fullname)
         with self._record_lock:
             self._importer_cache.note_fingerprint_locked(cache_fingerprint)
             thread_id = self._thread_id_locked()
-            self._search_id += 1
-            search_id = self._search_id
+            if profiler_search_id is None:
+                self._search_id += 1
+                search_id = self._search_id
+            else:
+                search_id = profiler_search_id
             self._seq += 1
             self._events.append(
                 ImportSearchStarted(
@@ -744,7 +750,7 @@ class Monitor:
                     thread_id=thread_id,
                 )
             )
-        if self._detailed.import_results_enabled:
+        if self._detailed.import_results_enabled and profiler_search_id is None:
             self._local.pending_import_search = (search_id, fullname)
 
     def _recover_reassignments(self, args: tuple[object, ...]) -> None:

@@ -208,6 +208,18 @@ class _DetailedCapture:
         sys.setprofile(profile)
         self._sys_profile_lease = _OwnedValue(previous_sys_profile, profile)
 
+    def active_import_search_id(self, fullname: str) -> int | None:
+        """Return this thread's active detailed search for ``fullname``.
+
+        CPython 3.15 enters ``_find_and_load`` before emitting its import audit
+        event. Earlier versions emit the audit event first. Exposing the active
+        profiler search lets both orders converge on one search identity.
+        """
+        searches = self._detailed_local.import_searches
+        if searches and searches[-1][1] == fullname:
+            return searches[-1][0]
+        return None
+
     def _profile_import_boundary(self, frame: "FrameType", event: str, arg: object) -> None:
         """Record paired entry and completion for the captured ``_find_and_load`` code."""
         if not self._enabled or not self._detailed_import_results or self._local.observation_suspended:

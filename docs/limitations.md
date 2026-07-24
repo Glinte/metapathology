@@ -28,6 +28,10 @@ CPython's `import` audit event precedes resolution. It:
 - does not cover manual module execution; and
 - cannot by itself tell whether the import later succeeded.
 
+CPython 3.15 and newer emit this event for searches started through
+`importlib.import_module()`. Earlier supported versions do not, so those
+searches remain invisible unless another enabled mechanism observes them.
+
 Enable the relevant detailed mechanism when those distinctions matter.
 
 ## Attribution is deliberately conservative

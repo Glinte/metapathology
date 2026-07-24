@@ -150,10 +150,11 @@ elif _scenario == "audit_shapes":
     with open("importlib_audit_blindspot.py", "w", encoding="utf-8") as module_file:
         module_file.write("VALUE = 1\n")
     importlib.import_module("importlib_audit_blindspot")
-    assert not any(
+    importlib_start_observed = any(
         isinstance(event, ImportSearchStarted) and event.fullname == "importlib_audit_blindspot"
         for event in monitor.events()
     )
+    assert importlib_start_observed is (sys.version_info >= (3, 15))
 
     try:
         import metapathology_missing_timeline_module

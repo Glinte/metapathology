@@ -242,6 +242,8 @@ An `import started` event comes from CPython's
 [`import` audit event](https://docs.python.org/3/library/audit_events.html#audit-events).
 It says resolution started, not that the import succeeded or which finder won.
 Imports served from the module cache do not emit this event.
+On CPython 3.15 and newer, these events also cover searches started through
+`importlib.import_module()`; earlier CPython versions omit those searches.
 
 ## Finder calls
 
