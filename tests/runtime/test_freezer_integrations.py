@@ -15,7 +15,10 @@ _SUBPROCESS_TIMEOUT = 300
 _FIXTURES = Path(__file__).parents[1] / "fixtures" / "freezers"
 _RUN_FREEZERS = os.environ.get("METAPATHOLOGY_TEST_FREEZERS") == "1"
 
-pytestmark = pytest.mark.timeout(_SUBPROCESS_TIMEOUT)
+pytestmark = [
+    pytest.mark.timeout(_SUBPROCESS_TIMEOUT),
+    pytest.mark.xdist_group(name="freezer"),
+]
 
 
 def _require_module(name: str) -> None:

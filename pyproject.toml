@@ -49,6 +49,7 @@ dev = [
     "pytest>=8.3",
     "pytest-cov>=6.3",
     "pytest-timeout>=2.4",
+    "pytest-xdist>=3.8",
     "ruff>=0.12.11",
     # Type-check-only: provides the dataclass_transform stub for the 3.10
     # target. Never imported at runtime (see _records.py), so runtime stays
@@ -64,6 +65,8 @@ docs = [
 
 [tool.pytest.ini_options]
 addopts = [
+    "-n=4",
+    "--dist=loadgroup",
     "--strict-config",
     "--strict-markers",
 ]
