@@ -39,6 +39,14 @@ def json_stdout(result: ProcessResult) -> JsonValue:
     return cast("JsonValue", json.loads(assert_success(result).stdout))
 
 
+def json_object_stdout(result: ProcessResult) -> dict[str, JsonValue]:
+    """Decode a successful child's standard output as one JSON object."""
+    value = json_stdout(result)
+    if not isinstance(value, dict):
+        raise AssertionError(f"expected child JSON object, got {type(value).__name__}: {value!r}")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class PythonRunner:
     """Run isolated Python commands from one temporary working directory."""
@@ -103,6 +111,18 @@ class PythonRunner:
         """Run source code and require a successful exit."""
         return assert_success(self.run_code(code, *argv, cwd=cwd, env=env, input_text=input_text, timeout=timeout))
 
+    def run_code_json(
+        self,
+        code: str,
+        *argv: str,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+        input_text: str | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, JsonValue]:
+        """Run source code and decode its successful stdout as a JSON object."""
+        return json_object_stdout(self.run_code(code, *argv, cwd=cwd, env=env, input_text=input_text, timeout=timeout))
+
     def run_module(
         self,
         module: str,
@@ -137,6 +157,32 @@ class PythonRunner:
             env=env,
             input_text=input_text,
             timeout=timeout,
+        )
+
+    def run_script_ok(
+        self,
+        script: Path,
+        *argv: str,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+        input_text: str | None = None,
+        timeout: float | None = None,
+    ) -> ProcessResult:
+        """Run a script and require a successful exit."""
+        return assert_success(self.run_script(script, *argv, cwd=cwd, env=env, input_text=input_text, timeout=timeout))
+
+    def run_script_json(
+        self,
+        script: Path,
+        *argv: str,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+        input_text: str | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, JsonValue]:
+        """Run a script and decode its successful stdout as a JSON object."""
+        return json_object_stdout(
+            self.run_script(script, *argv, cwd=cwd, env=env, input_text=input_text, timeout=timeout)
         )
 
     def environment(self, **overrides: str | None) -> dict[str, str]:
