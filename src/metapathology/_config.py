@@ -67,7 +67,20 @@ class _ConfigRecord(_Record):
 
 
 class DetailedCaptureConfig(_ConfigRecord):
-    """Fine-grained settings for the slower, more intrusive capture mechanisms."""
+    """Select individual detailed capture mechanisms.
+
+    Detailed capture adds wrappers to more of Python's import machinery and
+    retains evidence for every observed call. Enable only the evidence needed
+    for the reproduction.
+
+    Attributes:
+        enabled: Default for any field left as ``None``.
+        path_hooks: Record calls to ``sys.path_hooks`` entries.
+        path_entry_finders: Record calls to path-entry finders.
+        loaders: Record loader execution calls.
+        import_results: Match import attempts to exact outcomes where possible.
+        import_calls: Record calls through ``builtins.__import__``.
+    """
 
     enabled: bool | None = None
     path_hooks: bool | None = None
@@ -80,9 +93,21 @@ class DetailedCaptureConfig(_ConfigRecord):
 class CaptureConfig(_ConfigRecord):
     """Capture settings for one installation.
 
-    ``detailed=True`` enables every detailed mechanism without requiring a
-    nested configuration object. Pass :class:`DetailedCaptureConfig` only to
-    choose individual detailed mechanisms.
+    Core mechanisms default to enabled. Pass ``detailed=True`` to enable every
+    detailed mechanism, or use ``DetailedCaptureConfig`` to select them
+    individually.
+
+    Attributes:
+        import_audit: Observe import starts and direct replacement of monitored
+            import-state lists.
+        meta_path: Observe mutations to ``sys.meta_path``.
+        finder_attribution: Record calls to writable meta-path finder instances.
+        path_hooks: Observe mutations to ``sys.path_hooks``.
+        importer_cache: Observe changes to ``sys.path_importer_cache``.
+        sys_path: Observe mutations to ``sys.path``. Disabled by default unless
+            all detailed capture is enabled.
+        detailed: Detailed capture selection. ``True`` enables every detailed
+            mechanism; a nested configuration selects individual mechanisms.
     """
 
     import_audit: bool | None = None
@@ -95,7 +120,18 @@ class CaptureConfig(_ConfigRecord):
 
 
 class AnalysisConfig(_ConfigRecord):
-    """Settings for current-state checks performed while building a report."""
+    """Choose current-state checks performed while building a report.
+
+    These checks may call finder code at report time. They do not affect the
+    monitored import outcomes.
+
+    Attributes:
+        checks: Default for check fields left as ``None``.
+        standard_path_check: Compare captured custom-finder results with a
+            current-state ``PathFinder`` lookup. Enabled by default.
+        displaced_finder_check: Call finders that are no longer in their
+            captured position. Disabled by default.
+    """
 
     checks: bool | None = None
     standard_path_check: bool | None = None

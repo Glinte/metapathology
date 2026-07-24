@@ -166,7 +166,12 @@ def _guard_monitor_callback(
 
 
 class Monitor:
-    """Records import-machinery activity. Use the module-level :func:`install`."""
+    """Captured import-machinery evidence for the current process.
+
+    Obtain this object from ``install()`` or ``monitoring()``; constructing it
+    directly does not start monitoring. Event accessors return snapshots, so
+    callers cannot mutate the monitor's internal evidence.
+    """
 
     def __init__(self) -> None:
         # Guards event state and component-owned attribution/cache state. Held only
@@ -272,7 +277,7 @@ class Monitor:
 
     @property
     def detailed_capture(self) -> tuple[str, ...]:
-        """Names of explicitly enabled inline delegation mechanisms."""
+        """Names of active detailed capture mechanisms."""
         return self._detailed.enabled_names(self._enabled)
 
     @property
@@ -292,7 +297,13 @@ class Monitor:
 
     @property
     def unsafe_import_branch_exploration_status(self) -> str:
-        """Activation and coverage of explicitly unsafe branch exploration."""
+        """Coverage of unsafe branch exploration.
+
+        The value is ``"complete"``, ``"partial"``, ``"disabled"``, or
+        ``"uninstalled"``. Partial coverage means prerequisite capture was
+        disabled or an existing profiler prevented some calls from being
+        observed.
+        """
         return self._branch_exploration.status
 
     def _original_path_hook(self, hook: object) -> object:
@@ -351,7 +362,11 @@ class Monitor:
         self._program_outcome = _ProgramOutcomeState("raised", type_name(exception), missing, exit_code)
 
     def events(self) -> list[MonitorEvent]:
-        """Return a snapshot of all recorded events, in capture order."""
+        """Return a snapshot of all recorded events in capture order.
+
+        The list is independent of the monitor. Its event records are
+        immutable.
+        """
         with self._record_lock:
             return list(self._events)
 

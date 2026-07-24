@@ -128,7 +128,38 @@ def install(
     analysis: AnalysisConfig | None = None,
     unsafe_explore_import_branches: bool | None = None,
 ) -> Monitor:
-    """Install the process-wide monitor and configure automatic reporting."""
+    """Install the process-wide monitor and configure automatic reporting.
+
+    Repeating the same resolved capture and analysis configuration is
+    idempotent. While monitoring is active, requesting a different
+    configuration fails before import state is changed.
+
+    Args:
+        report_at_exit: Write configured reports during normal interpreter
+            shutdown.
+        report_destination: Output path or paths whose format is inferred from
+            the extension. ``"-"`` means standard error.
+        report_text: Path or paths forced to text format.
+        report_json: Path or paths forced to JSON format.
+        report_color: Color policy for automatic text reports.
+        capture: Capture mechanisms to enable. ``None`` uses normal defaults
+            and environment settings.
+        analysis: Report-time checks to enable. ``None`` uses normal defaults
+            and environment settings.
+        unsafe_explore_import_branches: Call skipped finders and hooks during
+            imports. This can run arbitrary foreign side effects; use it only
+            in a disposable process.
+
+    Returns:
+        The process-wide monitor.
+
+    Raises:
+        RuntimeError: An active installation uses different capture or analysis
+            settings.
+        TypeError: A configuration value or report destination is invalid.
+        ValueError: A report format cannot be inferred or a color mode is
+            invalid.
+    """
     global _active_analysis, _active_capture, _active_unsafe_exploration
     normalized_destination = normalize_report_destination(report_destination)
     normalized_text = normalize_report_destination(report_text)
@@ -192,7 +223,12 @@ def install(
 
 
 def uninstall() -> None:
-    """Restore import state and unregister automatic reporting."""
+    """Stop monitoring and restore the import state owned by metapathology.
+
+    Ordinary lists replace installed list observers and finder instrumentation
+    is removed. The Python audit hook cannot be removed, so it remains inert.
+    Calling this function when no monitor exists is safe.
+    """
     _begin_runtime_transition()
     try:
         monitor = get_monitor()
@@ -204,7 +240,11 @@ def uninstall() -> None:
 
 
 def get_monitor() -> Monitor | None:
-    """Return the process-wide monitor, if it has ever been created."""
+    """Return the process-wide monitor if one has been created.
+
+    The returned monitor may be disabled after ``uninstall()``. Check
+    ``monitor.enabled`` to distinguish that state from active monitoring.
+    """
     with _singleton_lock:
         return _monitor_singleton
 
@@ -240,7 +280,22 @@ def write_report(
     color: "Literal['auto', 'always', 'never']" = "auto",
     analysis: AnalysisConfig | None = None,
 ) -> None:
-    """Write an explicit report to a stream or exact path."""
+    """Write a report from the current capture.
+
+    Args:
+        destination: Text stream, exact output path, or ``None`` for standard
+            error. Paths are replaced atomically.
+        format: Output format.
+        color: Color policy for text output.
+        analysis: Per-report analysis override. It does not change the
+            installation default.
+
+    Raises:
+        RuntimeError: Monitoring has not been installed.
+        OSError: The destination cannot be written.
+        TypeError: ``analysis`` is not an ``AnalysisConfig``.
+        ValueError: ``format`` or ``color`` is invalid.
+    """
     monitor = _require_monitor()
     _report.validate_format(format)
     _report.validate_color(color)
@@ -250,7 +305,22 @@ def write_report(
 def render_report(
     *, format: "Literal['text', 'json']" = "text", color: bool = False, analysis: AnalysisConfig | None = None
 ) -> str:
-    """Return an explicit report as text or stable JSON."""
+    """Render a report from the current capture.
+
+    Args:
+        format: Output format.
+        color: Include terminal color escapes in text output.
+        analysis: Per-report analysis override. It does not change the
+            installation default.
+
+    Returns:
+        The complete text or JSON report.
+
+    Raises:
+        RuntimeError: Monitoring has not been installed.
+        TypeError: ``analysis`` is not an ``AnalysisConfig``.
+        ValueError: ``format`` is invalid.
+    """
     _report.validate_format(format)
     artifact = _capture_report(_require_monitor(), _resolve_report_analysis(analysis))
     return _report.render_report(artifact, format=format, color=color)
@@ -287,7 +357,28 @@ def monitoring(
     analysis: AnalysisConfig | None = None,
     unsafe_explore_import_branches: bool | None = None,
 ) -> "Iterator[Monitor]":
-    """Observe imports only while a nested or overlapping region is active."""
+    """Monitor imports within a context-managed region.
+
+    Nested and overlapping regions share one process-wide monitor. If
+    monitoring was already installed before the first region, leaving the
+    region does not uninstall it.
+
+    Args:
+        capture: Capture mechanisms to enable.
+        analysis: Default report-time checks.
+        unsafe_explore_import_branches: Call skipped finders and hooks during
+            imports. Use only in a disposable process.
+
+    Yields:
+        The process-wide monitor.
+
+    Warns:
+        RuntimeWarning: Monitoring was already active before the outermost
+            region.
+
+    Raises:
+        RuntimeError: A shared active monitor uses different settings.
+    """
     global _monitoring_region_count, _monitoring_regions_own_installation, _monitoring_region_transition
     began_inactive = False
     warn_preexisting = False
