@@ -145,7 +145,26 @@ jobs:
           enable-cache: true
 
       - name: Install project
+        if: matrix.python-version != '3.13t'
         run: uv sync --locked --dev
 
+      # Hypothesis 6.156.6 builds a Rust extension whose PyO3 version rejects
+      # free-threaded CPython 3.13. The remaining suite still provides useful
+      # compatibility coverage until Hypothesis supports that interpreter.
+      - name: Install project without Hypothesis
+        if: matrix.python-version == '3.13t'
+        run: uv sync --locked --dev --no-install-package hypothesis
+
       - name: Run tests
+        if: matrix.python-version != '3.13t'
         run: uv run --locked pytest
+
+      - name: Run tests without Hypothesis
+        if: matrix.python-version == '3.13t'
+        run: >-
+          uv run --locked --no-sync pytest
+          --ignore=tests/analysis/test_spec_comparison.py
+          --ignore=tests/monitoring/test_importer_cache.py
+          --ignore=tests/monitoring/test_meta_path.py
+          --ignore=tests/reporting/test_structured_report.py
+          --ignore=tests/runtime/test_config.py

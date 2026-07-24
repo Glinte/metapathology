@@ -6,8 +6,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 _SUBPROCESS_TIMEOUT = 60
 _BOOTSTRAP_NAME = "00_metapathology_early.pth"
+
+pytestmark = pytest.mark.skipif(
+    sys.version_info >= (3, 15),
+    reason="executable .pth bootstraps are unsupported on Python 3.15 and newer",
+)
 
 
 def _run_manager(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
