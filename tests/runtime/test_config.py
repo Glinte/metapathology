@@ -2,6 +2,8 @@
 
 import os
 import string
+from collections.abc import Callable
+from dataclasses import dataclass
 from os import PathLike
 from pathlib import Path
 from typing import cast
@@ -23,14 +25,98 @@ from metapathology._config import (
     resolve_install_request,
 )
 
-_BOOLEAN_FIELDS = st.sampled_from(
-    (
-        ("import_audit", "METAPATHOLOGY_IMPORT_AUDIT", True),
-        ("path_hooks", "METAPATHOLOGY_PATH_HOOKS", True),
-        ("sys_path", "METAPATHOLOGY_SYS_PATH", False),
-        ("displaced_finder_check", "METAPATHOLOGY_DISPLACED_FINDER_CHECK", False),
-    )
+
+@dataclass(frozen=True, slots=True)
+class _BooleanSetting:
+    """One independently configurable boolean contract."""
+
+    name: str
+    environment: str
+    default: bool
+    configure: Callable[[bool | None], tuple[CaptureConfig, AnalysisConfig, bool | None]]
+    resolved: Callable[[InstallRequest], bool]
+
+
+def _capture(field: str, value: bool | None) -> CaptureConfig:
+    values: dict[str, bool | None] = {field: value}
+    return CaptureConfig(**values)  # type: ignore[arg-type]
+
+
+def _detailed(field: str, value: bool | None) -> CaptureConfig:
+    values: dict[str, bool | None] = {field: value}
+    return CaptureConfig(detailed=DetailedCaptureConfig(**values))  # type: ignore[arg-type]
+
+
+def _analysis(field: str, value: bool | None) -> AnalysisConfig:
+    values: dict[str, bool | None] = {field: value}
+    return AnalysisConfig(**values)  # type: ignore[arg-type]
+
+
+def _request(
+    *,
+    capture: CaptureConfig = CaptureConfig(),
+    analysis: AnalysisConfig = AnalysisConfig(),
+    unsafe: bool | None = None,
+) -> tuple[CaptureConfig, AnalysisConfig, bool | None]:
+    return capture, analysis, unsafe
+
+
+_BOOLEAN_SETTINGS = (
+    *(
+        _BooleanSetting(
+            name,
+            environment,
+            default,
+            lambda value, field=name: _request(capture=_capture(field, value)),
+            lambda request, field=name: cast(bool, getattr(request.capture, field)),
+        )
+        for name, environment, default in (
+            ("import_audit", "METAPATHOLOGY_IMPORT_AUDIT", True),
+            ("meta_path", "METAPATHOLOGY_META_PATH", True),
+            ("finder_attribution", "METAPATHOLOGY_FINDER_ATTRIBUTION", True),
+            ("path_hooks", "METAPATHOLOGY_PATH_HOOKS", True),
+            ("importer_cache", "METAPATHOLOGY_IMPORTER_CACHE", True),
+            ("sys_path", "METAPATHOLOGY_SYS_PATH", False),
+        )
+    ),
+    *(
+        _BooleanSetting(
+            f"detailed.{name}",
+            environment,
+            False,
+            lambda value, field=name: _request(capture=_detailed(field, value)),
+            lambda request, field=name: cast(bool, getattr(request.capture.detailed, field)),
+        )
+        for name, environment in (
+            ("path_hooks", "METAPATHOLOGY_CAPTURE_PATH_HOOK_CALLS"),
+            ("path_entry_finders", "METAPATHOLOGY_CAPTURE_PATH_ENTRY_FINDER_CALLS"),
+            ("loaders", "METAPATHOLOGY_CAPTURE_LOADER_CALLS"),
+            ("import_results", "METAPATHOLOGY_CAPTURE_IMPORT_RESULTS"),
+            ("import_calls", "METAPATHOLOGY_CAPTURE_IMPORT_CALLS"),
+        )
+    ),
+    *(
+        _BooleanSetting(
+            f"analysis.{name}",
+            environment,
+            default,
+            lambda value, field=name: _request(analysis=_analysis(field, value)),
+            lambda request, field=name: cast(bool, getattr(request.analysis, field)),
+        )
+        for name, environment, default in (
+            ("standard_path_check", "METAPATHOLOGY_STANDARD_PATH_CHECK", True),
+            ("displaced_finder_check", "METAPATHOLOGY_DISPLACED_FINDER_CHECK", False),
+        )
+    ),
+    _BooleanSetting(
+        "unsafe_explore_import_branches",
+        "METAPATHOLOGY_UNSAFE_EXPLORE_IMPORT_BRANCHES",
+        False,
+        lambda value: _request(unsafe=value),
+        lambda request: request.unsafe_explore_import_branches,
+    ),
 )
+_BOOLEAN_FIELDS = st.sampled_from(_BOOLEAN_SETTINGS)
 _ENVIRONMENT_BOOLEAN = st.one_of(
     st.none(),
     st.sampled_from(("1", " true ", "yes", "on", "0", " false ", "no", "off", "invalid")),
@@ -158,42 +244,104 @@ def test_unsafe_exploration_is_independent_and_auto_enables_prerequisites(
 @given(field=_BOOLEAN_FIELDS, explicit=st.one_of(st.none(), st.booleans()), raw=_ENVIRONMENT_BOOLEAN)
 def test_boolean_configuration_obeys_explicit_environment_default_precedence(
     monkeypatch: pytest.MonkeyPatch,
-    field: tuple[str, str, bool],
+    field: _BooleanSetting,
     explicit: bool | None,
     raw: str | None,
 ) -> None:
     for name in tuple(os.environ):
         if name.startswith("METAPATHOLOGY_"):
             monkeypatch.delenv(name, raising=False)
-    attribute, environment_name, default = field
     if raw is not None:
-        monkeypatch.setenv(environment_name, raw)
+        monkeypatch.setenv(field.environment, raw)
 
-    capture = CaptureConfig()
-    analysis = AnalysisConfig()
-    if attribute == "import_audit":
-        capture = CaptureConfig(import_audit=explicit)
-    elif attribute == "path_hooks":
-        capture = CaptureConfig(path_hooks=explicit)
-    elif attribute == "sys_path":
-        capture = CaptureConfig(sys_path=explicit)
-    else:
-        analysis = AnalysisConfig(displaced_finder_check=explicit)
-
-    request = _resolve(capture=capture, analysis=analysis)
-    resolved = (
-        getattr(request.analysis, attribute)
-        if attribute == "displaced_finder_check"
-        else getattr(request.capture, attribute)
+    capture, analysis, unsafe = field.configure(explicit)
+    request = _resolve(
+        capture=capture,
+        analysis=analysis,
+        unsafe_explore_import_branches=unsafe,
     )
+    resolved = field.resolved(request)
     normalized = None if raw is None else raw.strip().lower()
     environment_value = normalized in {"1", "true", "yes", "on"}
     valid_environment = normalized in {"1", "true", "yes", "on", "0", "false", "no", "off"}
-    expected = explicit if explicit is not None else environment_value if valid_environment else default
+    expected = explicit if explicit is not None else environment_value if valid_environment else field.default
 
     assert resolved is expected
-    issue = f"environment_configuration.{environment_name}"
+    issue = f"environment_configuration.{field.environment}"
     assert (issue in request.issues) is (explicit is None and raw is not None and not valid_environment)
+
+
+def test_boolean_setting_table_is_exhaustive() -> None:
+    assert {setting.name for setting in _BOOLEAN_SETTINGS} == {
+        "import_audit",
+        "meta_path",
+        "finder_attribution",
+        "path_hooks",
+        "importer_cache",
+        "sys_path",
+        "detailed.path_hooks",
+        "detailed.path_entry_finders",
+        "detailed.loaders",
+        "detailed.import_results",
+        "detailed.import_calls",
+        "analysis.standard_path_check",
+        "analysis.displaced_finder_check",
+        "unsafe_explore_import_branches",
+    }
+    assert len({setting.environment for setting in _BOOLEAN_SETTINGS}) == len(_BOOLEAN_SETTINGS)
+
+
+@pytest.mark.parametrize(
+    ("field", "environment"),
+    [
+        ("path_hooks", "METAPATHOLOGY_CAPTURE_PATH_HOOK_CALLS"),
+        ("path_entry_finders", "METAPATHOLOGY_CAPTURE_PATH_ENTRY_FINDER_CALLS"),
+        ("loaders", "METAPATHOLOGY_CAPTURE_LOADER_CALLS"),
+        ("import_results", "METAPATHOLOGY_CAPTURE_IMPORT_RESULTS"),
+        ("import_calls", "METAPATHOLOGY_CAPTURE_IMPORT_CALLS"),
+    ],
+)
+def test_detailed_leaf_values_override_the_group(
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    environment: str,
+) -> None:
+    monkeypatch.setenv("METAPATHOLOGY_DETAILED_CAPTURE", "on")
+    monkeypatch.setenv(environment, "off")
+    from_environment = _resolve()
+    assert getattr(from_environment.capture.detailed, field) is False
+
+    monkeypatch.delenv(environment)
+    from_group = _resolve()
+    assert getattr(from_group.capture.detailed, field) is True
+
+    explicit_leaf = _resolve(capture=_detailed(field, False))
+    assert getattr(explicit_leaf.capture.detailed, field) is False
+
+
+@pytest.mark.parametrize(
+    ("field", "environment"),
+    [
+        ("standard_path_check", "METAPATHOLOGY_STANDARD_PATH_CHECK"),
+        ("displaced_finder_check", "METAPATHOLOGY_DISPLACED_FINDER_CHECK"),
+    ],
+)
+def test_analysis_leaf_values_override_the_group(
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    environment: str,
+) -> None:
+    monkeypatch.setenv("METAPATHOLOGY_CHECKS", "on")
+    monkeypatch.setenv(environment, "off")
+    from_environment = _resolve()
+    assert getattr(from_environment.analysis, field) is False
+
+    monkeypatch.delenv(environment)
+    from_group = _resolve()
+    assert getattr(from_group.analysis, field) is True
+
+    explicit_leaf = _resolve(analysis=_analysis(field, False))
+    assert getattr(explicit_leaf.analysis, field) is False
 
 
 def test_multiple_report_channels_are_resolved_and_deduplicated() -> None:

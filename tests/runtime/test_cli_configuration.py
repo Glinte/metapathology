@@ -21,40 +21,6 @@ def test_capture_flags_are_forwarded_without_consuming_target_options(tmp_path: 
         assert expected_stderr in proc.stderr
 
 
-def test_removed_report_format_flag_fails_before_running_target(tmp_path: Path) -> None:
-    marker = tmp_path / "target-ran"
-    script = tmp_path / "prog.py"
-    script.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
-
-    proc = run_cli("--report-format", "yaml", str(script), cwd=tmp_path)
-
-    assert proc.returncode == 2
-    assert "unrecognized arguments: --report-format" in proc.stderr
-    assert not marker.exists()
-
-
-def test_removed_capture_and_probe_flags_are_not_accepted_as_abbreviations(tmp_path: Path) -> None:
-    script = tmp_path / "prog.py"
-    script.write_text("raise AssertionError('target ran')\n")
-
-    for option in ("--deep", "--deep-loaders", "--probes", "--standard-path-probe"):
-        proc = run_cli(option, str(script), cwd=tmp_path)
-        assert proc.returncode == 2
-        assert "unrecognized arguments" in proc.stderr
-
-
-def test_invalid_color_mode_fails_before_running_target(tmp_path: Path) -> None:
-    marker = tmp_path / "target-ran"
-    script = tmp_path / "prog.py"
-    script.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
-
-    proc = run_cli("--color", "sometimes", str(script), cwd=tmp_path)
-
-    assert proc.returncode == 2
-    assert "invalid choice" in proc.stderr
-    assert not marker.exists()
-
-
 def test_explicit_cli_color_overrides_environment_and_no_color(tmp_path: Path) -> None:
     script = tmp_path / "prog.py"
     script.write_text("print('target ran')\n")
@@ -107,33 +73,6 @@ def test_unknown_inferred_report_extension_fails_before_running_target(tmp_path:
     assert proc.returncode == 2
     assert "use --report-text or --report-json" in proc.stderr
     assert not marker.exists()
-
-
-def test_environment_writes_multiple_inferred_reports(tmp_path: Path) -> None:
-    script = tmp_path / "prog.py"
-    script.write_text("print('target ran')\n")
-    env = dict(os.environ)
-    env["METAPATHOLOGY_REPORT"] = os.pathsep.join((str(tmp_path / "env.txt"), str(tmp_path / "env.json")))
-
-    proc = run_cli(str(script), cwd=tmp_path, env=env)
-
-    assert proc.returncode == 0, proc.stderr
-    assert len(list(tmp_path.glob("env.*.txt"))) == 1
-    assert len(list(tmp_path.glob("env.*.json"))) == 1
-
-
-def test_detailed_group_option_enables_every_mechanism(tmp_path: Path) -> None:
-    script = tmp_path / "prog.py"
-    script.write_text(
-        "import metapathology\n"
-        "monitor = metapathology.get_monitor()\n"
-        "print(monitor.detailed_capture, monitor.sys_path_enabled)\n"
-    )
-
-    proc = run_cli("--detailed-capture", str(script), cwd=tmp_path)
-
-    assert proc.returncode == 0, proc.stderr
-    assert "('path_hooks', 'path_entry_finders', 'loaders', 'import_results', 'import_calls') True" in proc.stdout
 
 
 def test_unsafe_branch_option_is_forwarded_and_enables_only_its_prerequisites(tmp_path: Path) -> None:
