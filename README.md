@@ -11,11 +11,6 @@
   <a href="https://glinte.github.io/metapathology/"><img src="https://github.com/Glinte/metapathology/actions/workflows/docs.yml/badge.svg" alt="Documentation"></a>
 </p>
 
-> [!IMPORTANT]
-> Documentation status: the prose is AI-assisted and under owner review. The
-> implementation, tests, and report schema are authoritative. Please report
-> anything unclear or inaccurate.
-
 Import hooks power assertion rewriting, editable installs, runtime type
 checking, tracing, and packaging tools. When two hooks claim the same module,
 the first one can quietly bypass the other. `metapathology` runs the failing
