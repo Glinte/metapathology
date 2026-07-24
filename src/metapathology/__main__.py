@@ -61,6 +61,8 @@ class _Arguments(argparse.Namespace):
         self.standard_path_check: bool | None = None
         self.displaced_finder_check: bool | None = None
         self.unsafe_explore_import_branches: bool | None = None
+        self.pid = 0
+        self.wait_timeout: float | None = None
         self.is_module = False
         self.target: str | None = None
         self.target_args: list[str] = []
@@ -136,6 +138,21 @@ def _make_parser() -> _ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    _add_monitor_options(parser)
+    parser.add_argument("-m", dest="is_module", action="store_true", help="run TARGET as a module")
+    parser.add_argument(
+        "target",
+        metavar="TARGET",
+        nargs="?",
+        default=None,
+        help="script path, or module name with -m; omit to start a monitored interactive interpreter",
+    )
+    parser.add_argument("target_args", metavar="ARG", nargs=argparse.REMAINDER, help="arguments passed to TARGET")
+    return parser
+
+
+def _add_monitor_options(parser: _ArgumentParser) -> None:
+    """Add options shared by wrapper and remote-attachment capture."""
     parser.add_argument(
         "--report",
         dest="report_destination",
@@ -248,15 +265,55 @@ def _make_parser() -> _ArgumentParser:
         action=argparse.BooleanOptionalAction,
         help="invoke finders and hooks skipped by live imports; may change program behavior",
     )
-    parser.add_argument("-m", dest="is_module", action="store_true", help="run TARGET as a module")
-    parser.add_argument(
-        "target",
-        metavar="TARGET",
-        nargs="?",
-        default=None,
-        help="script path, or module name with -m; omit to start a monitored interactive interpreter",
+
+
+def _positive_timeout(value: str) -> float:
+    """Parse a finite positive acknowledgement timeout."""
+    try:
+        timeout = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("timeout must be a positive number") from None
+    if timeout <= 0 or timeout == float("inf") or timeout != timeout:
+        raise argparse.ArgumentTypeError("timeout must be a finite positive number")
+    return timeout
+
+
+def _positive_pid(value: str) -> int:
+    """Parse a positive process identifier."""
+    try:
+        pid = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("PID must be a positive integer") from None
+    if pid <= 0:
+        raise argparse.ArgumentTypeError("PID must be a positive integer")
+    return pid
+
+
+def _make_attach_parser() -> _ArgumentParser:
+    parser = _ArgumentParser(
+        prog=f"{_program_name(sys.argv[0])} attach",
+        allow_abbrev=False,
+        description="Start import monitoring in a running CPython 3.14+ process.",
     )
-    parser.add_argument("target_args", metavar="ARG", nargs=argparse.REMAINDER, help="arguments passed to TARGET")
+    _add_monitor_options(parser)
+    parser.add_argument("--wait-timeout", type=_positive_timeout, metavar="SECONDS")
+    parser.add_argument("pid", type=_positive_pid, metavar="PID")
+    return parser
+
+
+def _make_stop_parser() -> _ArgumentParser:
+    parser = _ArgumentParser(
+        prog=f"{_program_name(sys.argv[0])} stop",
+        allow_abbrev=False,
+        description="Stop, report, and uninstall a remote metapathology session.",
+    )
+    parser.add_argument("--wait-timeout", type=_positive_timeout, metavar="SECONDS")
+    parser.add_argument(
+        "--discard",
+        action="store_true",
+        help="remove terminal or proven-unrecoverable local session state",
+    )
+    parser.add_argument("pid", type=_positive_pid, metavar="PID")
     return parser
 
 
@@ -267,6 +324,8 @@ def _program_name(argv0: str) -> str:
 
 
 _PARSER = _make_parser()
+_ATTACH_PARSER = _make_attach_parser()
+_STOP_PARSER = _make_stop_parser()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -278,9 +337,14 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         The process exit code.
     """
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments and arguments[0] == "attach":
+        return _run_attach(arguments[1:])
+    if arguments and arguments[0] == "stop":
+        return _run_stop(arguments[1:])
     parsed = _Arguments()
     try:
-        _PARSER.parse_args(sys.argv[1:] if argv is None else argv, namespace=parsed)
+        _PARSER.parse_args(arguments, namespace=parsed)
     except SystemExit as exc:
         return _exit_code(exc)
     if parsed.target is None:
@@ -291,6 +355,72 @@ def main(argv: list[str] | None = None) -> int:
             _PARSER._print_error("arguments require a TARGET")
             return 2
     return _run(parsed.invocation())
+
+
+def _run_attach(arguments: list[str]) -> int:
+    """Parse and execute remote attachment without loading controller code on wrapper paths."""
+    parsed = _Arguments()
+    try:
+        _ATTACH_PARSER.parse_args(arguments, namespace=parsed)
+    except SystemExit as exc:
+        return _exit_code(exc)
+    from metapathology._attachment import AttachmentOptions, attach
+
+    try:
+        return attach(
+            parsed.pid,
+            AttachmentOptions(
+                parsed.report_destination,
+                parsed.report_text,
+                parsed.report_json,
+                parsed.report_color,
+                metapathology.CaptureConfig(
+                    import_audit=parsed.import_audit,
+                    meta_path=parsed.meta_path,
+                    finder_attribution=parsed.finder_attribution,
+                    path_hooks=parsed.path_hooks,
+                    importer_cache=parsed.importer_cache,
+                    sys_path=parsed.sys_path,
+                    detailed=metapathology.DetailedCaptureConfig(
+                        enabled=parsed.detailed_capture,
+                        path_hooks=parsed.capture_path_hook_calls,
+                        path_entry_finders=parsed.capture_path_entry_finder_calls,
+                        loaders=parsed.capture_loader_calls,
+                        import_results=parsed.capture_import_results,
+                        import_calls=parsed.capture_import_calls,
+                    ),
+                ),
+                metapathology.AnalysisConfig(
+                    checks=parsed.checks,
+                    standard_path_check=parsed.standard_path_check,
+                    displaced_finder_check=parsed.displaced_finder_check,
+                ),
+                parsed.unsafe_explore_import_branches,
+                parsed.wait_timeout,
+            ),
+        )
+    except (TypeError, ValueError) as exc:
+        _ATTACH_PARSER._print_error(str(exc))
+        return 2
+    except (OSError, RuntimeError) as exc:
+        sys.stderr.write(f"{_ATTACH_PARSER.prog}: {exc}\n")
+        return 1
+
+
+def _run_stop(arguments: list[str]) -> int:
+    """Parse and execute remote stop/reconciliation."""
+    parsed = argparse.Namespace()
+    try:
+        _STOP_PARSER.parse_args(arguments, namespace=parsed)
+    except SystemExit as exc:
+        return _exit_code(exc)
+    from metapathology._attachment import stop
+
+    try:
+        return stop(parsed.pid, wait_timeout=parsed.wait_timeout, discard=parsed.discard)
+    except (OSError, RuntimeError, ValueError) as exc:
+        sys.stderr.write(f"{_STOP_PARSER.prog}: {exc}\n")
+        return 1
 
 
 def _run(invocation: _Invocation) -> int:
